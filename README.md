@@ -35,7 +35,7 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 
 ```lua
 {
-  'your-username/nvim-claude',
+  'zolinthecow/nvim-claude',
   config = function()
     require('nvim-claude').setup({
       -- your configuration
@@ -52,7 +52,7 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 
 ```lua
 use {
-  'your-username/nvim-claude',
+  'zolinthecow/nvim-claude',
   config = function()
     require('nvim-claude').setup({
       -- your configuration

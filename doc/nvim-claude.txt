@@ -40,7 +40,7 @@ Features:
 
 Using lazy.nvim: >lua
   {
-    'your-username/nvim-claude',
+    'zolinthecow/nvim-claude',
     config = function()
       require('nvim-claude').setup({
         -- your configuration
