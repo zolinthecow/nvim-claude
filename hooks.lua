@@ -258,7 +258,7 @@ function M.setup_file_open_autocmd()
       if not git_root then return end
       
       -- Get relative path
-      local relative_path = file_path:gsub(git_root .. '/', '')
+      local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
       
       -- Check if this file was edited by Claude
       if M.claude_edited_files[relative_path] and M.stable_baseline_ref then
@@ -582,9 +582,15 @@ function M.setup_commands()
       if stash_list and stash_list ~= '' then
         local stash_ref = stash_list:match('^(stash@{%d+})')
         if stash_ref then
-          M.stable_baseline_ref = stash_ref
-          persistence.current_stash_ref = stash_ref
-          vim.notify('Using baseline: ' .. stash_ref, vim.log.levels.INFO)
+          -- Get the SHA of this stash for stability
+          local sha_cmd = string.format('git rev-parse %s', stash_ref)
+          local stash_sha = utils.exec(sha_cmd)
+          if stash_sha then
+            stash_sha = stash_sha:gsub('%s+', '') -- trim whitespace
+            M.stable_baseline_ref = stash_sha
+            persistence.current_stash_ref = stash_sha
+            vim.notify('Using baseline: ' .. stash_sha .. ' (from ' .. stash_ref .. ')', vim.log.levels.INFO)
+          end
         end
       end
     end
@@ -682,7 +688,7 @@ function M.setup_commands()
     end
     
     local file_path = vim.api.nvim_buf_get_name(0)
-    local relative_path = file_path:gsub(git_root .. '/', '')
+    local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
     
     if M.claude_edited_files[relative_path] then
       M.claude_edited_files[relative_path] = nil

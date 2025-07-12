@@ -104,15 +104,21 @@ require('nvim-claude').setup({
 
 ### Inline Diff Review
 When Claude makes changes to your files:
+
+**Buffer-local keymaps (when viewing diffs):**
+- `]h` / `[h` - Navigate to next/previous hunk
 - `<leader>ia` - Accept current hunk
 - `<leader>ir` - Reject current hunk
-- `<leader>in` - Next hunk
-- `<leader>ip` - Previous hunk
-- `<leader>ii` - Accept all hunks in current file
-- `<leader>io` - Reject all hunks in current file
-- `<leader>ci` - Next file with diffs
-- `<leader>co` - Previous file with diffs
-- `<leader>ca` - Accept all diffs across all files
+- `<leader>iA` - Accept all hunks in current file
+- `<leader>iR` - Reject all hunks in current file
+- `<leader>il` - List all files with Claude diffs
+- `<leader>iq` - Close inline diff view
+
+**Global keymaps:**
+- `<leader>ci` - List files with Claude diffs
+- `<leader>IA` - Accept ALL diffs in ALL files
+- `<leader>IR` - Reject ALL diffs in ALL files
+- `]f` / `[f` - Navigate to next/previous file with diffs
 
 ### Agent Management
 - `<leader>cA` - Create a new background agent
@@ -158,9 +164,10 @@ When Claude makes changes to your files:
 ### Code Review Workflow
 1. Make a request to Claude that involves code changes
 2. When Claude edits files, inline diffs appear automatically
-3. Navigate hunks with `<leader>in` / `<leader>ip`
+3. Navigate hunks with `]h` / `[h`
 4. Accept with `<leader>ia` or reject with `<leader>ir`
-5. Accept all changes in a file with `<leader>ii`
+5. Accept all changes in a file with `<leader>iA`
+6. Navigate between files with diffs using `]f` / `[f`
 
 ### Background Agent Workflow
 1. Create an agent: `:ClaudeAgent implement new feature X`

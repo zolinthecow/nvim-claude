@@ -13,7 +13,7 @@ function M.save_state(diff_data)
   -- {
   --   version: 1,
   --   timestamp: <unix_timestamp>,
-  --   stash_ref: "stash@{0}",
+  --   stash_ref: "<stash_sha>",
   --   files: {
   --     "/path/to/file": {
   --       original_content: "...",
@@ -30,7 +30,7 @@ function M.save_state(diff_data)
     version = 1,
     timestamp = os.time(),
     stash_ref = diff_data.stash_ref,
-    claude_edited_files = hooks.claude_edited_files or {},
+    claude_edited_files = diff_data.claude_edited_files or hooks.claude_edited_files or {},
     diff_files = {},  -- Add diff_files to persistence
     files = {}
   }
@@ -83,10 +83,21 @@ function M.load_state()
   
   -- Check if stash still exists
   if state.stash_ref then
-    local cmd = string.format('git stash list | grep -q "%s"', state.stash_ref:gsub("{", "\\{"):gsub("}", "\\}"))
-    local result = os.execute(cmd)
+    -- Check if it's a SHA (40 hex chars) or a stash reference
+    local is_sha = state.stash_ref:match('^%x+$') and #state.stash_ref >= 7
+    local check_cmd
+    
+    if is_sha then
+      -- For SHA, check if the commit object exists
+      check_cmd = string.format('git cat-file -e %s 2>/dev/null', state.stash_ref)
+    else
+      -- For stash reference, check stash list (escape special chars)
+      check_cmd = string.format('git stash list | grep -q "%s"', state.stash_ref:gsub("{", "\\{"):gsub("}", "\\}"))
+    end
+    
+    local result = os.execute(check_cmd)
     if result ~= 0 then
-      vim.notify('Saved stash no longer exists: ' .. state.stash_ref, vim.log.levels.WARN)
+      vim.notify('Saved stash/commit no longer exists: ' .. state.stash_ref, vim.log.levels.WARN)
       M.clear_state()
       return nil
     end
@@ -244,12 +255,8 @@ function M.create_stash(message)
     local store_cmd = string.format('git stash store -m "%s" %s', message, stash_hash)
     utils.exec(store_cmd)
     
-    -- Get the stash reference
-    local stash_list = utils.exec('git stash list -n 1')
-    if stash_list then
-      local stash_ref = stash_list:match('^(stash@{%d+})')
-      return stash_ref
-    end
+    -- Return the SHA directly - it's more stable than stash@{0}
+    return stash_hash
   end
   
   return nil

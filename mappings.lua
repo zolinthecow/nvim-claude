@@ -81,12 +81,24 @@ function M.setup(config, commands)
     silent = true
   })
   
+  -- Note: File-level operations are handled by buffer-local keymaps when viewing diffs
+  -- <leader>iA and <leader>iR work on the current file when you have diffs open
+  
   -- Global keymap to accept all diffs across all files
-  vim.keymap.set('n', '<leader>iAA', function()
+  vim.keymap.set('n', '<leader>IA', function()
     local inline_diff = require('nvim-claude.inline-diff')
     inline_diff.accept_all_files()
   end, {
     desc = 'Accept ALL Claude diffs in ALL files',
+    silent = true
+  })
+  
+  -- Global keymap to reject all diffs across all files
+  vim.keymap.set('n', '<leader>IR', function()
+    local inline_diff = require('nvim-claude.inline-diff')
+    inline_diff.reject_all_files()
+  end, {
+    desc = 'Reject ALL Claude diffs in ALL files',
     silent = true
   })
 end

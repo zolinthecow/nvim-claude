@@ -266,11 +266,11 @@ function M.setup_inline_keymaps(bufnr)
   vim.keymap.set('n', '<leader>ir', function() M.reject_current_hunk(bufnr) end,
     vim.tbl_extend('force', opts, { desc = 'Reject Claude hunk' }))
   
-  -- Accept/Reject all
+  -- Accept/Reject all in current file
   vim.keymap.set('n', '<leader>iA', function() M.accept_all_hunks(bufnr) end,
-    vim.tbl_extend('force', opts, { desc = 'Accept all Claude hunks' }))
+    vim.tbl_extend('force', opts, { desc = 'Accept all Claude hunks in current file' }))
   vim.keymap.set('n', '<leader>iR', function() M.reject_all_hunks(bufnr) end,
-    vim.tbl_extend('force', opts, { desc = 'Reject all Claude hunks' }))
+    vim.tbl_extend('force', opts, { desc = 'Reject all Claude hunks in current file' }))
   
   -- List files with diffs
   vim.keymap.set('n', '<leader>il', function() M.list_diff_files() end,
@@ -394,34 +394,43 @@ function M.accept_current_hunk(bufnr)
   
   vim.notify(string.format('Accepting hunk %d/%d', hunk_idx, #diff_data.hunks), vim.log.levels.INFO)
   
-  -- Mark this hunk as accepted
-  diff_data.applied_hunks[hunk_idx] = 'accepted'
+  local utils = require('nvim-claude.utils')
+  local hooks = require('nvim-claude.hooks')
+  local persistence = require('nvim-claude.inline-diff-persistence')
+  local git_root = utils.get_project_root()
+  local file_path = vim.api.nvim_buf_get_name(bufnr)
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
   
-  -- Get current buffer content as the new baseline for this file
+  -- For accepting, we just need to update what we consider the baseline
+  -- The current state becomes the new baseline
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local current_content = table.concat(current_lines, '\n')
   
-  -- Update the in-memory baseline to current content
+  -- Update in-memory baseline
   M.original_content[bufnr] = current_content
   
-  -- Recalculate diff
+  -- Save state for persistence
+  if persistence.current_stash_ref then
+    persistence.save_state({ stash_ref = persistence.current_stash_ref })
+  end
+  
+  -- Recalculate diff against the new baseline
   local new_diff_data = M.compute_diff(current_content, current_content)
   
   if not new_diff_data or #new_diff_data.hunks == 0 then
     -- All changes accepted for this file
-    vim.notify('All changes accepted. Closing inline diff.', vim.log.levels.INFO)
+    vim.notify('All changes accepted for this file.', vim.log.levels.INFO)
     
     -- Remove this file from Claude edited files tracking
-    local utils = require('nvim-claude.utils')
-    local hooks = require('nvim-claude.hooks')
-    local git_root = utils.get_project_root()
-    local file_path = vim.api.nvim_buf_get_name(bufnr)
-    local relative_path = file_path:gsub(git_root .. '/', '')
-    
     if hooks.claude_edited_files[relative_path] then
       hooks.claude_edited_files[relative_path] = nil
+      persistence.save_state({ 
+        stash_ref = persistence.current_stash_ref,
+        claude_edited_files = hooks.claude_edited_files 
+      })
     end
     
+    -- Close inline diff for this buffer
     M.close_inline_diff(bufnr, true)
   else
     -- This shouldn't happen when accepting current state
@@ -451,7 +460,7 @@ function M.reject_current_hunk(bufnr)
   local utils = require('nvim-claude.utils')
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
-  local relative_path = file_path:gsub(git_root .. '/', '')
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
   
   -- Generate patch for this hunk
   local patch = M.generate_hunk_patch(hunk, relative_path)
@@ -503,7 +512,18 @@ function M.reject_current_hunk(bufnr)
     local new_diff_data = M.compute_diff(new_baseline, current_content)
     
     if not new_diff_data or #new_diff_data.hunks == 0 then
-      vim.notify('All changes processed. Closing inline diff.', vim.log.levels.INFO)
+      vim.notify('All changes rejected for this file.', vim.log.levels.INFO)
+      
+      -- Remove this file from Claude edited files tracking
+      if hooks.claude_edited_files[relative_path] then
+        hooks.claude_edited_files[relative_path] = nil
+        local persistence = require('nvim-claude.inline-diff-persistence')
+        persistence.save_state({ 
+          stash_ref = persistence.current_stash_ref,
+          claude_edited_files = hooks.claude_edited_files 
+        })
+      end
+      
       M.close_inline_diff(bufnr, false)
     else
       -- Update diff data
@@ -697,7 +717,7 @@ function M.accept_all_hunks(bufnr)
   local hooks = require('nvim-claude.hooks')
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
-  local relative_path = file_path:gsub(git_root .. '/', '')
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
   
   if hooks.claude_edited_files[relative_path] then
     hooks.claude_edited_files[relative_path] = nil
@@ -991,6 +1011,80 @@ function M.accept_all_files()
   persistence.clear_state()
   
   vim.notify(string.format('Accepted all changes from %d files', cleared_count), vim.log.levels.INFO)
+end
+
+-- Reject all diffs across all files
+function M.reject_all_files()
+  local hooks = require('nvim-claude.hooks')
+  local utils = require('nvim-claude.utils')
+  local persistence = require('nvim-claude.inline-diff-persistence')
+  
+  -- Count tracked files for reporting
+  local file_count = vim.tbl_count(hooks.claude_edited_files)
+  
+  if file_count == 0 then
+    vim.notify('No Claude edits to reject', vim.log.levels.INFO)
+    return
+  end
+  
+  -- Get git root
+  local git_root = utils.get_project_root()
+  if not git_root then
+    vim.notify('Not in a git repository', vim.log.levels.ERROR)
+    return
+  end
+  
+  -- Get baseline reference
+  local baseline_ref = hooks.stable_baseline_ref
+  if not baseline_ref then
+    vim.notify('No baseline found to restore from', vim.log.levels.ERROR)
+    return
+  end
+  
+  -- Restore each Claude-edited file to baseline
+  local restored_files = {}
+  for relative_path, _ in pairs(hooks.claude_edited_files) do
+    local full_path = git_root .. '/' .. relative_path
+    
+    -- Use git show to get the file content from baseline
+    local cmd = string.format('cd "%s" && git show %s:"%s" > "%s"', git_root, baseline_ref, relative_path, full_path)
+    local result, err = utils.exec(cmd)
+    
+    if not err then
+      table.insert(restored_files, relative_path)
+    else
+      -- File might not exist in baseline (new file), so delete it
+      local delete_cmd = string.format('rm -f "%s"', full_path)
+      utils.exec(delete_cmd)
+      table.insert(restored_files, relative_path .. ' (deleted)')
+    end
+  end
+  
+  -- Clear all visual diff displays from all buffers
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
+      vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+    end
+  end
+  
+  -- Clear all diff state
+  M.diff_files = {}
+  M.original_content = {}
+  M.active_diffs = {}
+  
+  -- Clear all tracking
+  hooks.claude_edited_files = {}
+  
+  -- Clear persistence but keep baseline
+  persistence.save_state({
+    claude_edited_files = {},
+    stash_ref = baseline_ref  -- Keep baseline for future edits
+  })
+  
+  -- Refresh all buffers
+  vim.cmd('checktime')
+  
+  vim.notify(string.format('Rejected all Claude changes in %d files', file_count), vim.log.levels.INFO)
 end
 
 return M
