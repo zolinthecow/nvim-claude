@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `<leader>cb` behavior changed to match `:ClaudeBg` command (opens interactive UI)
 
-## [1.0.1] - 2025-01-12
+## [0.0.2] - 2025-01-12
 
 ### Fixed
 - File path handling now properly escapes special characters in git root paths
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved persistence handling to support both SHA and traditional stash references
 - Better state management when accepting/rejecting hunks
 
-## [1.0.0] - 2025-01-11
+## [0.0.1] - 2025-01-11
 
 ### Added
 - Initial release
