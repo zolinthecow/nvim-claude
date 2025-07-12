@@ -708,15 +708,15 @@ function M.create_agent_from_task(task, fork_from)
   local work_dir = project_root .. '/' .. claude.config.agents.work_dir
   local agent_dir = work_dir .. '/' .. claude.utils.agent_dirname(task)
   
+  -- Add to gitignore first (before creating directory) to ensure it happens
+  if claude.config.agents.auto_gitignore then
+    claude.git.add_to_gitignore(claude.config.agents.work_dir .. '/')
+  end
+  
   -- Ensure work directory exists
   if not claude.utils.ensure_dir(work_dir) then
     vim.notify('Failed to create work directory', vim.log.levels.ERROR)
     return
-  end
-  
-  -- Add to gitignore if needed
-  if claude.config.agents.auto_gitignore then
-    claude.git.add_to_gitignore(claude.config.agents.work_dir .. '/')
   end
   
   -- Create agent directory

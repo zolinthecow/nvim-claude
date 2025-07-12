@@ -25,9 +25,9 @@ function M.setup(config, commands)
     silent = true
   })
   
-  vim.keymap.set('n', prefix .. 'b', ':ClaudeBg ', {
+  vim.keymap.set('n', prefix .. 'b', ':ClaudeBg<CR>', {
     desc = 'Start background agent',
-    silent = false  -- Allow user to type the task
+    silent = true
   })
   
   vim.keymap.set('n', prefix .. 'l', ':ClaudeAgents<CR>', {
