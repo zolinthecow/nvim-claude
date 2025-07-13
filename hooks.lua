@@ -44,32 +44,90 @@ function M.setup()
 end
 
 -- Pre-tool-use hook: Create baseline stash if we don't have one
+function M.pre_tool_use_hook_test()
+  -- Simple debug: Write to a global variable first
+  _G.NVIM_CLAUDE_PRE_HOOK_CALLED = os.time()
+  _G.NVIM_CLAUDE_PRE_HOOK_COUNT = (_G.NVIM_CLAUDE_PRE_HOOK_COUNT or 0) + 1
+  
+  -- Also try vim.notify to see if it shows up
+  vim.notify(string.format("PRE-HOOK CALLED! Count: %d, Time: %s", 
+    _G.NVIM_CLAUDE_PRE_HOOK_COUNT, 
+    os.date("%H:%M:%S")), 
+    vim.log.levels.WARN)
+  
+  -- For now, just return true without doing anything else
+  return true
+end
+
+-- Original pre-hook implementation (now restored)
 function M.pre_tool_use_hook()
   local persistence = require 'nvim-claude.inline-diff-persistence'
   
-  -- Debug: Log to file
-  local debug_file = io.open("/tmp/nvim-claude-hook-debug.log", "a")
-  if debug_file then
-    debug_file:write(string.format("\n[%s] PRE_HOOK START\n", os.date("%Y-%m-%d %H:%M:%S")))
-    
-    -- Try to read LICENSE file content from disk
-    local license_file = io.open("/Users/colinzhao/dots/.config/nvim/lua/nvim-claude/LICENSE", "r")
-    if license_file then
-      local content = license_file:read("*a")
-      local lines = vim.split(content, "\n")
-      debug_file:write(string.format("  LICENSE from disk line 4: '%s'\n", lines[4] or "nil"))
-      debug_file:write(string.format("  LICENSE from disk line 5: '%s'\n", lines[5] or "nil"))
-      license_file:close()
+  -- Debug: Log to file with error handling
+  local ok, err = pcall(function()
+    local debug_file = io.open("/tmp/nvim-claude-hook-debug.log", "a")
+    if debug_file then
+      debug_file:write(string.format("\n[%s] PRE_HOOK START (CALLED FROM CLAUDE CODE)\n", os.date("%Y-%m-%d %H:%M:%S.%f"):sub(1,-4)))
+      
+      -- Log current working directory
+      local utils = require('nvim-claude.utils')
+      local cwd = utils.exec('pwd')
+      debug_file:write(string.format("  CWD: %s\n", cwd:gsub('\n', '')))
+      
+      -- Check git diff against HEAD to see current state
+      local git_diff = utils.exec('cd /Users/colinzhao/dots/.config/nvim/lua/nvim-claude && git diff HEAD LICENSE')
+      debug_file:write(string.format("  Git diff HEAD LICENSE (length=%d):\n", #(git_diff or "")))
+      if git_diff and git_diff ~= "" then
+        -- Show first few lines of diff
+        local diff_lines = vim.split(git_diff, "\n")
+        for i = 1, math.min(10, #diff_lines) do
+          debug_file:write(string.format("    %s\n", diff_lines[i]))
+        end
+      else
+        debug_file:write("    (no diff)\n")
+      end
+      
+      -- Try to read LICENSE file content from disk
+      local license_file = io.open("/Users/colinzhao/dots/.config/nvim/lua/nvim-claude/LICENSE", "r")
+      if license_file then
+        local content = license_file:read("*a")
+        local lines = vim.split(content, "\n")
+        debug_file:write(string.format("  LICENSE from disk line 4: '%s'\n", lines[4] or "nil"))
+        debug_file:write(string.format("  LICENSE from disk line 5: '%s'\n", lines[5] or "nil"))
+        license_file:close()
+      else
+        debug_file:write("  ERROR: Could not read LICENSE file\n")
+      end
+      
+      -- Check git status
+      local git_status = utils.exec('cd /Users/colinzhao/dots/.config/nvim/lua/nvim-claude && git status --porcelain LICENSE')
+      debug_file:write(string.format("  Git status LICENSE: '%s'\n", git_status or "nil"))
+      
+      -- Check if we already have a baseline
+      debug_file:write(string.format("  Current baseline ref: %s\n", M.stable_baseline_ref or "nil"))
+      
+      -- Store reference for later
+      M._debug_file = debug_file
     end
-    
-    -- Check git status
-    local utils = require('nvim-claude.utils')
-    local git_status = utils.exec('cd /Users/colinzhao/dots/.config/nvim/lua/nvim-claude && git status --porcelain LICENSE')
-    debug_file:write(string.format("  Git status LICENSE: '%s'\n", git_status or "nil"))
+  end)
+  
+  if not ok then
+    -- Try to log the error
+    local f = io.open("/tmp/nvim-claude-hook-debug.log", "a")
+    if f then
+      f:write(string.format("\n[%s] PRE_HOOK ERROR: %s\n", os.date("%Y-%m-%d %H:%M:%S"), tostring(err)))
+      f:close()
+    end
   end
+  
+  local debug_file = M._debug_file
   
   -- Only create a baseline if we don't have one yet
   if not M.stable_baseline_ref then
+    if debug_file then
+      debug_file:write(string.format("  Creating baseline stash NOW at %s\n", os.date("%Y-%m-%d %H:%M:%S.%f"):sub(1,-4)))
+    end
+    
     -- Create baseline stash synchronously
     local stash_ref = persistence.create_stash('nvim-claude: baseline ' .. os.date('%Y-%m-%d %H:%M:%S'))
     if stash_ref then
@@ -77,6 +135,20 @@ function M.pre_tool_use_hook()
       persistence.current_stash_ref = stash_ref
       if debug_file then
         debug_file:write(string.format("  Created baseline stash: %s\n", stash_ref))
+        
+        -- Immediately check what's in the stash
+        local utils = require('nvim-claude.utils')
+        local stash_content = utils.exec(string.format('git show %s:LICENSE | head -5', stash_ref))
+        debug_file:write(string.format("  Baseline stash LICENSE content (first 5 lines):\n"))
+        if stash_content then
+          for _, line in ipairs(vim.split(stash_content, "\n")) do
+            debug_file:write(string.format("    %s\n", line))
+          end
+        end
+      end
+    else
+      if debug_file then
+        debug_file:write("  ERROR: Failed to create baseline stash\n")
       end
     end
   else
@@ -392,7 +464,8 @@ function M.install_hooks()
 
   -- Create hooks configuration using proxy scripts
   local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h")
-  local pre_command = plugin_dir .. '/nvr-proxy.sh --remote-expr \'luaeval("require(\\"nvim-claude.hooks\\").pre_tool_use_hook())\''
+  -- Use a simpler command that doesn't require complex quoting
+  local pre_command = plugin_dir .. '/pre-hook-wrapper.sh'
   local post_command = plugin_dir .. '/post-hook-wrapper.sh'
 
   local hooks_config = {
