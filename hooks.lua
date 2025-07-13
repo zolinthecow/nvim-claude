@@ -47,6 +47,27 @@ end
 function M.pre_tool_use_hook()
   local persistence = require 'nvim-claude.inline-diff-persistence'
   
+  -- Debug: Log to file
+  local debug_file = io.open("/tmp/nvim-claude-hook-debug.log", "a")
+  if debug_file then
+    debug_file:write(string.format("\n[%s] PRE_HOOK START\n", os.date("%Y-%m-%d %H:%M:%S")))
+    
+    -- Try to read LICENSE file content from disk
+    local license_file = io.open("/Users/colinzhao/dots/.config/nvim/lua/nvim-claude/LICENSE", "r")
+    if license_file then
+      local content = license_file:read("*a")
+      local lines = vim.split(content, "\n")
+      debug_file:write(string.format("  LICENSE from disk line 4: '%s'\n", lines[4] or "nil"))
+      debug_file:write(string.format("  LICENSE from disk line 5: '%s'\n", lines[5] or "nil"))
+      license_file:close()
+    end
+    
+    -- Check git status
+    local utils = require('nvim-claude.utils')
+    local git_status = utils.exec('cd /Users/colinzhao/dots/.config/nvim/lua/nvim-claude && git status --porcelain LICENSE')
+    debug_file:write(string.format("  Git status LICENSE: '%s'\n", git_status or "nil"))
+  end
+  
   -- Only create a baseline if we don't have one yet
   if not M.stable_baseline_ref then
     -- Create baseline stash synchronously
@@ -54,7 +75,19 @@ function M.pre_tool_use_hook()
     if stash_ref then
       M.stable_baseline_ref = stash_ref
       persistence.current_stash_ref = stash_ref
+      if debug_file then
+        debug_file:write(string.format("  Created baseline stash: %s\n", stash_ref))
+      end
     end
+  else
+    if debug_file then
+      debug_file:write(string.format("  Already have baseline: %s\n", M.stable_baseline_ref))
+    end
+  end
+  
+  if debug_file then
+    debug_file:write(string.format("[%s] PRE_HOOK END\n", os.date("%Y-%m-%d %H:%M:%S")))
+    debug_file:close()
   end
   
   -- Return success to allow the tool to proceed
@@ -62,7 +95,13 @@ function M.pre_tool_use_hook()
 end
 
 -- Post-tool-use hook: Create stash of Claude's changes and trigger diff review
-function M.post_tool_use_hook()
+function M.post_tool_use_hook(file_path)
+  -- Debug: Log to file
+  local debug_file = io.open("/tmp/nvim-claude-hook-debug.log", "a")
+  if debug_file then
+    debug_file:write(string.format("\n[%s] POST_HOOK START (file_path=%s)\n", os.date("%Y-%m-%d %H:%M:%S"), file_path or "nil"))
+  end
+  
   -- Run directly without vim.schedule for testing
   local utils = require 'nvim-claude.utils'
   local persistence = require 'nvim-claude.inline-diff-persistence'
@@ -83,6 +122,15 @@ function M.post_tool_use_hook()
     return
   end
 
+  -- If file_path is provided, track it specifically
+  if file_path then
+    local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+    M.claude_edited_files[relative_path] = true
+    if debug_file then
+      debug_file:write(string.format("  Tracked file from parameter: %s\n", relative_path))
+    end
+  end
+  
   -- Get list of modified files
   local modified_files = {}
   local inline_diff = require 'nvim-claude.inline-diff'
@@ -145,6 +193,11 @@ function M.post_tool_use_hook()
     if not opened_inline then
       vim.notify('Claude made changes. Open the modified files to see inline diffs.', vim.log.levels.INFO)
     end
+  end
+  
+  if debug_file then
+    debug_file:write(string.format("[%s] POST_HOOK END\n", os.date("%Y-%m-%d %H:%M:%S")))
+    debug_file:close()
   end
 end
 
@@ -337,16 +390,10 @@ function M.install_hooks()
     vim.fn.mkdir(claude_dir, 'p')
   end
 
-  -- Create hooks configuration
-  local server_name = vim.v.servername or 'NVIM'
-  local pre_command = string.format(
-    'nvim --headless --server %s --remote-send "<C-\\><C-N>:lua require(\'nvim-claude.hooks\').pre_tool_use_hook()<CR>" 2>/dev/null || true',
-    server_name
-  )
-  local post_command = string.format(
-    'nvim --headless --server %s --remote-send "<C-\\><C-N>:lua require(\'nvim-claude.hooks\').post_tool_use_hook()<CR>" 2>/dev/null || true',
-    server_name
-  )
+  -- Create hooks configuration using proxy scripts
+  local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h")
+  local pre_command = plugin_dir .. '/nvr-proxy.sh --remote-expr \'luaeval("require(\\"nvim-claude.hooks\\").pre_tool_use_hook())\''
+  local post_command = plugin_dir .. '/post-hook-wrapper.sh'
 
   local hooks_config = {
     hooks = {

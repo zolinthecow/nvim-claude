@@ -18,6 +18,10 @@ function M.update_claude_settings()
     return
   end
   
+  -- Write server address to project-specific file for proxy script
+  local server_file = project_root .. '/.nvim-server'
+  vim.fn.writefile({server_addr}, server_file)
+  
   -- Ensure .claude directory exists
   if vim.fn.isdirectory(settings_dir) == 0 then
     vim.fn.mkdir(settings_dir, 'p')
@@ -46,16 +50,10 @@ function M.update_claude_settings()
     settings.hooks.PostToolUse = {}
   end
   
-  -- Update hook commands with current server address
-  local pre_hook_cmd = string.format(
-    'nvr --servername "%s" --remote-expr \'luaeval("require(\\"nvim-claude.hooks\\").pre_tool_use_hook()")\'',
-    server_addr
-  )
-  
-  local post_hook_cmd = string.format(
-    'nvr --servername "%s" --remote-send "<C-\\\\><C-N>:lua require(\'nvim-claude.hooks\').post_tool_use_hook()<CR>"',
-    server_addr
-  )
+  -- Update hook commands to use proxy scripts
+  -- The scripts are in the same directory as this Lua module
+  local pre_hook_cmd = '/Users/colinzhao/dots/.config/nvim/lua/nvim-claude/nvr-proxy.sh --remote-expr \'luaeval("require(\\"nvim-claude.hooks\\").pre_tool_use_hook())\''
+  local post_hook_cmd = '/Users/colinzhao/dots/.config/nvim/lua/nvim-claude/post-hook-wrapper.sh'
   
   -- Update PreToolUse hooks
   local pre_hook_found = false
@@ -104,7 +102,7 @@ function M.setup()
       -- Defer to ensure servername is available
       vim.defer_fn(function()
         M.update_claude_settings()
-      end, 100)
+      end, 500)
     end,
   })
 end

@@ -1,6 +1,7 @@
 The MIT License (MIT)
 
 Copyright (c) 2024-2025 nvim-claude contributors and community
+Original work by the nvim-claude team
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,3 +22,5 @@ out of or in connection with the Software or the use or other dealings in the
 Software.
 
 This license is compatible with both commercial and open-source usage.
+
+Feel free to use, modify, and distribute this software!

@@ -8,15 +8,12 @@ local ns_id = vim.api.nvim_create_namespace('nvim_claude_inline_diff')
 
 -- State tracking
 M.active_diffs = {} -- Track active inline diffs by buffer number
-M.original_content = {} -- Store original buffer content
 M.diff_files = {} -- Track all files with diffs for navigation
 
 -- Initialize inline diff for a buffer
 function M.show_inline_diff(bufnr, old_content, new_content)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   
-  -- Store original content
-  M.original_content[bufnr] = old_content
   
   -- Track this file in our diff files list
   local file_path = vim.api.nvim_buf_get_name(bufnr)
@@ -371,12 +368,8 @@ end
 -- Simplified approach: update baseline in memory only
 -- The complex git stash approach was causing issues
 function M.update_file_baseline(bufnr)
-  -- Simply update the in-memory baseline to current buffer content
-  local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local current_content = table.concat(current_lines, '\n')
-  M.original_content[bufnr] = current_content
-  
-  -- Save state for persistence
+  -- No longer storing in memory - we always read from git stash
+  -- Just save state for persistence
   local persistence = require('nvim-claude.inline-diff-persistence')
   if persistence.current_stash_ref then
     persistence.save_state({ stash_ref = persistence.current_stash_ref })
@@ -406,8 +399,6 @@ function M.accept_current_hunk(bufnr)
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local current_content = table.concat(current_lines, '\n')
   
-  -- Update in-memory baseline
-  M.original_content[bufnr] = current_content
   
   -- Save state for persistence
   if persistence.current_stash_ref then
@@ -502,8 +493,6 @@ function M.reject_current_hunk(bufnr)
   local new_baseline = utils.exec(baseline_cmd)
   
   if new_baseline then
-    M.original_content[bufnr] = new_baseline
-    
     -- Get current content
     local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     local current_content = table.concat(current_lines, '\n')
@@ -709,8 +698,6 @@ function M.accept_all_hunks(bufnr)
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local current_content = table.concat(current_lines, '\n')
   
-  -- Update the in-memory baseline to current content
-  M.original_content[bufnr] = current_content
   
   -- Remove this file from Claude edited files tracking
   local utils = require('nvim-claude.utils')
@@ -760,9 +747,6 @@ function M.close_inline_diff(bufnr, keep_baseline)
   if file_path and M.diff_files[file_path] then
     M.diff_files[file_path] = nil
   end
-  
-  -- Clear the in-memory baseline
-  M.original_content[bufnr] = nil
   
   -- Check if all diffs are closed
   local has_active_diffs = false
@@ -1000,7 +984,6 @@ function M.accept_all_files()
   
   -- Clear all diff state
   M.diff_files = {}
-  M.original_content = {}
   M.active_diffs = {}
   
   -- Clear all tracking
@@ -1069,7 +1052,6 @@ function M.reject_all_files()
   
   -- Clear all diff state
   M.diff_files = {}
-  M.original_content = {}
   M.active_diffs = {}
   
   -- Clear all tracking
