@@ -55,6 +55,15 @@ end
 function M.compute_diff(old_text, new_text)
   local utils = require('nvim-claude.utils')
   
+  -- Ensure consistent newline endings to avoid phantom diffs
+  -- Both texts should end with newline for consistent git diff behavior
+  if old_text ~= '' and not old_text:match('\n$') then
+    old_text = old_text .. '\n'
+  end
+  if new_text ~= '' and not new_text:match('\n$') then
+    new_text = new_text .. '\n'
+  end
+  
   -- Write texts to temp files
   local old_file = '/tmp/nvim-claude-old.txt'
   local new_file = '/tmp/nvim-claude-new.txt'

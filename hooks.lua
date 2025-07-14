@@ -358,6 +358,10 @@ function M.post_tool_use_hook(file_path)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
   M.claude_edited_files[relative_path] = true
 
+  -- Also add to diff_files for <leader>ci to show it immediately
+  local inline_diff = require 'nvim-claude.inline-diff'
+  inline_diff.diff_files[file_path] = -1  -- -1 indicates unopened file
+
   -- Save to persistence
   persistence.save_state({ 
     stash_ref = M.stable_baseline_ref,

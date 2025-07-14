@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Per-file baseline management for accurate diff tracking
+- Fixed phantom diff hunks at end of files caused by newline inconsistencies
+
 ### Fixed
 - Background agent creation now properly adds `.agent-work/` to gitignore before creating directories
 - `<leader>cb` keybinding now opens the agent creation UI instead of waiting for text input
