@@ -14,7 +14,7 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 ## Requirements
 
 ### Required
-- Neovim >= 0.9.0 (must be started with `--listen` or have `v:servername` set for hooks)
+- Neovim >= 0.9.0
 - [Claude Code CLI](https://claude.ai/download) - The `claude` command must be in your PATH
 - Tmux (for chat interface and background agents)
 - Git (for diff management and worktrees)
@@ -25,7 +25,8 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 - [which-key.nvim](https://github.com/folke/which-key.nvim) - For keybinding hints
 
 ### Notes
-- For inline diff hooks to work, Neovim must be started with a server name (e.g., `nvim --listen /tmp/nvim-server.pipe`)
+- The plugin creates a `.nvim-claude/` directory in your project root for storing state
+- Neovim's server address is automatically saved to `.nvim-claude/nvim-server`
 - On macOS, Claude Code CLI can be installed from the Claude desktop app
 - The plugin uses git worktrees for agent isolation, so Git 2.5+ is recommended
 

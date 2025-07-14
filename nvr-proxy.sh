@@ -46,13 +46,29 @@ if [ -f "$SERVER_FILE" ]; then
     fi
 else
     echo "[$(date)] No server file found at $SERVER_FILE" >> "$DEBUG_LOG"
-    # Fallback: check script directory (useful for submodules when .nvim-server exists there)
+    # Fallback: check script directory (useful for submodules)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SERVER_FILE="$SCRIPT_DIR/.nvim-server"
+    SERVER_FILE="$SCRIPT_DIR/.nvim-claude/nvim-server"
+    OLD_SERVER_FILE="$SCRIPT_DIR/.nvim-server"
     echo "[$(date)] Fallback: Looking for server file: $SERVER_FILE" >> "$DEBUG_LOG"
     if [ -f "$SERVER_FILE" ]; then
         NVIM_SERVER=$(cat "$SERVER_FILE")
-        echo "[$(date)] Found server: $NVIM_SERVER" >> "$DEBUG_LOG"
+        echo "[$(date)] Found server in .nvim-claude: $NVIM_SERVER" >> "$DEBUG_LOG"
+        if [ -n "$NVIM_SERVER" ] && [ -e "$NVIM_SERVER" ]; then
+            echo "[$(date)] Running: nvr --servername $NVIM_SERVER $@" >> "$DEBUG_LOG"
+            # Capture output and exit code
+            OUTPUT=$(nvr --servername "$NVIM_SERVER" "$@" 2>&1)
+            EXIT_CODE=$?
+            echo "[$(date)] nvr exit code: $EXIT_CODE" >> "$DEBUG_LOG"
+            echo "[$(date)] nvr output: $OUTPUT" >> "$DEBUG_LOG"
+            # Pass through the output to stdout
+            echo "$OUTPUT"
+            exit $EXIT_CODE
+        fi
+    elif [ -f "$OLD_SERVER_FILE" ]; then
+        # Try old location as fallback
+        NVIM_SERVER=$(cat "$OLD_SERVER_FILE")
+        echo "[$(date)] Found server in old location: $NVIM_SERVER" >> "$DEBUG_LOG"
         if [ -n "$NVIM_SERVER" ] && [ -e "$NVIM_SERVER" ]; then
             echo "[$(date)] Running: nvr --servername $NVIM_SERVER $@" >> "$DEBUG_LOG"
             # Capture output and exit code

@@ -3,3 +3,6 @@
 .claude/
 .agent-work/
 .nvim-server
+
+# Claude Code hooks
+.nvim-claude/
