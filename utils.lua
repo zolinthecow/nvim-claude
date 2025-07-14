@@ -26,6 +26,30 @@ function M.get_project_root()
   return vim.fn.getcwd()
 end
 
+-- Get project root for a specific file path
+function M.get_project_root_for_file(file_path)
+  if not file_path then
+    return M.get_project_root()
+  end
+  
+  -- Get the directory of the file
+  local file_dir = vim.fn.fnamemodify(file_path, ':h')
+  
+  -- Run git command from the file's directory
+  local cmd = string.format('cd "%s" && git rev-parse --show-toplevel 2>/dev/null', file_dir)
+  local handle = io.popen(cmd)
+  if handle then
+    local root = handle:read('*a'):gsub('\n', '')
+    handle:close()
+    if root ~= '' then
+      return root
+    end
+  end
+  
+  -- Fallback to file's directory if not in git
+  return file_dir
+end
+
 -- Create directory if it doesn't exist
 function M.ensure_dir(path)
   local stat = vim.loop.fs_stat(path)

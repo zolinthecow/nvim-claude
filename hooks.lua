@@ -88,7 +88,7 @@ function M.pre_tool_use_hook(file_path)
     return M.legacy_pre_tool_use_hook()
   end
 
-  local git_root = utils.get_project_root()
+  local git_root = utils.get_project_root_for_file(file_path)
   if not git_root then
     if debug_file then
       debug_file:write('  Not in git repository\n')
@@ -193,11 +193,6 @@ function M.update_baseline_for_file(relative_path, git_root)
     return
   end
   
-  -- Strategy: Create a new stash that combines the existing baseline with current file state
-  -- 1. Create a temporary commit with current file state
-  -- 2. Use git cherry-pick or patch to apply current file to baseline
-  -- 3. Create new stash from result
-  
   -- Read current file content
   local current_content = utils.read_file(full_path)
   if not current_content then
@@ -207,112 +202,76 @@ function M.update_baseline_for_file(relative_path, git_root)
     return
   end
   
-  -- Create a temporary file with current content
-  local temp_file = '/tmp/nvim-claude-baseline-update-' .. os.time()
-  utils.write_file(temp_file, current_content)
-  
-  -- Use git's plumbing to create a new tree that combines baseline + current file
+  -- Use simpler approach with temporary index
   local success = pcall(function()
-    -- Get the tree of the current baseline stash
-    local baseline_tree_cmd = string.format('cd "%s" && git rev-parse %s^{tree}', git_root, M.stable_baseline_ref)
-    local baseline_tree, err = utils.exec(baseline_tree_cmd)
+    -- Create a unique temporary directory
+    local temp_dir = '/tmp/nvim-claude-baseline-' .. os.time() .. '-' .. math.random(10000)
+    vim.fn.mkdir(temp_dir, 'p')
     
-    if err or not baseline_tree then
-      error('Failed to get baseline tree: ' .. (err or 'unknown error'))
+    -- Set up temporary index file
+    local temp_index = temp_dir .. '/index'
+    
+    -- Read the tree from current baseline into temporary index
+    local read_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git read-tree %s', 
+      git_root, temp_index, M.stable_baseline_ref)
+    local read_result, read_err = utils.exec(read_tree_cmd)
+    if read_err then
+      error('Failed to read baseline tree: ' .. read_err)
     end
-    
-    baseline_tree = baseline_tree:gsub('%s+', '') -- trim whitespace
     
     if debug_file then
-      debug_file:write(string.format('  Baseline tree: %s\n', baseline_tree))
+      debug_file:write('  Read baseline tree into temporary index\n')
     end
     
-    -- Create a blob for the current file content
-    local blob_cmd = string.format('cd "%s" && git hash-object -w "%s"', git_root, temp_file)
-    local blob_hash, blob_err = utils.exec(blob_cmd)
+    -- Write content to temporary file
+    local temp_file = temp_dir .. '/content'
+    utils.write_file(temp_file, current_content)
     
-    if blob_err or not blob_hash then
-      error('Failed to create blob: ' .. (blob_err or 'unknown error'))
+    -- Update the specific file in the temporary index
+    local update_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git update-index --add --cacheinfo 100644,$(git hash-object -w "%s"),"%s"',
+      git_root, temp_index, temp_file, relative_path)
+    local update_result, update_err = utils.exec(update_cmd)
+    if update_err then
+      error('Failed to update file in index: ' .. update_err)
     end
-    
-    blob_hash = blob_hash:gsub('%s+', '') -- trim whitespace
     
     if debug_file then
-      debug_file:write(string.format('  Created blob: %s\n', blob_hash))
+      debug_file:write(string.format('  Updated file in index: %s\n', relative_path))
     end
     
-    -- Read the baseline tree and update it with the new file
-    local tree_cmd = string.format('cd "%s" && git ls-tree %s', git_root, baseline_tree)
-    local tree_content, tree_err = utils.exec(tree_cmd)
-    
-    if tree_err then
-      error('Failed to read tree: ' .. tree_err)
+    -- Create tree from temporary index
+    local write_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree',
+      git_root, temp_index)
+    local new_tree_hash, tree_err = utils.exec(write_tree_cmd)
+    if tree_err or not new_tree_hash then
+      error('Failed to write tree: ' .. (tree_err or 'unknown error'))
     end
-    
-    -- Parse tree content and update/add our file
-    local new_tree_entries = {}
-    local file_found = false
-    
-    if tree_content and tree_content ~= '' then
-      for line in tree_content:gmatch('[^\n]+') do
-        local mode, type, hash, name = line:match('^(%d+) (%w+) (%x+)\t(.+)$')
-        if mode and type and hash and name then
-          if name == relative_path then
-            -- Update existing file
-            table.insert(new_tree_entries, string.format('%s %s %s\t%s', mode, type, blob_hash, name))
-            file_found = true
-          else
-            -- Keep existing entry
-            table.insert(new_tree_entries, line)
-          end
-        end
-      end
-    end
-    
-    -- Add file if it wasn't found in the tree
-    if not file_found then
-      table.insert(new_tree_entries, string.format('100644 blob %s\t%s', blob_hash, relative_path))
-    end
-    
-    -- Create new tree
-    local new_tree_input = table.concat(new_tree_entries, '\n')
-    if new_tree_input ~= '' then
-      new_tree_input = new_tree_input .. '\n'
-    end
-    
-    -- Write tree input to temp file
-    local tree_input_file = '/tmp/nvim-claude-tree-input-' .. os.time()
-    utils.write_file(tree_input_file, new_tree_input)
-    
-    local new_tree_cmd = string.format('cd "%s" && git mktree < "%s"', git_root, tree_input_file)
-    local new_tree_hash, new_tree_err = utils.exec(new_tree_cmd)
-    
-    -- Clean up temp files
-    os.remove(tree_input_file)
-    
-    if new_tree_err or not new_tree_hash then
-      error('Failed to create new tree: ' .. (new_tree_err or 'unknown error'))
-    end
-    
-    new_tree_hash = new_tree_hash:gsub('%s+', '') -- trim whitespace
+    new_tree_hash = new_tree_hash:gsub('%s+$', '')
     
     if debug_file then
       debug_file:write(string.format('  Created new tree: %s\n', new_tree_hash))
     end
     
-    -- Create a commit from the new tree
+    -- Create new commit
     local commit_message = string.format('nvim-claude: updated baseline for %s at %s', relative_path, os.date '%Y-%m-%d %H:%M:%S')
-    local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', git_root, new_tree_hash, M.stable_baseline_ref, commit_message)
+    local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', 
+      git_root, new_tree_hash, M.stable_baseline_ref, commit_message)
     local new_commit_hash, commit_err = utils.exec(commit_cmd)
-    
     if commit_err or not new_commit_hash then
       error('Failed to create commit: ' .. (commit_err or 'unknown error'))
     end
-    
-    new_commit_hash = new_commit_hash:gsub('%s+', '') -- trim whitespace
+    new_commit_hash = new_commit_hash:gsub('%s+$', '')
     
     if debug_file then
       debug_file:write(string.format('  Created new commit: %s\n', new_commit_hash))
+    end
+    
+    -- Cleanup temporary directory
+    vim.fn.delete(temp_dir, 'rf')
+    
+    -- Validate before updating baseline reference
+    if new_commit_hash:match('fatal:') or new_commit_hash:match('error:') then
+      error('Got error message instead of commit hash: ' .. new_commit_hash)
     end
     
     -- Update our baseline reference to the new commit
@@ -348,7 +307,7 @@ function M.post_tool_use_hook(file_path)
 
   local utils = require 'nvim-claude.utils'
   local persistence = require 'nvim-claude.inline-diff-persistence'
-  local git_root = utils.get_project_root()
+  local git_root = utils.get_project_root_for_file(file_path)
   
   if not git_root then
     return
@@ -717,6 +676,61 @@ function M.setup_commands()
     require('nvim-claude.inline-diff-debug').debug_inline_diff()
   end, {
     desc = 'Debug Claude inline diff state',
+  })
+  
+  vim.api.nvim_create_user_command('ClaudeResetInlineDiff', function()
+    local inline_diff = require('nvim-claude.inline-diff')
+    local persistence = require('nvim-claude.inline-diff-persistence')
+    
+    -- Check for corrupted state
+    local corrupted = false
+    if M.stable_baseline_ref and (M.stable_baseline_ref:match('fatal:') or M.stable_baseline_ref:match('error:')) then
+      vim.notify('Detected corrupted baseline ref: ' .. M.stable_baseline_ref:sub(1, 50) .. '...', vim.log.levels.WARN)
+      corrupted = true
+    end
+    
+    if persistence.current_stash_ref and (persistence.current_stash_ref:match('fatal:') or persistence.current_stash_ref:match('error:')) then
+      vim.notify('Detected corrupted stash ref: ' .. persistence.current_stash_ref:sub(1, 50) .. '...', vim.log.levels.WARN) 
+      corrupted = true
+    end
+    
+    if not corrupted then
+      -- Check if state file exists
+      local state_file = persistence.get_state_file()
+      local utils = require('nvim-claude.utils')
+      if not utils.file_exists(state_file) then
+        vim.notify('No inline diff state found to reset', vim.log.levels.INFO)
+        return
+      end
+    end
+    
+    -- Confirm reset
+    vim.ui.confirm(
+      'Reset inline diff state? This will clear all diff tracking.',
+      { '&Yes', '&No' },
+      function(choice)
+        if choice == 1 then
+          -- Clear in-memory state
+          M.stable_baseline_ref = nil
+          M.claude_edited_files = {}
+          persistence.current_stash_ref = nil
+          
+          -- Clear active diffs
+          for bufnr, _ in pairs(inline_diff.active_diffs) do
+            inline_diff.close_inline_diff(bufnr, true)
+          end
+          inline_diff.active_diffs = {}
+          inline_diff.diff_files = {}
+          
+          -- Clear persistence file
+          persistence.clear_state()
+          
+          vim.notify('Inline diff state has been reset', vim.log.levels.INFO)
+        end
+      end
+    )
+  end, {
+    desc = 'Reset inline diff state (use when corrupted)',
   })
 
   vim.api.nvim_create_user_command('ClaudeUpdateBaseline', function()

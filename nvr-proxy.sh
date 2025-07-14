@@ -19,14 +19,29 @@ find_project_root() {
 }
 
 # Get the project root
-PROJECT_ROOT=$(find_project_root)
+# If TARGET_FILE is provided, find its project root
+if [ -n "$TARGET_FILE" ]; then
+    echo "[$(date)] TARGET_FILE provided: $TARGET_FILE" >> "$DEBUG_LOG"
+    FILE_DIR=$(dirname "$TARGET_FILE")
+    PROJECT_ROOT=$(cd "$FILE_DIR" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)
+    if [ -n "$PROJECT_ROOT" ]; then
+        echo "[$(date)] Found project root from file: $PROJECT_ROOT" >> "$DEBUG_LOG"
+    else
+        echo "[$(date)] Could not find project root from file, falling back" >> "$DEBUG_LOG"
+        PROJECT_ROOT=$(find_project_root)
+    fi
+else
+    PROJECT_ROOT=$(find_project_root)
+fi
+
 if [ -z "$PROJECT_ROOT" ]; then
     echo "Error: Not in a git repository" >&2
     exit 1
 fi
 
-# Look for a server file - first in project root, then in script directory as fallback
-SERVER_FILE="$PROJECT_ROOT/.nvim-server"
+# Look for server file in .nvim-claude directory first, then old location as fallback
+SERVER_FILE="$PROJECT_ROOT/.nvim-claude/nvim-server"
+OLD_SERVER_FILE="$PROJECT_ROOT/.nvim-server"
 echo "[$(date)] Looking for server file: $SERVER_FILE" >> "$DEBUG_LOG"
 if [ -f "$SERVER_FILE" ]; then
     NVIM_SERVER=$(cat "$SERVER_FILE")

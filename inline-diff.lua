@@ -476,90 +476,75 @@ function M.update_baseline_with_content(git_root, relative_path, content, curren
   local utils = require 'nvim-claude.utils'
   local hooks = require 'nvim-claude.hooks'
 
-  -- Write content to temp file
-  local temp_file = '/tmp/nvim-claude-update-baseline.txt'
-  utils.write_file(temp_file, content)
-
-  -- Use the same logic as hooks.update_baseline_for_file() but with our content
+  -- Simpler approach: use a temporary index to create a new commit
   local success = pcall(function()
-    -- Get baseline tree
-    local baseline_tree_cmd = string.format('cd "%s" && git rev-parse %s^{tree}', git_root, current_stash_ref)
-    local baseline_tree = utils.exec(baseline_tree_cmd)
-    if not baseline_tree then
-      error 'Failed to get baseline tree'
+    -- Create a unique temporary directory
+    local temp_dir = '/tmp/nvim-claude-baseline-' .. os.time() .. '-' .. math.random(10000)
+    vim.fn.mkdir(temp_dir, 'p')
+    
+    -- Set up temporary index file
+    local temp_index = temp_dir .. '/index'
+    
+    -- Read the tree from current baseline into temporary index
+    local read_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git read-tree %s', 
+      git_root, temp_index, current_stash_ref)
+    local read_result, read_err = utils.exec(read_tree_cmd)
+    if read_err then
+      error('Failed to read baseline tree: ' .. read_err)
     end
-    baseline_tree = baseline_tree:gsub('%s+$', '')
-
-    -- Create blob for new content
-    local blob_cmd = string.format('cd "%s" && git hash-object -w "%s"', git_root, temp_file)
-    local blob_hash = utils.exec(blob_cmd)
-    if not blob_hash then
-      error 'Failed to create blob'
+    
+    -- Write content to temporary file
+    local temp_file = temp_dir .. '/content'
+    utils.write_file(temp_file, content)
+    
+    -- Create blob first and validate the hash
+    local hash_cmd = string.format('cd "%s" && git hash-object -w "%s"', git_root, temp_file)
+    local blob_hash, hash_err = utils.exec(hash_cmd)
+    if hash_err or not blob_hash or blob_hash:match('^fatal:') or blob_hash:match('^error:') then
+      error('Failed to create blob: ' .. (hash_err or blob_hash or 'unknown error'))
     end
-    blob_hash = blob_hash:gsub('%s+$', '')
-
-    -- Update tree with new file (inline logic from hooks.update_baseline_for_file)
-    local tree_cmd = string.format('cd "%s" && git ls-tree %s', git_root, baseline_tree)
-    local tree_content = utils.exec(tree_cmd) or ''
-
-    -- Parse tree content and update/add our file
-    local new_tree_entries = {}
-    local file_found = false
-
-    if tree_content ~= '' then
-      for line in tree_content:gmatch '[^\n]+' do
-        local mode, type, hash, name = line:match '(%d+) (%w+) (%w+)\t(.+)'
-        if name == relative_path then
-          -- Replace existing file entry
-          table.insert(new_tree_entries, string.format('%s %s %s\t%s', mode, type, blob_hash, name))
-          file_found = true
-        else
-          -- Keep existing entry
-          table.insert(new_tree_entries, line)
-        end
-      end
+    blob_hash = blob_hash:gsub('%s+$', '') -- trim whitespace
+    
+    -- Update the specific file in the temporary index
+    local update_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git update-index --add --cacheinfo 100644,%s,"%s"',
+      git_root, temp_index, blob_hash, relative_path)
+    local update_result, update_err = utils.exec(update_cmd)
+    if update_err or (update_result and (update_result:match('^fatal:') or update_result:match('^error:'))) then
+      error('Failed to update file in index: ' .. (update_err or update_result or 'unknown error'))
     end
-
-    -- If file wasn't found, add it as a new entry
-    if not file_found then
-      table.insert(new_tree_entries, string.format('100644 blob %s\t%s', blob_hash, relative_path))
-    end
-
-    -- Create new tree
-    local new_tree_input = table.concat(new_tree_entries, '\n')
-    if new_tree_input ~= '' then
-      new_tree_input = new_tree_input .. '\n'
-    end
-
-    local tree_input_file = '/tmp/nvim-claude-tree-input-' .. os.time()
-    utils.write_file(tree_input_file, new_tree_input)
-
-    local new_tree_cmd = string.format('cd "%s" && git mktree < "%s"', git_root, tree_input_file)
-    local new_tree_hash = utils.exec(new_tree_cmd)
-    os.remove(tree_input_file)
-
-    if not new_tree_hash then
-      error 'Failed to create new tree'
+    
+    -- Create tree from temporary index
+    local write_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree',
+      git_root, temp_index)
+    local new_tree_hash, tree_err = utils.exec(write_tree_cmd)
+    if tree_err or not new_tree_hash or new_tree_hash:match('^fatal:') or new_tree_hash:match('^error:') then
+      error('Failed to write tree: ' .. (tree_err or new_tree_hash or 'unknown error'))
     end
     new_tree_hash = new_tree_hash:gsub('%s+$', '')
-
+    
     -- Create new commit
     local commit_message = string.format('nvim-claude: accept hunk in %s %s', relative_path, os.date '%Y-%m-%d %H:%M:%S')
-    local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', git_root, new_tree_hash, current_stash_ref, commit_message)
-    local new_commit_hash = utils.exec(commit_cmd)
-    if not new_commit_hash then
-      error 'Failed to create commit'
+    local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', 
+      git_root, new_tree_hash, current_stash_ref, commit_message)
+    local new_commit_hash, commit_err = utils.exec(commit_cmd)
+    if commit_err or not new_commit_hash or new_commit_hash:match('^fatal:') or new_commit_hash:match('^error:') then
+      error('Failed to create commit: ' .. (commit_err or new_commit_hash or 'unknown error'))
     end
     new_commit_hash = new_commit_hash:gsub('%s+$', '')
-
+    
+    -- Validate the final commit hash before using it
+    if new_commit_hash:match('fatal:') or new_commit_hash:match('error:') then
+      error('Got error message instead of commit hash: ' .. new_commit_hash)
+    end
+    
+    -- Cleanup temporary directory
+    vim.fn.delete(temp_dir, 'rf')
+    
     -- Update baseline reference
     hooks.stable_baseline_ref = new_commit_hash
-
+    
     return true
   end)
-
-  -- Cleanup
-  os.remove(temp_file)
 
   return success
 end

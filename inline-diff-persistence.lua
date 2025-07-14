@@ -5,8 +5,14 @@ local M = {}
 local utils = require('nvim-claude.utils')
 
 -- Get project-specific nvim-claude directory
-function M.get_nvim_claude_dir()
-  local project_root = utils.get_project_root()
+function M.get_nvim_claude_dir(file_path)
+  local project_root
+  if file_path then
+    project_root = utils.get_project_root_for_file(file_path)
+  else
+    project_root = utils.get_project_root()
+  end
+  
   if not project_root then
     -- Fallback to global data directory if no project root
     return vim.fn.stdpath('data') .. '/nvim-claude'
@@ -38,6 +44,12 @@ function M.save_state(diff_data)
   
   local hooks = require('nvim-claude.hooks')
   local inline_diff = require('nvim-claude.inline-diff')
+  
+  -- Validate stash_ref before saving
+  if diff_data.stash_ref and (diff_data.stash_ref:match('fatal:') or diff_data.stash_ref:match('error:')) then
+    vim.notify('Refusing to save corrupted baseline ref: ' .. diff_data.stash_ref:sub(1, 50), vim.log.levels.ERROR)
+    return
+  end
   
   local state = {
     version = 1,
@@ -97,6 +109,15 @@ function M.load_state()
   
   -- Check if stash still exists
   if state.stash_ref then
+    -- First check if the ref looks corrupted (contains error messages)
+    if state.stash_ref:match('fatal:') or state.stash_ref:match('error:') or 
+       not state.stash_ref:match('^[%x%s@{}%-]+$') then
+      vim.notify('Detected corrupted baseline ref: ' .. state.stash_ref:sub(1, 50) .. '...', vim.log.levels.ERROR)
+      vim.notify('Clearing corrupted state. Inline diffs will be reset.', vim.log.levels.WARN)
+      M.clear_state()
+      return nil
+    end
+    
     -- Check if it's a SHA (40 hex chars) or a stash reference
     local is_sha = state.stash_ref:match('^%x+$') and #state.stash_ref >= 7
     local check_cmd

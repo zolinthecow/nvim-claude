@@ -153,6 +153,7 @@ When Claude makes changes to your files:
 - `:ClaudeInstallHooks` - Install Claude Code hooks for this project
 - `:ClaudeUninstallHooks` - Remove Claude Code hooks
 - `:ClaudeDebugInlineDiff` - Debug inline diff state
+- `:ClaudeResetInlineDiff` - Reset inline diff state (use when corrupted)
 - `:ClaudeDebugTracking` - Debug file tracking state
 
 ## Usage Examples

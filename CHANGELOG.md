@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-file baseline management for accurate diff tracking
 - Hunk indicators for deletion-only hunks (shows `[Hunk X/Y]` on red deletion lines)
 - Project-specific persistence directory `.nvim-claude/` for state isolation
+- `:ClaudeResetInlineDiff` command to recover from corrupted baseline refs
+- Validation to prevent git error messages from being stored as refs
+- Automatic detection and cleanup of corrupted baseline refs on load
 
 ### Fixed
 - Fixed phantom diff hunks at end of files caused by newline inconsistencies
@@ -21,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Background agent creation now properly adds `.agent-work/` to gitignore before creating directories
 - `<leader>cb` keybinding now opens the agent creation UI instead of waiting for text input
 - Reject all operations now clear baseline tracking for consistency with accept all
+- Critical bug where git command failures would store error messages as baseline refs
+- Cascading failures caused by corrupted refs in subsequent operations
+- Cross-project hook routing now uses edited file's project root instead of CWD
+- Improved robustness of git command execution in baseline update operations
 
 ### Changed
 - `<leader>cb` behavior changed to match `:ClaudeBg` command (opens interactive UI)
@@ -28,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved all state files from global locations to project-specific `.nvim-claude/` directory
 - Server address now stored in `.nvim-claude/nvim-server` instead of `.nvim-server`
 - Inline diff state now stored in `.nvim-claude/inline-diff-state.json` instead of global data directory
+- Added robust error checking in `update_baseline_with_content()` and related functions
+- `save_state()` now validates refs before persisting to prevent corruption
+- Enhanced git command validation with better error detection and handling
+- Separated blob creation from index update to improve error isolation
 
 ## [0.0.2] - 2025-01-12
 

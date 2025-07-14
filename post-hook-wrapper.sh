@@ -34,7 +34,7 @@ if [ -n "$FILE_PATH" ]; then
     
     # Execute the actual command using remote-expr instead of remote-send
     echo "Executing post hook..." >> "$DEBUG_LOG"
-    "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').post_tool_use_hook('$FILE_PATH_ESCAPED')\")" 2>&1 | tee -a "$DEBUG_LOG"
+    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').post_tool_use_hook('$FILE_PATH_ESCAPED')\")" 2>&1 | tee -a "$DEBUG_LOG"
     echo "Post hook complete" >> "$DEBUG_LOG"
 else
     echo "No file path found, calling without argument" >> "$DEBUG_LOG"

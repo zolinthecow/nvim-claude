@@ -29,7 +29,7 @@ if [ -n "$FILE_PATH" ]; then
     
     # Execute the pre-hook with file path
     echo "PRE-HOOK Executing pre hook with file path..." >> "$DEBUG_LOG"
-    "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').pre_tool_use_hook('$FILE_PATH_ESCAPED')\")" 2>&1 | tee -a "$DEBUG_LOG"
+    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').pre_tool_use_hook('$FILE_PATH_ESCAPED')\")" 2>&1 | tee -a "$DEBUG_LOG"
     echo "PRE-HOOK pre hook complete" >> "$DEBUG_LOG"
 else
     echo "PRE-HOOK No file path found, calling without argument" >> "$DEBUG_LOG"
