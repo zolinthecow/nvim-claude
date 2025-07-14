@@ -134,3 +134,6 @@ Hooks use `nvr` (neovim-remote) to communicate with the running Neovim instance.
 - Saves current tracking state to JSON
 - Includes stash ref, tracked files, and active diff data
 - Called on VimLeavePre and after accept/reject operations
+
+## Coding Guidelines
+- Always use single quotes instead of double quotes.

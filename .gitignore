@@ -2,3 +2,4 @@
 # Claude Code hooks
 .claude/
 .agent-work/
+.nvim-server

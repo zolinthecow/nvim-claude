@@ -16,7 +16,6 @@ function M.save_state(diff_data)
   --   stash_ref: "<stash_sha>",
   --   files: {
   --     "/path/to/file": {
-  --       original_content: "...",
   --       hunks: [...],
   --       applied_hunks: {...}
   --     }
@@ -45,7 +44,6 @@ function M.save_state(diff_data)
     if inline_diff.active_diffs[bufnr] then
       local diff = inline_diff.active_diffs[bufnr]
       state.files[file_path] = {
-        original_content = inline_diff.original_content[bufnr],
         hunks = diff.hunks,
         applied_hunks = diff.applied_hunks or {},
         new_content = diff.new_content
@@ -142,7 +140,7 @@ function M.restore_diffs()
           M.pending_restores[file_path] = file_state
         else
           -- Restore the diff visualization
-          inline_diff.original_content[bufnr] = file_state.original_content
+          -- No longer restoring original_content - we read from git stash
           inline_diff.diff_files[file_path] = bufnr
           inline_diff.active_diffs[bufnr] = {
             hunks = file_state.hunks,
@@ -220,7 +218,7 @@ function M.check_pending_restore(bufnr)
     local inline_diff = require('nvim-claude.inline-diff')
     
     -- Restore the diff for this buffer
-    inline_diff.original_content[bufnr] = file_state.original_content
+    -- No longer restoring original_content - we read from git stash
     inline_diff.diff_files[file_path] = bufnr
     inline_diff.active_diffs[bufnr] = {
       hunks = file_state.hunks,

@@ -135,12 +135,8 @@ function M.setup(user_config)
   M.commands.setup(M)
   M.hooks.setup_commands()
   
-  -- Auto-install hooks if we're in a git repository
-  vim.defer_fn(function()
-    if M.utils.get_project_root() then
-      M.hooks.install_hooks()
-    end
-  end, 100)
+  -- Note: Hook installation is handled by settings-updater.setup()
+  -- which runs on VimEnter and uses the proxy scripts
   
   -- Set up keymappings if enabled
   if M.config.mappings then
