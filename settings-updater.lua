@@ -15,9 +15,19 @@ function M.update_claude_settings()
     return
   end
 
+  -- Ensure .nvim-claude directory exists
+  local nvim_claude_dir = project_root .. '/.nvim-claude'
+  utils.ensure_dir(nvim_claude_dir)
+  
   -- Write server address to project-specific file for proxy script
-  local server_file = project_root .. '/.nvim-server'
+  local server_file = nvim_claude_dir .. '/nvim-server'
   vim.fn.writefile({ server_addr }, server_file)
+  
+  -- Migrate old .nvim-server file if it exists
+  local old_server_file = project_root .. '/.nvim-server'
+  if utils.file_exists(old_server_file) then
+    os.remove(old_server_file)
+  end
 
   -- Use the install_hooks function from hooks module to update settings
   local hooks = require 'nvim-claude.hooks'

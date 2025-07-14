@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Testing Changes
 ```bash
 # Test plugin in Neovim (from parent directory)
-nvim --listen /tmp/nvim-server.pipe  # Required for hooks to work
+nvim  # Plugin automatically handles server setup
 :source lua/nvim-claude/init.lua     # Reload plugin
 :ClaudeDebugInlineDiff               # Debug inline diff state
 ```

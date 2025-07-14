@@ -655,9 +655,9 @@ function M.install_hooks()
       table.insert(entries_to_add, '.claude/')
     end
 
-    -- Check for .nvim-server
-    if not gitignore_content:match '%.nvim%-server' then
-      table.insert(entries_to_add, '.nvim-server')
+    -- Check for .nvim-claude/
+    if not gitignore_content:match '%.nvim%-claude/' then
+      table.insert(entries_to_add, '.nvim-claude/')
     end
 
     -- Add entries if needed

@@ -4,8 +4,22 @@
 local M = {}
 local utils = require('nvim-claude.utils')
 
--- State file location
-M.state_file = vim.fn.stdpath('data') .. '/nvim-claude-inline-diff-state.json'
+-- Get project-specific nvim-claude directory
+function M.get_nvim_claude_dir()
+  local project_root = utils.get_project_root()
+  if not project_root then
+    -- Fallback to global data directory if no project root
+    return vim.fn.stdpath('data') .. '/nvim-claude'
+  end
+  return project_root .. '/.nvim-claude'
+end
+
+-- Get project-specific state file location
+function M.get_state_file()
+  local nvim_claude_dir = M.get_nvim_claude_dir()
+  utils.ensure_dir(nvim_claude_dir)
+  return nvim_claude_dir .. '/inline-diff-state.json'
+end
 
 -- Save current diff state
 function M.save_state(diff_data)
@@ -52,7 +66,8 @@ function M.save_state(diff_data)
   end
   
   -- Save to file
-  local success, err = utils.write_json(M.state_file, state)
+  local state_file = M.get_state_file()
+  local success, err = utils.write_json(state_file, state)
   if not success then
     vim.notify('Failed to save inline diff state: ' .. err, vim.log.levels.ERROR)
     return false
@@ -63,11 +78,12 @@ end
 
 -- Load saved diff state
 function M.load_state()
-  if not utils.file_exists(M.state_file) then
+  local state_file = M.get_state_file()
+  if not utils.file_exists(state_file) then
     return nil
   end
   
-  local state, err = utils.read_json(M.state_file)
+  local state, err = utils.read_json(state_file)
   if not state then
     vim.notify('Failed to load inline diff state: ' .. err, vim.log.levels.ERROR)
     return nil
@@ -106,8 +122,9 @@ end
 
 -- Clear saved state
 function M.clear_state()
-  if utils.file_exists(M.state_file) then
-    os.remove(M.state_file)
+  local state_file = M.get_state_file()
+  if utils.file_exists(state_file) then
+    os.remove(state_file)
   end
 end
 
@@ -324,10 +341,58 @@ function M.setup_autocmds()
     callback = function()
       -- Delay slightly to ensure everything is loaded
       vim.defer_fn(function()
+        -- Try migration first
+        M.migrate_global_state()
         M.restore_diffs()
       end, 100)
     end
   })
+end
+
+-- Migrate from global to project-specific state
+function M.migrate_global_state()
+  local global_state_file = vim.fn.stdpath('data') .. '/nvim-claude-inline-diff-state.json'
+  
+  -- Check if global state exists
+  if not utils.file_exists(global_state_file) then
+    return
+  end
+  
+  -- Check if we're in a git repo
+  local project_root = utils.get_project_root()
+  if not project_root or not utils.is_git_repo() then
+    return
+  end
+  
+  -- Check if project-specific state already exists
+  local project_state_file = M.get_state_file()
+  if utils.file_exists(project_state_file) then
+    -- Project state exists, remove global state
+    os.remove(global_state_file)
+    return
+  end
+  
+  -- Load global state
+  local state, err = utils.read_json(global_state_file)
+  if not state then
+    return
+  end
+  
+  -- Check if the stash belongs to this project
+  if state.stash_ref then
+    local check_cmd = string.format('git cat-file -e %s 2>/dev/null', state.stash_ref)
+    local result = os.execute(check_cmd)
+    if result == 0 then
+      -- Stash exists in this repo, migrate the state
+      local success = utils.write_json(project_state_file, state)
+      if success then
+        vim.notify('Migrated nvim-claude state to project-specific location', vim.log.levels.INFO)
+      end
+    end
+  end
+  
+  -- Remove global state file
+  os.remove(global_state_file)
 end
 
 return M

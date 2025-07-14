@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Per-file baseline management for accurate diff tracking
 - Hunk indicators for deletion-only hunks (shows `[Hunk X/Y]` on red deletion lines)
+- Project-specific persistence directory `.nvim-claude/` for state isolation
 
 ### Fixed
 - Fixed phantom diff hunks at end of files caused by newline inconsistencies
@@ -24,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `<leader>cb` behavior changed to match `:ClaudeBg` command (opens interactive UI)
 - Removed all debug logging for cleaner output
+- Moved all state files from global locations to project-specific `.nvim-claude/` directory
+- Server address now stored in `.nvim-claude/nvim-server` instead of `.nvim-server`
+- Inline diff state now stored in `.nvim-claude/inline-diff-state.json` instead of global data directory
 
 ## [0.0.2] - 2025-01-12
 
