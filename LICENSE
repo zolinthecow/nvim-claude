@@ -1,8 +1,8 @@
 MIT License
-ACCEPT ALL TEST: First change in LICENSE
+AUTO-OPEN TEST: Testing inline diff auto-display
 
-Copyright (c) 2024 Accept All Test Contributors
-ACCEPT ALL TEST: Second change in LICENSE
+Copyright (c) 2024 nvim-claude contributors
+AUTO-OPEN TEST: This should show when you open the file
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

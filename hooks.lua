@@ -511,6 +511,24 @@ function M.setup_file_open_autocmd()
         vim.defer_fn(function()
           M.show_inline_diff_for_file(bufnr, relative_path, git_root, M.stable_baseline_ref)
         end, 50) -- Small delay to ensure buffer is fully loaded
+      else
+        -- Check if persistence has pending restores for this file
+        local persistence = require 'nvim-claude.inline-diff-persistence'
+        if persistence.pending_restores and persistence.pending_restores[file_path] then
+          -- Persistence system will handle this
+          persistence.check_pending_restore(bufnr)
+        elseif persistence.current_stash_ref then
+          -- Check if we have persistence state but haven't restored claude_edited_files yet
+          local state = persistence.load_state()
+          if state and state.claude_edited_files and state.claude_edited_files[relative_path] then
+            -- File is tracked in persistence, show diff
+            M.stable_baseline_ref = M.stable_baseline_ref or state.stash_ref
+            M.claude_edited_files[relative_path] = true
+            vim.defer_fn(function()
+              M.show_inline_diff_for_file(bufnr, relative_path, git_root, M.stable_baseline_ref)
+            end, 50)
+          end
+        end
       end
     end,
     group = vim.api.nvim_create_augroup('NvimClaudeFileOpen', { clear = true }),

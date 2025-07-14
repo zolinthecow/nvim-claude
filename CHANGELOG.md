@@ -9,14 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Per-file baseline management for accurate diff tracking
-- Fixed phantom diff hunks at end of files caused by newline inconsistencies
+- Hunk indicators for deletion-only hunks (shows `[Hunk X/Y]` on red deletion lines)
 
 ### Fixed
+- Fixed phantom diff hunks at end of files caused by newline inconsistencies
+- Fixed patch application in `accept_current_hunk` by using generic filenames in patch headers
+- Fixed navigation crash when jumping to deletion-only hunks at EOF
+- Fixed deletion-only hunks at EOF to display below the last line instead of above
+- Fixed hunk indicator visibility on deletion-only hunks (was being pushed off-screen)
 - Background agent creation now properly adds `.agent-work/` to gitignore before creating directories
 - `<leader>cb` keybinding now opens the agent creation UI instead of waiting for text input
+- Reject all operations now clear baseline tracking for consistency with accept all
 
 ### Changed
 - `<leader>cb` behavior changed to match `:ClaudeBg` command (opens interactive UI)
+- Removed all debug logging for cleaner output
 
 ## [0.0.2] - 2025-01-12
 
