@@ -1,8 +1,8 @@
-Test: First edit - should create initial baseline
 MIT License
-Copyright (c) 2024-2025 nvim-claude project and contributors
-SPDX-License-Identifier: MIT
-Test Edit: After nvim refresh - does diff show?
+ACCEPT ALL TEST: First change in LICENSE
+
+Copyright (c) 2024 Accept All Test Contributors
+ACCEPT ALL TEST: Second change in LICENSE
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,3 +21,5 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+ACCEPT ALL TEST: Third change at the end

@@ -1,8 +1,12 @@
 # nvim-claude
 
+ACCEPT ALL TEST: First edit in README
+
 A Neovim plugin for seamless integration with Claude AI, featuring tmux-based chat workflow, inline diff reviews, per-file baseline management, and background agent management. ✨
 
 ## Features
+
+ACCEPT ALL TEST: Second edit in README
 
 - **Tmux Integration**: Chat with Claude in a dedicated tmux pane
 - **Inline Diff Review**: Review and accept/reject Claude's code changes with inline diffs

@@ -202,19 +202,54 @@ function M.apply_diff_visualization(bufnr)
 
     -- Show deletions as virtual text above their position with full-width background
     for j, del in ipairs(deletions) do
-      if del.line >= 0 and del.line <= #buf_lines then
+      -- Debug logging for deletion placement
+      if i == 3 then  -- Third hunk
+        vim.notify(string.format('Hunk 3 deletion %d: line=%d, text=%s, buf_lines=%d', j, del.line, del.text:sub(1, 20), #buf_lines), vim.log.levels.INFO)
+      end
+      
+      -- Determine if this is an EOF deletion
+      local is_eof_deletion = del.line >= #buf_lines
+      local placement_line = is_eof_deletion and (#buf_lines - 1) or del.line
+      
+      if placement_line >= 0 and placement_line < #buf_lines then
         -- Calculate full width for the deletion line
         local text = '- ' .. del.text
         local win_width = vim.api.nvim_win_get_width(0)
-        local padding = string.rep(' ', math.max(0, win_width - vim.fn.strdisplaywidth(text)))
+        
+        -- For deletion-only hunks, add hunk info to the first deletion
+        local hunk_indicator = ''
+        if j == 1 and #additions == 0 then
+          -- This is a deletion-only hunk, add the hunk indicator
+          hunk_indicator = ' [Hunk ' .. i .. '/' .. #diff_data.hunks .. ']'
+        end
+        
+        -- Build virtual line parts
+        local virt_line_parts = {}
+        if hunk_indicator ~= '' then
+          -- Structure: deletion text + hunk indicator + padding to fill the rest
+          table.insert(virt_line_parts, { text, 'DiffDelete' })
+          table.insert(virt_line_parts, { hunk_indicator, 'Comment' })
+          
+          -- Calculate remaining width and fill with red background
+          local used_width = vim.fn.strdisplaywidth(text) + vim.fn.strdisplaywidth(hunk_indicator)
+          local remaining_width = win_width - used_width
+          if remaining_width > 0 then
+            local padding = string.rep(' ', remaining_width)
+            table.insert(virt_line_parts, { padding, 'DiffDelete' })
+          end
+        else
+          -- Normal deletion line - keep full width for visibility
+          local padding = string.rep(' ', math.max(0, win_width - vim.fn.strdisplaywidth(text)))
+          table.insert(virt_line_parts, { text .. padding, 'DiffDelete' })
+        end
 
-        vim.api.nvim_buf_set_extmark(bufnr, ns_id, del.line, 0, {
-          virt_lines = { {
-            { text .. padding, 'DiffDelete' },
-          } },
-          virt_lines_above = true,
+        vim.api.nvim_buf_set_extmark(bufnr, ns_id, placement_line, 0, {
+          virt_lines = { virt_line_parts },
+          virt_lines_above = not is_eof_deletion,  -- EOF deletions appear below the last line
           id = 3000 + i * 100 + j,
         })
+      else
+        vim.notify(string.format('Hunk %d deletion %d out of bounds: line=%d, buf_lines=%d', i, j, del.line, #buf_lines), vim.log.levels.WARN)
       end
     end
 
@@ -245,14 +280,16 @@ function M.apply_diff_visualization(bufnr)
       })
     end
 
-    -- Add subtle hunk info at end of first changed line
-    local info_line = sign_line
-    if info_line and info_line >= 0 and info_line < #buf_lines then
-      vim.api.nvim_buf_set_extmark(bufnr, ns_id, info_line, 0, {
-        virt_text = { { ' [Hunk ' .. i .. '/' .. #diff_data.hunks .. ']', 'Comment' } },
-        virt_text_pos = 'eol',
-        id = 1000 + i,
-      })
+    -- Add subtle hunk info at end of first changed line (only for hunks with additions)
+    if #additions > 0 then
+      local info_line = sign_line
+      if info_line and info_line >= 0 and info_line < #buf_lines then
+        vim.api.nvim_buf_set_extmark(bufnr, ns_id, info_line, 0, {
+          virt_text = { { ' [Hunk ' .. i .. '/' .. #diff_data.hunks .. ']', 'Comment' } },
+          virt_text_pos = 'eol',
+          id = 1000 + i,
+        })
+      end
     end
   end
 end
@@ -328,6 +365,14 @@ function M.jump_to_hunk(bufnr, hunk_idx)
   -- Fallback to hunk start if no changes found
   if not jump_line then
     jump_line = hunk.new_start
+  end
+
+  -- Get buffer line count to ensure we don't jump past the end
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  
+  -- For deletions at the end of file, jump to the last line
+  if jump_line > line_count then
+    jump_line = math.max(1, line_count)
   end
 
   -- Move cursor to the actual changed line (only if we have a valid window)
