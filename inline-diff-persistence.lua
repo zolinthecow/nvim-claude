@@ -34,13 +34,10 @@ function M.save_state(diff_data)
   --   version: 1,
   --   timestamp: <unix_timestamp>,
   --   stash_ref: "<stash_sha>",
-  --   files: {
-  --     "/path/to/file": {
-  --       hunks: [...],
-  --       applied_hunks: {...}
-  --     }
-  --   }
+  --   claude_edited_files: { "relative/path.lua": true },
+  --   diff_files: { "/full/path.lua": bufnr }
   -- }
+  -- Note: No longer save hunks/content - computed fresh from git baseline
   
   local hooks = require('nvim-claude.hooks')
   local inline_diff = require('nvim-claude.inline-diff')
@@ -65,17 +62,7 @@ function M.save_state(diff_data)
     state.diff_files[file_path] = bufnr
   end
   
-  -- Collect state from all buffers with active diffs
-  for file_path, bufnr in pairs(inline_diff.diff_files) do
-    if inline_diff.active_diffs[bufnr] then
-      local diff = inline_diff.active_diffs[bufnr]
-      state.files[file_path] = {
-        hunks = diff.hunks,
-        applied_hunks = diff.applied_hunks or {},
-        new_content = diff.new_content
-      }
-    end
-  end
+  -- Note: We no longer persist hunks/content - diffs are computed fresh from git baseline
   
   -- Save to file
   local state_file = M.get_state_file()
@@ -159,47 +146,8 @@ function M.restore_diffs()
   local inline_diff = require('nvim-claude.inline-diff')
   local restored_count = 0
   
-  -- Restore diffs for each file
-  for file_path, file_state in pairs(state.files) do
-    -- Check if file exists and hasn't changed since the diff was created
-    if utils.file_exists(file_path) then
-      -- Read current content
-      local current_content = utils.read_file(file_path)
-      
-      -- Check if the file matches what we expect (either original or with applied changes)
-      -- This handles the case where some hunks were accepted
-      if current_content then
-        -- Find or create buffer for this file
-        local bufnr = vim.fn.bufnr(file_path)
-        if bufnr == -1 then
-          -- File not loaded, we'll restore when it's opened
-          -- Store in a pending restores table
-          M.pending_restores = M.pending_restores or {}
-          M.pending_restores[file_path] = file_state
-        else
-          -- Restore the diff visualization
-          -- No longer restoring original_content - we read from git stash
-          inline_diff.diff_files[file_path] = bufnr
-          inline_diff.active_diffs[bufnr] = {
-            hunks = file_state.hunks,
-            new_content = file_state.new_content,
-            current_hunk = 1,
-            applied_hunks = file_state.applied_hunks or {}
-          }
-          
-          -- Apply visualization
-          inline_diff.apply_diff_visualization(bufnr)
-          inline_diff.setup_inline_keymaps(bufnr)
-          
-          restored_count = restored_count + 1
-        end
-      end
-    end
-  end
-  
-  if restored_count > 0 then
-    -- Silent restore - no notification
-  end
+  -- Note: Diff restoration now handled by hooks.lua via git baseline comparison
+  -- No need to restore saved hunks - they're computed fresh when files are opened
   
   -- Store the stash reference for future operations
   M.current_stash_ref = state.stash_ref
@@ -243,38 +191,7 @@ function M.restore_diffs()
   return true
 end
 
--- Check for pending restores when a buffer is loaded
-function M.check_pending_restore(bufnr)
-  if not M.pending_restores then
-    return
-  end
-  
-  local file_path = vim.api.nvim_buf_get_name(bufnr)
-  local file_state = M.pending_restores[file_path]
-  
-  if file_state then
-    local inline_diff = require('nvim-claude.inline-diff')
-    
-    -- Restore the diff for this buffer
-    -- No longer restoring original_content - we read from git stash
-    inline_diff.diff_files[file_path] = bufnr
-    inline_diff.active_diffs[bufnr] = {
-      hunks = file_state.hunks,
-      new_content = file_state.new_content,
-      current_hunk = 1,
-      applied_hunks = file_state.applied_hunks or {}
-    }
-    
-    -- Apply visualization
-    inline_diff.apply_diff_visualization(bufnr)
-    inline_diff.setup_inline_keymaps(bufnr)
-    
-    -- Remove from pending
-    M.pending_restores[file_path] = nil
-    
-    -- Silent restore - no notification
-  end
-end
+-- Note: Pending restore logic removed - diffs now computed fresh from git baseline
 
 -- Create a stash of current changes (instead of baseline commit)
 function M.create_stash(message)
@@ -347,13 +264,7 @@ function M.setup_autocmds()
     end
   })
   
-  -- Check for pending restores when buffers are loaded
-  vim.api.nvim_create_autocmd('BufReadPost', {
-    group = group,
-    callback = function(ev)
-      M.check_pending_restore(ev.buf)
-    end
-  })
+  -- Note: BufReadPost autocmd removed - diff restoration handled by hooks.lua
   
   -- Auto-restore on VimEnter
   vim.api.nvim_create_autocmd('VimEnter', {

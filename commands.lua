@@ -238,11 +238,15 @@ function M.send_selection(line1, line2)
   -- Get selected lines
   local lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
   
+  -- Get relative path from git root
+  local git_root = claude.utils.get_project_root()
+  local file_path = vim.fn.expand('%:p')
+  local relative_path = git_root and file_path:gsub('^' .. vim.pesc(git_root) .. '/', '') or vim.fn.expand('%:t')
+  
   -- Build complete message as one string
-  local filename = vim.fn.expand('%:t')
   local filetype = vim.bo.filetype
   local message_parts = {
-    string.format('Selection from `%s` (lines %d-%d):', filename, line1, line2),
+    string.format('Selection from `%s` (lines %d-%d):', relative_path, line1, line2),
     '```' .. (filetype ~= '' and filetype or ''),
   }
   
@@ -256,6 +260,9 @@ function M.send_selection(line1, line2)
   -- Send as one batched message
   local full_message = table.concat(message_parts, '\n')
   claude.tmux.send_text_to_pane(pane_id, full_message)
+  
+  -- Switch focus to Claude pane
+  claude.utils.exec('tmux select-pane -t ' .. pane_id)
   
   vim.notify('Selection sent to Claude', vim.log.levels.INFO)
 end
