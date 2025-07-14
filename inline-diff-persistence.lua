@@ -247,11 +247,30 @@ function M.create_stash(message)
   local stash_cmd = 'git stash create'
   local stash_hash, err = utils.exec(stash_cmd)
   
+  -- Debug: Log the result
+  local debug_file = io.open('/tmp/nvim-claude-stash-debug.log', 'a')
+  if debug_file then
+    debug_file:write(string.format('[%s] create_stash called\n', os.date('%Y-%m-%d %H:%M:%S')))
+    debug_file:write(string.format('  Command: %s\n', stash_cmd))
+    debug_file:write(string.format('  Result: %s\n', stash_hash or 'nil'))
+    debug_file:write(string.format('  Error: %s\n', err or 'nil'))
+    debug_file:close()
+  end
+  
   if not err and stash_hash and stash_hash ~= '' then
     -- Store the stash with a message
     stash_hash = stash_hash:gsub('%s+', '') -- trim whitespace
     local store_cmd = string.format('git stash store -m "%s" %s', message, stash_hash)
-    utils.exec(store_cmd)
+    local store_result, store_err = utils.exec(store_cmd)
+    
+    -- Debug: Log store result
+    debug_file = io.open('/tmp/nvim-claude-stash-debug.log', 'a')
+    if debug_file then
+      debug_file:write(string.format('  Store command: %s\n', store_cmd))
+      debug_file:write(string.format('  Store result: %s\n', store_result or 'nil'))
+      debug_file:write(string.format('  Store error: %s\n', store_err or 'nil'))
+      debug_file:close()
+    end
     
     -- Return the SHA directly - it's more stable than stash@{0}
     return stash_hash

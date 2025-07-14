@@ -713,6 +713,10 @@ function M.reject_current_hunk(bufnr)
 
   -- Get the new baseline content
   local stash_ref = hooks.stable_baseline_ref
+  if not stash_ref then
+    vim.notify('No baseline stash reference found', vim.log.levels.ERROR)
+    return
+  end
   local baseline_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, relative_path)
   local new_baseline = utils.exec(baseline_cmd)
 

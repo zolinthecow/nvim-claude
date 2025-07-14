@@ -398,6 +398,12 @@ function M.show_inline_diff_for_file(buf, file, git_root, stash_ref)
     return false
   end
 
+  -- Validate stash reference before using it
+  if not stash_ref or stash_ref == '' then
+    vim.notify('No baseline stash reference found for ' .. file, vim.log.levels.WARN)
+    return false
+  end
+
   -- Get baseline from git stash
   local stash_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, file)
   local original_content, git_err = utils.exec(stash_cmd)
