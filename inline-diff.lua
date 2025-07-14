@@ -998,6 +998,30 @@ function M.reject_all_hunks(bufnr)
 
   -- Close inline diff
   M.close_inline_diff(bufnr)
+  
+  -- Clear baseline tracking for consistency with accept all
+  local hooks = require 'nvim-claude.hooks'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+  
+  -- Check if there are any other tracked files
+  local has_other_files = false
+  local current_file = vim.api.nvim_buf_get_name(bufnr)
+  local utils = require 'nvim-claude.utils'
+  local git_root = utils.get_project_root()
+  local relative_path = current_file:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  
+  for file_path, _ in pairs(hooks.claude_edited_files) do
+    if file_path ~= relative_path then
+      has_other_files = true
+      break
+    end
+  end
+  
+  -- If no other files are tracked, clear the baseline
+  if not has_other_files then
+    hooks.stable_baseline_ref = nil
+    persistence.clear_state()
+  end
 end
 
 -- Close inline diff mode
@@ -1333,12 +1357,10 @@ function M.reject_all_files()
 
   -- Clear all tracking
   hooks.claude_edited_files = {}
+  hooks.stable_baseline_ref = nil
 
-  -- Clear persistence but keep baseline
-  persistence.save_state {
-    claude_edited_files = {},
-    stash_ref = baseline_ref, -- Keep baseline for future edits
-  }
+  -- Clear persistence completely for consistency with accept all
+  persistence.clear_state()
 
   -- Refresh all buffers
   vim.cmd 'checktime'
