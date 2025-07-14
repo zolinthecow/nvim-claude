@@ -31,9 +31,7 @@ function M.show_inline_diff(bufnr, old_content, new_content)
   -- Store diff data for this buffer
   M.active_diffs[bufnr] = {
     hunks = diff_data.hunks,
-    new_content = new_content,
     current_hunk = 1,
-    applied_hunks = {},
   }
 
   -- Store target content for diff
@@ -634,9 +632,7 @@ function M.accept_current_hunk(bufnr)
     local next_hunk_idx = math.min(hunk_idx, #new_diff_data.hunks)
     M.active_diffs[bufnr] = {
       hunks = new_diff_data.hunks,
-      new_content = current_content,
       current_hunk = next_hunk_idx,
-      applied_hunks = {},
     }
 
     -- Re-render visualization for remaining hunks

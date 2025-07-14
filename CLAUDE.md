@@ -36,7 +36,7 @@ Key functions flow:
 1. `hooks.pre_tool_use_hook()` → Creates baseline stash if none exists
 2. `hooks.post_tool_use_hook(file_path)` → Marks file as Claude-edited
 3. `hooks.show_inline_diff_for_file()` → Retrieves baseline from stash, shows diff
-4. `inline-diff.accept_current_hunk()` → Updates in-memory baseline, saves state
+4. `inline-diff.accept_current_hunk()` → Updates git baseline commit, saves state
 5. `inline-diff.reject_current_hunk()` → Applies reverse patch to working directory
 
 #### 2. Module Dependencies
@@ -116,7 +116,7 @@ Hooks use `nvr` (neovim-remote) to communicate with the running Neovim instance.
 ### Critical Functions
 
 #### `inline-diff.accept_current_hunk(bufnr)`
-- Updates in-memory baseline to current state
+- Updates git baseline commit to include accepted changes
 - Removes file from tracking if no diffs remain
 - Saves persistence state
 

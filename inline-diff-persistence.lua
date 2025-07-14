@@ -1,5 +1,10 @@
 -- Persistence layer for inline diffs
 -- Manages saving/loading diff state across neovim sessions without polluting git history
+-- 
+-- Clean Architecture:
+-- - Only persists git stash SHA reference and tracked file list
+-- - All diffs are computed fresh from git baseline vs current state
+-- - No cached diff data or hunks
 
 local M = {}
 local utils = require('nvim-claude.utils')
@@ -54,7 +59,6 @@ function M.save_state(diff_data)
     stash_ref = diff_data.stash_ref,
     claude_edited_files = diff_data.claude_edited_files or hooks.claude_edited_files or {},
     diff_files = {},  -- Add diff_files to persistence
-    files = {}
   }
   
   -- Save all diff files (both opened and unopened)
@@ -202,15 +206,6 @@ function M.create_stash(message)
   local stash_cmd = 'git stash create'
   local stash_hash, err = utils.exec(stash_cmd)
   
-  -- Debug: Log the result
-  local debug_file = io.open('/tmp/nvim-claude-stash-debug.log', 'a')
-  if debug_file then
-    debug_file:write(string.format('[%s] create_stash called\n', os.date('%Y-%m-%d %H:%M:%S')))
-    debug_file:write(string.format('  Command: %s\n', stash_cmd))
-    debug_file:write(string.format('  Result: %s\n', stash_hash or 'nil'))
-    debug_file:write(string.format('  Error: %s\n', err or 'nil'))
-    debug_file:close()
-  end
   
   if not err and stash_hash and stash_hash ~= '' then
     -- Store the stash with a message
@@ -218,14 +213,6 @@ function M.create_stash(message)
     local store_cmd = string.format('git stash store -m "%s" %s', message, stash_hash)
     local store_result, store_err = utils.exec(store_cmd)
     
-    -- Debug: Log store result
-    debug_file = io.open('/tmp/nvim-claude-stash-debug.log', 'a')
-    if debug_file then
-      debug_file:write(string.format('  Store command: %s\n', store_cmd))
-      debug_file:write(string.format('  Store result: %s\n', store_result or 'nil'))
-      debug_file:write(string.format('  Store error: %s\n', store_err or 'nil'))
-      debug_file:close()
-    end
     
     -- Return the SHA directly - it's more stable than stash@{0}
     return stash_hash

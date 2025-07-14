@@ -13,8 +13,7 @@ function M.debug_inline_diff()
     vim.notify(string.format('✓ Inline diff ACTIVE for buffer %d', bufnr), vim.log.levels.INFO)
     vim.notify(string.format('  - Hunks: %d', #diff_data.hunks), vim.log.levels.INFO)
     vim.notify(string.format('  - Current hunk: %d', diff_data.current_hunk or 0), vim.log.levels.INFO)
-    vim.notify(string.format('  - Original content length: %d', #(inline_diff.original_content[bufnr] or '')), vim.log.levels.INFO)
-    vim.notify(string.format('  - New content length: %d', #(diff_data.new_content or '')), vim.log.levels.INFO)
+    -- Note: original_content and new_content removed in cleanup - diffs computed fresh from git
   else
     vim.notify(string.format('✗ No inline diff for buffer %d', bufnr), vim.log.levels.WARN)
   end
