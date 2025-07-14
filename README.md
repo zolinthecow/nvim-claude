@@ -1,6 +1,6 @@
 # nvim-claude
 
-A Neovim plugin for seamless integration with Claude AI, featuring tmux-based chat workflow, inline diff reviews, and background agent management.
+A Neovim plugin for seamless integration with Claude AI, featuring tmux-based chat workflow, inline diff reviews, per-file baseline management, and background agent management.
 
 ## Features
 

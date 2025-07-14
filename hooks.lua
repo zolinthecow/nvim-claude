@@ -56,60 +56,21 @@ function M.pre_tool_use_hook_test()
   return true
 end
 
--- Original pre-hook implementation (now restored)
-function M.pre_tool_use_hook()
+-- Per-file baseline management pre-hook
+function M.pre_tool_use_hook(file_path)
+  local utils = require 'nvim-claude.utils'
   local persistence = require 'nvim-claude.inline-diff-persistence'
 
   -- Debug: Log to file with error handling
   local ok, err = pcall(function()
     local debug_file = io.open('/tmp/nvim-claude-hook-debug.log', 'a')
     if debug_file then
-      debug_file:write(string.format('\n[%s] PRE_HOOK START (CALLED FROM CLAUDE CODE)\n', os.date('%Y-%m-%d %H:%M:%S.%f'):sub(1, -4)))
-
-      -- Log current working directory
-      local utils = require 'nvim-claude.utils'
-      local cwd = utils.exec 'pwd'
-      debug_file:write(string.format('  CWD: %s\n', cwd:gsub('\n', '')))
-
-      -- Check git diff against HEAD to see current state
-      local git_diff = utils.exec 'cd /Users/colinzhao/dots/.config/nvim/lua/nvim-claude && git diff HEAD LICENSE'
-      debug_file:write(string.format('  Git diff HEAD LICENSE (length=%d):\n', #(git_diff or '')))
-      if git_diff and git_diff ~= '' then
-        -- Show first few lines of diff
-        local diff_lines = vim.split(git_diff, '\n')
-        for i = 1, math.min(10, #diff_lines) do
-          debug_file:write(string.format('    %s\n', diff_lines[i]))
-        end
-      else
-        debug_file:write '    (no diff)\n'
-      end
-
-      -- Try to read LICENSE file content from disk
-      local license_file = io.open('/Users/colinzhao/dots/.config/nvim/lua/nvim-claude/LICENSE', 'r')
-      if license_file then
-        local content = license_file:read '*a'
-        local lines = vim.split(content, '\n')
-        debug_file:write(string.format("  LICENSE from disk line 4: '%s'\n", lines[4] or 'nil'))
-        debug_file:write(string.format("  LICENSE from disk line 5: '%s'\n", lines[5] or 'nil'))
-        license_file:close()
-      else
-        debug_file:write '  ERROR: Could not read LICENSE file\n'
-      end
-
-      -- Check git status
-      local git_status = utils.exec 'cd /Users/colinzhao/dots/.config/nvim/lua/nvim-claude && git status --porcelain LICENSE'
-      debug_file:write(string.format("  Git status LICENSE: '%s'\n", git_status or 'nil'))
-
-      -- Check if we already have a baseline
-      debug_file:write(string.format('  Current baseline ref: %s\n', M.stable_baseline_ref or 'nil'))
-
-      -- Store reference for later
+      debug_file:write(string.format('\n[%s] PRE_HOOK START (file_path: %s)\n', os.date('%Y-%m-%d %H:%M:%S.%f'):sub(1, -4), file_path or 'nil'))
       M._debug_file = debug_file
     end
   end)
 
   if not ok then
-    -- Try to log the error
     local f = io.open('/tmp/nvim-claude-hook-debug.log', 'a')
     if f then
       f:write(string.format('\n[%s] PRE_HOOK ERROR: %s\n', os.date '%Y-%m-%d %H:%M:%S', tostring(err)))
@@ -119,38 +80,72 @@ function M.pre_tool_use_hook()
 
   local debug_file = M._debug_file
 
-  -- Only create a baseline if we don't have one yet
+  -- If no file path provided, fall back to old behavior
+  if not file_path then
+    if debug_file then
+      debug_file:write('  No file path provided, using legacy behavior\n')
+    end
+    return M.legacy_pre_tool_use_hook()
+  end
+
+  local git_root = utils.get_project_root()
+  if not git_root then
+    if debug_file then
+      debug_file:write('  Not in git repository\n')
+      debug_file:close()
+    end
+    return true
+  end
+
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  
+  if debug_file then
+    debug_file:write(string.format('  Git root: %s\n', git_root))
+    debug_file:write(string.format('  Relative path: %s\n', relative_path))
+    debug_file:write(string.format('  Current baseline ref: %s\n', M.stable_baseline_ref or 'nil'))
+    debug_file:write(string.format('  File already tracked: %s\n', tostring(M.claude_edited_files[relative_path] ~= nil)))
+  end
+
+  -- Case 1: No baseline exists at all → create full baseline stash
   if not M.stable_baseline_ref then
     if debug_file then
-      debug_file:write(string.format('  Creating baseline stash NOW at %s\n', os.date('%Y-%m-%d %H:%M:%S.%f'):sub(1, -4)))
+      debug_file:write('  Creating initial baseline stash\n')
     end
-
-    -- Create baseline stash synchronously
+    
     local stash_ref = persistence.create_stash('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S')
     if stash_ref then
       M.stable_baseline_ref = stash_ref
       persistence.current_stash_ref = stash_ref
+      
       if debug_file then
         debug_file:write(string.format('  Created baseline stash: %s\n', stash_ref))
-
-        -- Immediately check what's in the stash
-        local utils = require 'nvim-claude.utils'
-        local stash_content = utils.exec(string.format('git show %s:LICENSE | head -5', stash_ref))
-        debug_file:write(string.format '  Baseline stash LICENSE content (first 5 lines):\n')
-        if stash_content then
-          for _, line in ipairs(vim.split(stash_content, '\n')) do
-            debug_file:write(string.format('    %s\n', line))
-          end
-        end
       end
     else
       if debug_file then
-        debug_file:write '  ERROR: Failed to create baseline stash\n'
+        debug_file:write('  ERROR: Failed to create baseline stash\n')
       end
     end
-  else
+  
+  -- Case 2: File already Claude-edited → do nothing (baseline already captured)
+  elseif M.claude_edited_files[relative_path] then
     if debug_file then
-      debug_file:write(string.format('  Already have baseline: %s\n', M.stable_baseline_ref))
+      debug_file:write('  File already tracked, no baseline update needed\n')
+    end
+  
+  -- Case 3: New file for Claude to edit → update baseline for this specific file
+  else
+    -- Check if file exists before updating baseline
+    local full_path = git_root .. '/' .. relative_path
+    if utils.file_exists(full_path) then
+      if debug_file then
+        debug_file:write('  New file to edit, updating baseline\n')
+      end
+      
+      M.update_baseline_for_file(relative_path, git_root)
+    else
+      if debug_file then
+        debug_file:write('  File does not exist, skipping baseline update (will be treated as new file)\n')
+      end
     end
   end
 
@@ -159,114 +154,233 @@ function M.pre_tool_use_hook()
     debug_file:close()
   end
 
-  -- Return success to allow the tool to proceed
   return true
 end
 
--- Post-tool-use hook: Create stash of Claude's changes and trigger diff review
-function M.post_tool_use_hook(file_path)
-  -- Debug: Log to file
-  local debug_file = io.open('/tmp/nvim-claude-hook-debug.log', 'a')
-  if debug_file then
-    debug_file:write(string.format('\n[%s] POST_HOOK START (file_path=%s)\n', os.date '%Y-%m-%d %H:%M:%S', file_path or 'nil'))
-  end
-
-  -- Run directly without vim.schedule for testing
-  local utils = require 'nvim-claude.utils'
+-- Legacy pre-hook for backward compatibility
+function M.legacy_pre_tool_use_hook()
   local persistence = require 'nvim-claude.inline-diff-persistence'
 
-  -- Refresh all buffers to show Claude's changes
-  vim.cmd 'checktime'
+  -- Only create a baseline if we don't have one yet
+  if not M.stable_baseline_ref then
+    local stash_ref = persistence.create_stash('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S')
+    if stash_ref then
+      M.stable_baseline_ref = stash_ref
+      persistence.current_stash_ref = stash_ref
+    end
+  end
 
-  -- Check if Claude made any changes
+  return true
+end
+
+-- Update baseline stash to include current state of a specific file
+function M.update_baseline_for_file(relative_path, git_root)
+  local utils = require 'nvim-claude.utils'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+  
+  local debug_file = M._debug_file
+  
+  if debug_file then
+    debug_file:write(string.format('  Updating baseline for file: %s\n', relative_path))
+  end
+  
+  -- Check if file exists on disk
+  local full_path = git_root .. '/' .. relative_path
+  if not utils.file_exists(full_path) then
+    if debug_file then
+      debug_file:write('  File does not exist on disk, skipping baseline update\n')
+    end
+    return
+  end
+  
+  -- Strategy: Create a new stash that combines the existing baseline with current file state
+  -- 1. Create a temporary commit with current file state
+  -- 2. Use git cherry-pick or patch to apply current file to baseline
+  -- 3. Create new stash from result
+  
+  -- Read current file content
+  local current_content = utils.read_file(full_path)
+  if not current_content then
+    if debug_file then
+      debug_file:write('  Could not read current file content\n')
+    end
+    return
+  end
+  
+  -- Create a temporary file with current content
+  local temp_file = '/tmp/nvim-claude-baseline-update-' .. os.time()
+  utils.write_file(temp_file, current_content)
+  
+  -- Use git's plumbing to create a new tree that combines baseline + current file
+  local success = pcall(function()
+    -- Get the tree of the current baseline stash
+    local baseline_tree_cmd = string.format('cd "%s" && git rev-parse %s^{tree}', git_root, M.stable_baseline_ref)
+    local baseline_tree, err = utils.exec(baseline_tree_cmd)
+    
+    if err or not baseline_tree then
+      error('Failed to get baseline tree: ' .. (err or 'unknown error'))
+    end
+    
+    baseline_tree = baseline_tree:gsub('%s+', '') -- trim whitespace
+    
+    if debug_file then
+      debug_file:write(string.format('  Baseline tree: %s\n', baseline_tree))
+    end
+    
+    -- Create a blob for the current file content
+    local blob_cmd = string.format('cd "%s" && git hash-object -w "%s"', git_root, temp_file)
+    local blob_hash, blob_err = utils.exec(blob_cmd)
+    
+    if blob_err or not blob_hash then
+      error('Failed to create blob: ' .. (blob_err or 'unknown error'))
+    end
+    
+    blob_hash = blob_hash:gsub('%s+', '') -- trim whitespace
+    
+    if debug_file then
+      debug_file:write(string.format('  Created blob: %s\n', blob_hash))
+    end
+    
+    -- Read the baseline tree and update it with the new file
+    local tree_cmd = string.format('cd "%s" && git ls-tree %s', git_root, baseline_tree)
+    local tree_content, tree_err = utils.exec(tree_cmd)
+    
+    if tree_err then
+      error('Failed to read tree: ' .. tree_err)
+    end
+    
+    -- Parse tree content and update/add our file
+    local new_tree_entries = {}
+    local file_found = false
+    
+    if tree_content and tree_content ~= '' then
+      for line in tree_content:gmatch('[^\n]+') do
+        local mode, type, hash, name = line:match('^(%d+) (%w+) (%x+)\t(.+)$')
+        if mode and type and hash and name then
+          if name == relative_path then
+            -- Update existing file
+            table.insert(new_tree_entries, string.format('%s %s %s\t%s', mode, type, blob_hash, name))
+            file_found = true
+          else
+            -- Keep existing entry
+            table.insert(new_tree_entries, line)
+          end
+        end
+      end
+    end
+    
+    -- Add file if it wasn't found in the tree
+    if not file_found then
+      table.insert(new_tree_entries, string.format('100644 blob %s\t%s', blob_hash, relative_path))
+    end
+    
+    -- Create new tree
+    local new_tree_input = table.concat(new_tree_entries, '\n')
+    if new_tree_input ~= '' then
+      new_tree_input = new_tree_input .. '\n'
+    end
+    
+    -- Write tree input to temp file
+    local tree_input_file = '/tmp/nvim-claude-tree-input-' .. os.time()
+    utils.write_file(tree_input_file, new_tree_input)
+    
+    local new_tree_cmd = string.format('cd "%s" && git mktree < "%s"', git_root, tree_input_file)
+    local new_tree_hash, new_tree_err = utils.exec(new_tree_cmd)
+    
+    -- Clean up temp files
+    os.remove(tree_input_file)
+    
+    if new_tree_err or not new_tree_hash then
+      error('Failed to create new tree: ' .. (new_tree_err or 'unknown error'))
+    end
+    
+    new_tree_hash = new_tree_hash:gsub('%s+', '') -- trim whitespace
+    
+    if debug_file then
+      debug_file:write(string.format('  Created new tree: %s\n', new_tree_hash))
+    end
+    
+    -- Create a commit from the new tree
+    local commit_message = string.format('nvim-claude: updated baseline for %s at %s', relative_path, os.date '%Y-%m-%d %H:%M:%S')
+    local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', git_root, new_tree_hash, M.stable_baseline_ref, commit_message)
+    local new_commit_hash, commit_err = utils.exec(commit_cmd)
+    
+    if commit_err or not new_commit_hash then
+      error('Failed to create commit: ' .. (commit_err or 'unknown error'))
+    end
+    
+    new_commit_hash = new_commit_hash:gsub('%s+', '') -- trim whitespace
+    
+    if debug_file then
+      debug_file:write(string.format('  Created new commit: %s\n', new_commit_hash))
+    end
+    
+    -- Update our baseline reference to the new commit
+    M.stable_baseline_ref = new_commit_hash
+    persistence.current_stash_ref = new_commit_hash
+    
+    -- Save persistence state
+    persistence.save_state({
+      stash_ref = new_commit_hash,
+      claude_edited_files = M.claude_edited_files
+    })
+    
+    if debug_file then
+      debug_file:write(string.format('  Updated baseline ref to: %s\n', new_commit_hash))
+    end
+  end)
+  
+  -- Clean up temp file
+  os.remove(temp_file)
+  
+  if not success then
+    if debug_file then
+      debug_file:write('  ERROR: Failed to update baseline\n')
+    end
+  end
+end
+
+-- Post-tool-use hook: Track Claude-edited file and refresh if currently open
+function M.post_tool_use_hook(file_path)
+  if not file_path then 
+    return 
+  end
+
+  local utils = require 'nvim-claude.utils'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
   local git_root = utils.get_project_root()
+  
   if not git_root then
     return
   end
 
-  local status_cmd = string.format('cd "%s" && git status --porcelain', git_root)
-  local status_result = utils.exec(status_cmd)
+  -- Track this file as Claude-edited
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  M.claude_edited_files[relative_path] = true
 
-  if not status_result or status_result == '' then
-    return
-  end
+  -- Save to persistence
+  persistence.save_state({ 
+    stash_ref = M.stable_baseline_ref,
+    claude_edited_files = M.claude_edited_files 
+  })
 
-  -- If file_path is provided, track it specifically
-  if file_path then
-    local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-    M.claude_edited_files[relative_path] = true
-    if debug_file then
-      debug_file:write(string.format('  Tracked file from parameter: %s\n', relative_path))
-    end
-  end
-
-  -- Get list of modified files
-  local modified_files = {}
-  local inline_diff = require 'nvim-claude.inline-diff'
-
-  for line in status_result:gmatch '[^\n]+' do
-    local file = line:match '^.M (.+)$' or line:match '^M. (.+)$' or line:match '^.. (.+)$'
-    if file then
-      table.insert(modified_files, file)
-      -- Track that Claude edited this file
-      M.claude_edited_files[file] = true
-
-      -- Track this file in the diff files list immediately
-      local full_path = git_root .. '/' .. file
-      inline_diff.diff_files[full_path] = -1 -- Use -1 to indicate no buffer yet
-    end
-  end
-
-  -- Always use the stable baseline reference for comparison
-  local stash_ref = M.stable_baseline_ref or persistence.current_stash_ref
-
-  -- If no baseline exists at all, create one now (shouldn't happen normally)
-  if not stash_ref then
-    stash_ref = persistence.create_stash('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S')
-    M.stable_baseline_ref = stash_ref
-    persistence.current_stash_ref = stash_ref
-  end
-
-  if stash_ref then
-    -- Process inline diffs for currently open buffers
-    local opened_inline = false
-
-    for _, file in ipairs(modified_files) do
-      local full_path = git_root .. '/' .. file
-
-      -- Find buffer with this file
-      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-        if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_is_loaded(buf) then
-          local buf_name = vim.api.nvim_buf_get_name(buf)
-          if buf_name == full_path or buf_name:match('/' .. file:gsub('([^%w])', '%%%1') .. '$') then
-            -- Show inline diff for this open buffer
-            M.show_inline_diff_for_file(buf, file, git_root, stash_ref)
-            opened_inline = true
-
-            -- Switch to that buffer if it's not the current one
-            if buf ~= vim.api.nvim_get_current_buf() then
-              vim.api.nvim_set_current_buf(buf)
-            end
-
-            break -- Only show inline diff for first matching buffer
-          end
+  -- If this file is currently open in a buffer, refresh it and show diff
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_is_loaded(buf) then
+      local buf_name = vim.api.nvim_buf_get_name(buf)
+      if buf_name == file_path then
+        -- Refresh the buffer to show Claude's changes
+        vim.api.nvim_buf_call(buf, function()
+          vim.cmd('checktime')
+        end)
+        
+        -- Show inline diff if we have a baseline
+        if M.stable_baseline_ref then
+          M.show_inline_diff_for_file(buf, relative_path, git_root, M.stable_baseline_ref)
         end
-      end
-
-      if opened_inline then
         break
       end
     end
-
-    -- If no inline diff was shown, just notify the user
-    if not opened_inline then
-      vim.notify('Claude made changes. Open the modified files to see inline diffs.', vim.log.levels.INFO)
-    end
-  end
-
-  if debug_file then
-    debug_file:write(string.format('[%s] POST_HOOK END\n', os.date '%Y-%m-%d %H:%M:%S'))
-    debug_file:close()
   end
 end
 
@@ -282,19 +396,20 @@ function M.show_inline_diff_for_file(buf, file, git_root, stash_ref)
 
   -- Get baseline from git stash
   local stash_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, file)
-  local original_content = utils.exec(stash_cmd)
+  local original_content, git_err = utils.exec(stash_cmd)
 
-  if original_content then
-    -- Get current content
-    local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    local current_content = table.concat(current_lines, '\n')
-
-    -- Show inline diff
-    inline_diff.show_inline_diff(buf, original_content, current_content)
-    return true
+  -- If file doesn't exist in baseline, treat as new file (empty baseline)
+  if git_err or not original_content then
+    original_content = ''
   end
 
-  return false
+  -- Get current content
+  local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local current_content = table.concat(current_lines, '\n')
+
+  -- Show inline diff (empty baseline will show entire file as additions)
+  inline_diff.show_inline_diff(buf, original_content, current_content)
+  return true
 end
 
 -- -- Test inline diff manually
