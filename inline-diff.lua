@@ -74,8 +74,7 @@ function M.compute_diff(old_text, new_text)
   local cmd = string.format('git diff --no-index --no-prefix --unified=1 --diff-algorithm=histogram "%s" "%s" 2>/dev/null || true', old_file, new_file)
   local diff_output = utils.exec(cmd)
 
-  -- Debug: save raw diff
-  utils.write_file('/tmp/nvim-claude-raw-diff.txt', diff_output)
+  -- Parse diff into hunks
 
   -- Parse diff into hunks
   local hunks = M.parse_diff(diff_output)
@@ -195,41 +194,34 @@ function M.apply_diff_visualization(bufnr)
           line_hl_group = 'DiffAdd',
           id = 4000 + i * 1000 + line_idx,
         })
-      else
-        vim.notify('Line ' .. line_idx .. ' out of range (buf has ' .. #buf_lines .. ' lines)', vim.log.levels.WARN)
       end
     end
 
     -- Show deletions as virtual text above their position with full-width background
     for j, del in ipairs(deletions) do
-      -- Debug logging for deletion placement
-      if i == 3 then  -- Third hunk
-        vim.notify(string.format('Hunk 3 deletion %d: line=%d, text=%s, buf_lines=%d', j, del.line, del.text:sub(1, 20), #buf_lines), vim.log.levels.INFO)
-      end
-      
       -- Determine if this is an EOF deletion
       local is_eof_deletion = del.line >= #buf_lines
       local placement_line = is_eof_deletion and (#buf_lines - 1) or del.line
-      
+
       if placement_line >= 0 and placement_line < #buf_lines then
         -- Calculate full width for the deletion line
         local text = '- ' .. del.text
         local win_width = vim.api.nvim_win_get_width(0)
-        
+
         -- For deletion-only hunks, add hunk info to the first deletion
         local hunk_indicator = ''
         if j == 1 and #additions == 0 then
           -- This is a deletion-only hunk, add the hunk indicator
           hunk_indicator = ' [Hunk ' .. i .. '/' .. #diff_data.hunks .. ']'
         end
-        
+
         -- Build virtual line parts
         local virt_line_parts = {}
         if hunk_indicator ~= '' then
           -- Structure: deletion text + hunk indicator + padding to fill the rest
           table.insert(virt_line_parts, { text, 'DiffDelete' })
           table.insert(virt_line_parts, { hunk_indicator, 'Comment' })
-          
+
           -- Calculate remaining width and fill with red background
           local used_width = vim.fn.strdisplaywidth(text) + vim.fn.strdisplaywidth(hunk_indicator)
           local remaining_width = win_width - used_width
@@ -245,11 +237,9 @@ function M.apply_diff_visualization(bufnr)
 
         vim.api.nvim_buf_set_extmark(bufnr, ns_id, placement_line, 0, {
           virt_lines = { virt_line_parts },
-          virt_lines_above = not is_eof_deletion,  -- EOF deletions appear below the last line
+          virt_lines_above = not is_eof_deletion, -- EOF deletions appear below the last line
           id = 3000 + i * 100 + j,
         })
-      else
-        vim.notify(string.format('Hunk %d deletion %d out of bounds: line=%d, buf_lines=%d', i, j, del.line, #buf_lines), vim.log.levels.WARN)
       end
     end
 
@@ -369,7 +359,7 @@ function M.jump_to_hunk(bufnr, hunk_idx)
 
   -- Get buffer line count to ensure we don't jump past the end
   local line_count = vim.api.nvim_buf_line_count(bufnr)
-  
+
   -- For deletions at the end of file, jump to the last line
   if jump_line > line_count then
     jump_line = math.max(1, line_count)
@@ -442,41 +432,29 @@ function M.apply_patch_to_content(content, patch)
   local temp_dir = '/tmp/nvim-claude-patch-' .. os.time()
   -- Create temp directory
   vim.fn.mkdir(temp_dir, 'p')
-  
+
   -- Simple approach: always use 'file' as the filename to avoid path issues
   local temp_file = temp_dir .. '/file'
   local patch_file = temp_dir .. '/patch.patch'
-  
+
   -- Write the baseline content
   local success = utils.write_file(temp_file, content)
   if not success then
-    vim.notify('ERROR: Failed to write baseline content', vim.log.levels.ERROR)
-    return nil
-  end
-  
-  -- Modify patch to use generic filename 'file' instead of actual filename
-  local modified_patch = patch:gsub('--- a/[^\n]+', '--- a/file'):gsub('%+%+%+ b/[^\n]+', '+++ b/file')
-  
-  -- Write the modified patch file
-  success = utils.write_file(patch_file, modified_patch)
-  if not success then
-    vim.notify('ERROR: Failed to write patch file', vim.log.levels.ERROR)
     return nil
   end
 
-  -- Debug: check what files were created
-  local ls_result = vim.fn.system('ls -la "' .. temp_dir .. '"')
-  vim.notify('Temp dir contents: ' .. ls_result, vim.log.levels.INFO)
-  vim.notify('Temp file path: ' .. temp_file, vim.log.levels.INFO)
-  
-  -- Debug: check if file exists
-  local file_exists = vim.fn.filereadable(temp_file) == 1
-  vim.notify('File exists after write: ' .. tostring(file_exists), vim.log.levels.INFO)
+  -- Modify patch to use generic filename 'file' instead of actual filename
+  local modified_patch = patch:gsub('--- a/[^\n]+', '--- a/file'):gsub('%+%+%+ b/[^\n]+', '+++ b/file')
+
+  -- Write the modified patch file
+  success = utils.write_file(patch_file, modified_patch)
+  if not success then
+    return nil
+  end
 
   -- Apply patch using patch command
   local cmd = string.format('cd "%s" && patch -p1 < "%s" 2>&1', temp_dir, patch_file)
   local result, err = utils.exec(cmd)
-  vim.notify('Patch result: ' .. (result or 'nil') .. ', err: ' .. (err or 'nil'), vim.log.levels.INFO)
 
   local patched_content = nil
 
@@ -484,7 +462,7 @@ function M.apply_patch_to_content(content, patch)
     -- Patch applied successfully, read the result
     patched_content = utils.read_file(temp_file)
   else
-    vim.notify('Failed to apply patch: ' .. (err or result or 'unknown error'), vim.log.levels.ERROR)
+    -- Patch failed, return nil
   end
 
   -- Cleanup
@@ -599,8 +577,6 @@ end
 
 -- Accept current hunk
 function M.accept_current_hunk(bufnr)
-  vim.notify('NEW accept_current_hunk called!', vim.log.levels.INFO)
-
   local diff_data = M.active_diffs[bufnr]
   if not diff_data then
     vim.notify('No diff data found for buffer', vim.log.levels.ERROR)
@@ -614,8 +590,6 @@ function M.accept_current_hunk(bufnr)
     return
   end
 
-  vim.notify(string.format('Accepting hunk %d/%d', hunk_idx, #diff_data.hunks), vim.log.levels.INFO)
-
   local utils = require 'nvim-claude.utils'
   local hooks = require 'nvim-claude.hooks'
   local persistence = require 'nvim-claude.inline-diff-persistence'
@@ -625,7 +599,6 @@ function M.accept_current_hunk(bufnr)
 
   -- Step 1: Generate patch for current hunk only
   local hunk_patch = M.generate_hunk_patch(hunk, relative_path)
-  vim.notify('Generated patch: ' .. string.sub(hunk_patch, 1, 100) .. '...', vim.log.levels.INFO)
 
   -- Step 2: Get current baseline from stash
   local stash_ref = hooks.stable_baseline_ref or persistence.current_stash_ref
@@ -633,31 +606,18 @@ function M.accept_current_hunk(bufnr)
     vim.notify('No baseline stash found', vim.log.levels.ERROR)
     return
   end
-  vim.notify('Using stash ref: ' .. stash_ref, vim.log.levels.INFO)
 
   local baseline_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, relative_path)
   local baseline_content, git_err = utils.exec(baseline_cmd)
   if git_err or not baseline_content then
     baseline_content = '' -- Treat as new file
-    vim.notify('No baseline content found, treating as new file', vim.log.levels.INFO)
-  else
-    vim.notify('Got baseline content: ' .. string.len(baseline_content) .. ' chars', vim.log.levels.INFO)
   end
 
   -- Step 3: Apply patch to baseline
-  vim.notify('Full patch content:\n' .. hunk_patch, vim.log.levels.INFO)
   local updated_baseline_content = M.apply_patch_to_content(baseline_content, hunk_patch)
   if not updated_baseline_content then
     vim.notify('Failed to apply patch to baseline', vim.log.levels.ERROR)
     return
-  end
-  vim.notify('Patch applied successfully: ' .. string.len(updated_baseline_content) .. ' chars', vim.log.levels.INFO)
-
-  -- Debug: Check if content actually changed
-  if updated_baseline_content == baseline_content then
-    vim.notify('WARNING: Patch application did not change content!', vim.log.levels.WARN)
-  else
-    vim.notify('SUCCESS: Content changed after patch', vim.log.levels.INFO)
   end
 
   -- Step 4: Update baseline stash with patched content
@@ -666,7 +626,6 @@ function M.accept_current_hunk(bufnr)
     vim.notify('Failed to update baseline stash', vim.log.levels.ERROR)
     return
   end
-  vim.notify('Baseline stash updated successfully', vim.log.levels.INFO)
 
   -- Step 5: Recompute diff against updated baseline
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -720,8 +679,6 @@ function M.reject_current_hunk(bufnr)
     return
   end
 
-  vim.notify(string.format('Rejecting hunk %d/%d', hunk_idx, #diff_data.hunks), vim.log.levels.INFO)
-
   -- For reject, apply the patch in reverse to the current file
   -- The baseline stays unchanged
   local utils = require 'nvim-claude.utils'
@@ -734,20 +691,12 @@ function M.reject_current_hunk(bufnr)
   local patch_file = vim.fn.tempname() .. '.patch'
   utils.write_file(patch_file, patch)
 
-  -- Debug: Show hunk details
-  vim.notify(string.format('Hunk %d: old_start=%d, new_start=%d, lines=%d', hunk_idx, hunk.old_start, hunk.new_start, #hunk.lines), vim.log.levels.INFO)
-
-  -- Debug: save patch for inspection
-  local debug_file = '/tmp/nvim-claude-reject-patch.txt'
-  utils.write_file(debug_file, patch)
-
   -- Apply reverse patch to the working directory
   local apply_cmd = string.format('cd "%s" && git apply --reverse --verbose "%s" 2>&1', git_root, patch_file)
   local result, err = utils.exec(apply_cmd)
 
   if err or (result and result:match 'error:') then
     vim.notify('Failed to reject hunk: ' .. (err or result), vim.log.levels.ERROR)
-    vim.notify('Patch saved to: ' .. debug_file, vim.log.levels.INFO)
     vim.fn.delete(patch_file)
     return
   end
@@ -998,25 +947,25 @@ function M.reject_all_hunks(bufnr)
 
   -- Close inline diff
   M.close_inline_diff(bufnr)
-  
+
   -- Clear baseline tracking for consistency with accept all
   local hooks = require 'nvim-claude.hooks'
   local persistence = require 'nvim-claude.inline-diff-persistence'
-  
+
   -- Check if there are any other tracked files
   local has_other_files = false
   local current_file = vim.api.nvim_buf_get_name(bufnr)
   local utils = require 'nvim-claude.utils'
   local git_root = utils.get_project_root()
   local relative_path = current_file:gsub('^' .. vim.pesc(git_root) .. '/', '')
-  
+
   for file_path, _ in pairs(hooks.claude_edited_files) do
     if file_path ~= relative_path then
       has_other_files = true
       break
     end
   end
-  
+
   -- If no other files are tracked, clear the baseline
   if not has_other_files then
     hooks.stable_baseline_ref = nil
@@ -1369,4 +1318,3 @@ function M.reject_all_files()
 end
 
 return M
-
