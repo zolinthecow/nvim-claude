@@ -245,9 +245,6 @@ function M.post_tool_use_hook(file_path)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
   M.claude_edited_files[relative_path] = true
 
-  -- Also add to diff_files for <leader>ci to show it immediately
-  local inline_diff = require 'nvim-claude.inline-diff'
-  inline_diff.diff_files[file_path] = -1  -- -1 indicates unopened file
 
   -- Save to persistence
   persistence.save_state({ 
@@ -645,7 +642,6 @@ function M.setup_commands()
             inline_diff.close_inline_diff(bufnr, true)
           end
           inline_diff.active_diffs = {}
-          inline_diff.diff_files = {}
           
           -- Clear persistence file
           persistence.clear_state()
@@ -807,7 +803,6 @@ function M.setup_commands()
   --   vim.notify('Stable baseline: ' .. (M.stable_baseline_ref or 'none'), vim.log.levels.INFO)
   --   vim.notify('Persistence stash ref: ' .. (persistence.current_stash_ref or 'none'), vim.log.levels.INFO)
   --   vim.notify(string.format('Claude edited files: %d', vim.tbl_count(M.claude_edited_files)), vim.log.levels.INFO)
-  --   vim.notify('Diff files: ' .. vim.inspect(vim.tbl_keys(inline_diff.diff_files)), vim.log.levels.INFO)
   --   vim.notify('Active diffs: ' .. vim.inspect(vim.tbl_keys(inline_diff.active_diffs)), vim.log.levels.INFO)
   --
   --   -- Check current file

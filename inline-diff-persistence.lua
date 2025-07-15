@@ -39,13 +39,11 @@ function M.save_state(diff_data)
   --   version: 1,
   --   timestamp: <unix_timestamp>,
   --   stash_ref: "<stash_sha>",
-  --   claude_edited_files: { "relative/path.lua": true },
-  --   diff_files: { "/full/path.lua": bufnr }
+  --   claude_edited_files: { "relative/path.lua": true }
   -- }
   -- Note: No longer save hunks/content - computed fresh from git baseline
   
   local hooks = require('nvim-claude.hooks')
-  local inline_diff = require('nvim-claude.inline-diff')
   
   -- Validate stash_ref before saving
   if diff_data.stash_ref and (diff_data.stash_ref:match('fatal:') or diff_data.stash_ref:match('error:')) then
@@ -58,13 +56,7 @@ function M.save_state(diff_data)
     timestamp = os.time(),
     stash_ref = diff_data.stash_ref,
     claude_edited_files = diff_data.claude_edited_files or hooks.claude_edited_files or {},
-    diff_files = {},  -- Add diff_files to persistence
   }
-  
-  -- Save all diff files (both opened and unopened)
-  for file_path, bufnr in pairs(inline_diff.diff_files) do
-    state.diff_files[file_path] = bufnr
-  end
   
   -- Note: We no longer persist hunks/content - diffs are computed fresh from git baseline
   
@@ -164,33 +156,6 @@ function M.restore_diffs()
     hooks.claude_edited_files = state.claude_edited_files
   end
   
-  -- Restore diff_files for unopened files
-  if state.diff_files then
-    for file_path, bufnr in pairs(state.diff_files) do
-      -- Only restore if not already restored as an active diff
-      if not inline_diff.diff_files[file_path] then
-        -- Use -1 to indicate unopened file
-        inline_diff.diff_files[file_path] = bufnr == -1 and -1 or -1
-      end
-    end
-  end
-  
-  -- Also populate diff_files from claude_edited_files if needed
-  -- This ensures <leader>ci works even if diff_files wasn't properly saved
-  if state.claude_edited_files then
-    local utils = require('nvim-claude.utils')
-    local git_root = utils.get_project_root()
-    
-    if git_root then
-      for relative_path, _ in pairs(state.claude_edited_files) do
-        local full_path = git_root .. '/' .. relative_path
-        -- Only add if not already in diff_files
-        if not inline_diff.diff_files[full_path] then
-          inline_diff.diff_files[full_path] = -1  -- Mark as unopened
-        end
-      end
-    end
-  end
   
   return true
 end

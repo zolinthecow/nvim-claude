@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed "No baseline found" notification appearing on every file save
+- Only show baseline warnings for corrupted states (Claude-tracked files with missing baseline)
+
+### Changed
+- Removed redundant `diff_files` tracking - now using only `claude_edited_files` for all file tracking
+- Simplified persistence state by removing `diff_files` from saved data
+- File navigation now computes absolute paths from `claude_edited_files` when needed
+
 ### Added
 - Per-file baseline management for accurate diff tracking
 - Hunk indicators for deletion-only hunks (shows `[Hunk X/Y]` on red deletion lines)

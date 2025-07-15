@@ -8,17 +8,11 @@ local ns_id = vim.api.nvim_create_namespace 'nvim_claude_inline_diff'
 
 -- State tracking
 M.active_diffs = {} -- Track active inline diffs by buffer number
-M.diff_files = {} -- Track all files with diffs for navigation
 
 -- Initialize inline diff for a buffer
 function M.show_inline_diff(bufnr, old_content, new_content)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
 
-  -- Track this file in our diff files list
-  local file_path = vim.api.nvim_buf_get_name(bufnr)
-  if file_path and file_path ~= '' then
-    M.diff_files[file_path] = bufnr
-  end
 
   -- Get the diff between old and new content
   local diff_data = M.compute_diff(old_content, new_content)
@@ -981,11 +975,6 @@ function M.close_inline_diff(bufnr, keep_baseline)
   -- Clean up state
   M.active_diffs[bufnr] = nil
 
-  -- Remove from diff files tracking
-  local file_path = vim.api.nvim_buf_get_name(bufnr)
-  if file_path and M.diff_files[file_path] then
-    M.diff_files[file_path] = nil
-  end
 
   -- Check if all diffs are closed
   local has_active_diffs = false
@@ -1051,15 +1040,13 @@ function M.next_diff_file()
   local files_with_diffs = {}
   local hooks = require 'nvim-claude.hooks'
 
-  -- Collect all files with diffs (both opened and unopened)
+  -- Collect all files with diffs
   local utils = require 'nvim-claude.utils'
   local git_root = utils.get_project_root()
 
-  for file_path, bufnr in pairs(M.diff_files) do
-    local git_relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-    if hooks.claude_edited_files[git_relative] then
-      table.insert(files_with_diffs, file_path)
-    end
+  for relative_path, _ in pairs(hooks.claude_edited_files) do
+    local full_path = git_root .. '/' .. relative_path
+    table.insert(files_with_diffs, full_path)
   end
 
   if #files_with_diffs == 0 then
@@ -1096,15 +1083,13 @@ function M.prev_diff_file()
   local files_with_diffs = {}
   local hooks = require 'nvim-claude.hooks'
 
-  -- Collect all files with diffs (both opened and unopened)
+  -- Collect all files with diffs
   local utils = require 'nvim-claude.utils'
   local git_root = utils.get_project_root()
 
-  for file_path, bufnr in pairs(M.diff_files) do
-    local git_relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-    if hooks.claude_edited_files[git_relative] then
-      table.insert(files_with_diffs, file_path)
-    end
+  for relative_path, _ in pairs(hooks.claude_edited_files) do
+    local full_path = git_root .. '/' .. relative_path
+    table.insert(files_with_diffs, full_path)
   end
 
   if #files_with_diffs == 0 then
@@ -1147,7 +1132,15 @@ function M.refresh_inline_diff(bufnr)
 
   local stash_ref = hooks.stable_baseline_ref or persistence.current_stash_ref
   if not stash_ref then
-    vim.notify('No baseline found', vim.log.levels.WARN)
+    -- Check if this file is Claude-tracked - only warn if it should have a baseline
+    local git_root = utils.get_project_root()
+    local file_path = vim.api.nvim_buf_get_name(bufnr)
+    local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+    
+    if hooks.claude_edited_files[relative_path] then
+      -- This is a corrupted state - Claude-tracked file with no baseline
+      vim.notify('No baseline found for Claude-tracked file', vim.log.levels.WARN)
+    end
     return
   end
 
@@ -1200,7 +1193,10 @@ function M.setup_auto_refresh(bufnr)
     group = group,
     buffer = bufnr,
     callback = function()
-      M.refresh_inline_diff(bufnr)
+      -- Only refresh if this buffer has an active diff
+      if M.active_diffs[bufnr] then
+        M.refresh_inline_diff(bufnr)
+      end
     end,
     desc = 'Refresh inline diff on save',
   })
@@ -1210,27 +1206,26 @@ end
 function M.list_diff_files()
   local files_with_diffs = {}
   local hooks = require 'nvim-claude.hooks'
+  local utils = require 'nvim-claude.utils'
+  local git_root = utils.get_project_root()
 
-  for file_path, bufnr in pairs(M.diff_files) do
-    -- Check if we have active diffs for this buffer, or if it's a tracked file not yet opened
-    if (bufnr > 0 and M.active_diffs[bufnr]) or bufnr == -1 then
-      local diff_data = bufnr > 0 and M.active_diffs[bufnr] or nil
-      local relative_path = vim.fn.fnamemodify(file_path, ':~:.')
-
-      -- Check if this file is still tracked as Claude-edited
-      local utils = require 'nvim-claude.utils'
-      local git_root = utils.get_project_root()
-      local git_relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-      if hooks.claude_edited_files[git_relative] then
-        table.insert(files_with_diffs, {
-          path = file_path,
-          hunks = diff_data and #diff_data.hunks or '?',
-          name = vim.fn.fnamemodify(file_path, ':t'),
-          relative_path = relative_path,
-          current_hunk = diff_data and diff_data.current_hunk or 1,
-        })
-      end
+  for relative_path, _ in pairs(hooks.claude_edited_files) do
+    local full_path = git_root .. '/' .. relative_path
+    
+    -- Check if we have an open buffer for this file
+    local bufnr = vim.fn.bufnr(full_path)
+    local diff_data = nil
+    if bufnr > 0 and vim.api.nvim_buf_is_valid(bufnr) then
+      diff_data = M.active_diffs[bufnr]
     end
+
+    table.insert(files_with_diffs, {
+      path = full_path,
+      hunks = diff_data and #diff_data.hunks or '?',
+      name = vim.fn.fnamemodify(full_path, ':t'),
+      relative_path = relative_path,
+      current_hunk = diff_data and diff_data.current_hunk or 1,
+    })
   end
 
   if #files_with_diffs == 0 then
@@ -1264,9 +1259,9 @@ function M.list_diff_files()
       local selected_file = items[idx]
       vim.cmd('edit ' .. vim.fn.fnameescape(selected_file.path))
 
-      -- Jump to the current hunk in the selected file
-      local bufnr = M.diff_files[selected_file.path]
-      if bufnr and M.active_diffs[bufnr] then
+      -- Jump to the current hunk in the selected file if it has an active diff
+      local bufnr = vim.fn.bufnr(selected_file.path)
+      if bufnr > 0 and M.active_diffs[bufnr] then
         M.jump_to_hunk(bufnr, M.active_diffs[bufnr].current_hunk)
       end
     end
@@ -1294,7 +1289,6 @@ function M.accept_all_files()
   end
 
   -- Clear all diff state
-  M.diff_files = {}
   M.active_diffs = {}
 
   -- Clear all tracking
@@ -1362,7 +1356,6 @@ function M.reject_all_files()
   end
 
   -- Clear all diff state
-  M.diff_files = {}
   M.active_diffs = {}
 
   -- Clear all tracking
