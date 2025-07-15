@@ -106,6 +106,8 @@ require('nvim-claude').setup({
 ### Inline Diff Review
 When Claude makes changes to your files:
 
+**Note:** Diffs automatically refresh when you save the file (`:w`). Use `<leader>if` to manually refresh without saving.
+
 **Buffer-local keymaps (when viewing diffs):**
 - `]h` / `[h` - Navigate to next/previous hunk
 - `<leader>ia` - Accept current hunk
@@ -113,6 +115,7 @@ When Claude makes changes to your files:
 - `<leader>iA` - Accept all hunks in current file
 - `<leader>iR` - Reject all hunks in current file
 - `<leader>il` - List all files with Claude diffs
+- `<leader>if` - Refresh inline diff (manual refresh)
 - `<leader>iq` - Close inline diff view
 
 **Global keymaps:**

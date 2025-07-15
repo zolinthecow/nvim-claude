@@ -286,6 +286,9 @@ end
 function M.setup_inline_keymaps(bufnr)
   local opts = { buffer = bufnr, silent = true }
 
+  -- Set up auto-refresh on text changes (debounced)
+  M.setup_auto_refresh(bufnr)
+
   -- Navigation between hunks
   vim.keymap.set('n', ']h', function()
     M.next_hunk(bufnr)
@@ -319,6 +322,11 @@ function M.setup_inline_keymaps(bufnr)
   vim.keymap.set('n', '<leader>iq', function()
     M.close_inline_diff(bufnr)
   end, vim.tbl_extend('force', opts, { desc = 'Close inline diff' }))
+
+  -- Manual refresh
+  vim.keymap.set('n', '<leader>if', function()
+    M.refresh_inline_diff(bufnr)
+  end, vim.tbl_extend('force', opts, { desc = 'Refresh inline diff' }))
 end
 
 -- Jump to specific hunk
@@ -479,68 +487,65 @@ function M.update_baseline_with_content(git_root, relative_path, content, curren
     -- Create a unique temporary directory
     local temp_dir = '/tmp/nvim-claude-baseline-' .. os.time() .. '-' .. math.random(10000)
     vim.fn.mkdir(temp_dir, 'p')
-    
+
     -- Set up temporary index file
     local temp_index = temp_dir .. '/index'
-    
+
     -- Read the tree from current baseline into temporary index
-    local read_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git read-tree %s', 
-      git_root, temp_index, current_stash_ref)
+    local read_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git read-tree %s', git_root, temp_index, current_stash_ref)
     local read_result, read_err = utils.exec(read_tree_cmd)
     if read_err then
       error('Failed to read baseline tree: ' .. read_err)
     end
-    
+
     -- Write content to temporary file
     local temp_file = temp_dir .. '/content'
     utils.write_file(temp_file, content)
-    
+
     -- Create blob first and validate the hash
     local hash_cmd = string.format('cd "%s" && git hash-object -w "%s"', git_root, temp_file)
     local blob_hash, hash_err = utils.exec(hash_cmd)
-    if hash_err or not blob_hash or blob_hash:match('^fatal:') or blob_hash:match('^error:') then
+    if hash_err or not blob_hash or blob_hash:match '^fatal:' or blob_hash:match '^error:' then
       error('Failed to create blob: ' .. (hash_err or blob_hash or 'unknown error'))
     end
     blob_hash = blob_hash:gsub('%s+$', '') -- trim whitespace
-    
+
     -- Update the specific file in the temporary index
-    local update_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git update-index --add --cacheinfo 100644,%s,"%s"',
-      git_root, temp_index, blob_hash, relative_path)
+    local update_cmd =
+      string.format('cd "%s" && GIT_INDEX_FILE="%s" git update-index --add --cacheinfo 100644,%s,"%s"', git_root, temp_index, blob_hash, relative_path)
     local update_result, update_err = utils.exec(update_cmd)
-    if update_err or (update_result and (update_result:match('^fatal:') or update_result:match('^error:'))) then
+    if update_err or (update_result and (update_result:match '^fatal:' or update_result:match '^error:')) then
       error('Failed to update file in index: ' .. (update_err or update_result or 'unknown error'))
     end
-    
+
     -- Create tree from temporary index
-    local write_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree',
-      git_root, temp_index)
+    local write_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree', git_root, temp_index)
     local new_tree_hash, tree_err = utils.exec(write_tree_cmd)
-    if tree_err or not new_tree_hash or new_tree_hash:match('^fatal:') or new_tree_hash:match('^error:') then
+    if tree_err or not new_tree_hash or new_tree_hash:match '^fatal:' or new_tree_hash:match '^error:' then
       error('Failed to write tree: ' .. (tree_err or new_tree_hash or 'unknown error'))
     end
     new_tree_hash = new_tree_hash:gsub('%s+$', '')
-    
+
     -- Create new commit
     local commit_message = string.format('nvim-claude: accept hunk in %s %s', relative_path, os.date '%Y-%m-%d %H:%M:%S')
-    local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', 
-      git_root, new_tree_hash, current_stash_ref, commit_message)
+    local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', git_root, new_tree_hash, current_stash_ref, commit_message)
     local new_commit_hash, commit_err = utils.exec(commit_cmd)
-    if commit_err or not new_commit_hash or new_commit_hash:match('^fatal:') or new_commit_hash:match('^error:') then
+    if commit_err or not new_commit_hash or new_commit_hash:match '^fatal:' or new_commit_hash:match '^error:' then
       error('Failed to create commit: ' .. (commit_err or new_commit_hash or 'unknown error'))
     end
     new_commit_hash = new_commit_hash:gsub('%s+$', '')
-    
+
     -- Validate the final commit hash before using it
-    if new_commit_hash:match('fatal:') or new_commit_hash:match('error:') then
+    if new_commit_hash:match 'fatal:' or new_commit_hash:match 'error:' then
       error('Got error message instead of commit hash: ' .. new_commit_hash)
     end
-    
+
     -- Cleanup temporary directory
     vim.fn.delete(temp_dir, 'rf')
-    
+
     -- Update baseline reference
     hooks.stable_baseline_ref = new_commit_hash
-    
+
     return true
   end)
 
@@ -1128,6 +1133,77 @@ function M.prev_diff_file()
   local prev_file = files_with_diffs[prev_idx]
   vim.cmd('edit ' .. vim.fn.fnameescape(prev_file))
   vim.notify(string.format('Diff file %d/%d: %s', prev_idx, #files_with_diffs, vim.fn.fnamemodify(prev_file, ':t')), vim.log.levels.INFO)
+end
+
+-- Manual refresh function
+function M.refresh_inline_diff(bufnr)
+  -- Save cursor position
+  local cursor_pos = vim.api.nvim_win_get_cursor(0)
+
+  -- Get current baseline
+  local hooks = require 'nvim-claude.hooks'
+  local utils = require 'nvim-claude.utils'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+
+  local stash_ref = hooks.stable_baseline_ref or persistence.current_stash_ref
+  if not stash_ref then
+    vim.notify('No baseline found', vim.log.levels.WARN)
+    return
+  end
+
+  local git_root = utils.get_project_root()
+  if not git_root then
+    return
+  end
+
+  local file_path = vim.api.nvim_buf_get_name(bufnr)
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+
+  -- Get baseline content
+  local baseline_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, relative_path)
+  local baseline_content = utils.exec(baseline_cmd)
+  if not baseline_content then
+    baseline_content = '' -- New file
+  end
+
+  -- Get current buffer content
+  local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local current_content = table.concat(current_lines, '\n')
+
+  -- Preserve current hunk position
+  local current_hunk = M.active_diffs[bufnr] and M.active_diffs[bufnr].current_hunk or 1
+
+  -- Recompute and show diff
+  M.show_inline_diff(bufnr, baseline_content, current_content)
+
+  -- Restore hunk position if possible
+  if M.active_diffs[bufnr] and M.active_diffs[bufnr].hunks then
+    local hunk_count = #M.active_diffs[bufnr].hunks
+    if current_hunk <= hunk_count then
+      M.active_diffs[bufnr].current_hunk = current_hunk
+    end
+  end
+
+  -- Restore cursor position
+  vim.api.nvim_win_set_cursor(0, cursor_pos)
+
+  vim.notify('Diff refreshed', vim.log.levels.INFO)
+end
+
+-- Set up auto-refresh on save
+function M.setup_auto_refresh(bufnr)
+  -- Create buffer-local autocmd group
+  local group = vim.api.nvim_create_augroup('NvimClaudeAutoRefresh_' .. bufnr, { clear = true })
+
+  -- Set up autocmd for save only
+  vim.api.nvim_create_autocmd({ 'BufWritePost' }, {
+    group = group,
+    buffer = bufnr,
+    callback = function()
+      M.refresh_inline_diff(bufnr)
+    end,
+    desc = 'Refresh inline diff on save',
+  })
 end
 
 -- List all files with active diffs

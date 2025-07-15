@@ -83,6 +83,11 @@ function M.pre_tool_use_hook(file_path)
       M.stable_baseline_ref = stash_ref
       persistence.current_stash_ref = stash_ref
       
+      -- IMPORTANT: Save state immediately to handle multiple Neovim instances
+      persistence.save_state({
+        stash_ref = stash_ref,
+        claude_edited_files = M.claude_edited_files
+      })
     end
   
   -- Case 2: File already Claude-edited → do nothing (baseline already captured)
@@ -113,6 +118,12 @@ function M.legacy_pre_tool_use_hook()
     if stash_ref then
       M.stable_baseline_ref = stash_ref
       persistence.current_stash_ref = stash_ref
+      
+      -- IMPORTANT: Save state immediately to handle multiple Neovim instances
+      persistence.save_state({
+        stash_ref = stash_ref,
+        claude_edited_files = M.claude_edited_files or {}
+      })
     end
   end
 
