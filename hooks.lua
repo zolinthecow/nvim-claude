@@ -262,9 +262,11 @@ function M.post_tool_use_hook(file_path)
           vim.cmd('checktime')
         end)
         
-        -- Show inline diff if we have a baseline
+        -- Show inline diff if we have a baseline (with delay for buffer refresh)
         if M.stable_baseline_ref then
-          M.show_inline_diff_for_file(buf, relative_path, git_root, M.stable_baseline_ref)
+          vim.defer_fn(function()
+            M.show_inline_diff_for_file(buf, relative_path, git_root, M.stable_baseline_ref)
+          end, 100)
         end
         break
       end
