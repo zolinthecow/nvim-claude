@@ -61,98 +61,49 @@ function M.pre_tool_use_hook(file_path)
   local utils = require 'nvim-claude.utils'
   local persistence = require 'nvim-claude.inline-diff-persistence'
 
-  -- Debug: Log to file with error handling
-  local ok, err = pcall(function()
-    local debug_file = io.open('/tmp/nvim-claude-hook-debug.log', 'a')
-    if debug_file then
-      debug_file:write(string.format('\n[%s] PRE_HOOK START (file_path: %s)\n', os.date('%Y-%m-%d %H:%M:%S.%f'):sub(1, -4), file_path or 'nil'))
-      M._debug_file = debug_file
-    end
-  end)
-
-  if not ok then
-    local f = io.open('/tmp/nvim-claude-hook-debug.log', 'a')
-    if f then
-      f:write(string.format('\n[%s] PRE_HOOK ERROR: %s\n', os.date '%Y-%m-%d %H:%M:%S', tostring(err)))
-      f:close()
-    end
-  end
-
-  local debug_file = M._debug_file
 
   -- If no file path provided, fall back to old behavior
   if not file_path then
-    if debug_file then
-      debug_file:write('  No file path provided, using legacy behavior\n')
-    end
     return M.legacy_pre_tool_use_hook()
   end
 
   local git_root = utils.get_project_root_for_file(file_path)
   if not git_root then
-    if debug_file then
-      debug_file:write('  Not in git repository\n')
-      debug_file:close()
-    end
     return true
   end
 
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
   
-  if debug_file then
-    debug_file:write(string.format('  Git root: %s\n', git_root))
-    debug_file:write(string.format('  Relative path: %s\n', relative_path))
-    debug_file:write(string.format('  Current baseline ref: %s\n', M.stable_baseline_ref or 'nil'))
-    debug_file:write(string.format('  File already tracked: %s\n', tostring(M.claude_edited_files[relative_path] ~= nil)))
-  end
 
   -- Case 1: No baseline exists at all → create full baseline stash
   if not M.stable_baseline_ref then
-    if debug_file then
-      debug_file:write('  Creating initial baseline stash\n')
-    end
     
     local stash_ref = persistence.create_stash('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S')
     if stash_ref then
       M.stable_baseline_ref = stash_ref
       persistence.current_stash_ref = stash_ref
       
-      if debug_file then
-        debug_file:write(string.format('  Created baseline stash: %s\n', stash_ref))
-      end
-    else
-      if debug_file then
-        debug_file:write('  ERROR: Failed to create baseline stash\n')
-      end
+      -- IMPORTANT: Save state immediately to handle multiple Neovim instances
+      persistence.save_state({
+        stash_ref = stash_ref,
+        claude_edited_files = M.claude_edited_files
+      })
     end
   
   -- Case 2: File already Claude-edited → do nothing (baseline already captured)
   elseif M.claude_edited_files[relative_path] then
-    if debug_file then
-      debug_file:write('  File already tracked, no baseline update needed\n')
-    end
   
   -- Case 3: New file for Claude to edit → update baseline for this specific file
   else
     -- Check if file exists before updating baseline
     local full_path = git_root .. '/' .. relative_path
     if utils.file_exists(full_path) then
-      if debug_file then
-        debug_file:write('  New file to edit, updating baseline\n')
-      end
       
       M.update_baseline_for_file(relative_path, git_root)
     else
-      if debug_file then
-        debug_file:write('  File does not exist, skipping baseline update (will be treated as new file)\n')
-      end
     end
   end
 
-  if debug_file then
-    debug_file:write(string.format('[%s] PRE_HOOK END\n', os.date '%Y-%m-%d %H:%M:%S'))
-    debug_file:close()
-  end
 
   return true
 end
@@ -167,6 +118,12 @@ function M.legacy_pre_tool_use_hook()
     if stash_ref then
       M.stable_baseline_ref = stash_ref
       persistence.current_stash_ref = stash_ref
+      
+      -- IMPORTANT: Save state immediately to handle multiple Neovim instances
+      persistence.save_state({
+        stash_ref = stash_ref,
+        claude_edited_files = M.claude_edited_files or {}
+      })
     end
   end
 
@@ -178,27 +135,16 @@ function M.update_baseline_for_file(relative_path, git_root)
   local utils = require 'nvim-claude.utils'
   local persistence = require 'nvim-claude.inline-diff-persistence'
   
-  local debug_file = M._debug_file
-  
-  if debug_file then
-    debug_file:write(string.format('  Updating baseline for file: %s\n', relative_path))
-  end
   
   -- Check if file exists on disk
   local full_path = git_root .. '/' .. relative_path
   if not utils.file_exists(full_path) then
-    if debug_file then
-      debug_file:write('  File does not exist on disk, skipping baseline update\n')
-    end
     return
   end
   
   -- Read current file content
   local current_content = utils.read_file(full_path)
   if not current_content then
-    if debug_file then
-      debug_file:write('  Could not read current file content\n')
-    end
     return
   end
   
@@ -219,9 +165,6 @@ function M.update_baseline_for_file(relative_path, git_root)
       error('Failed to read baseline tree: ' .. read_err)
     end
     
-    if debug_file then
-      debug_file:write('  Read baseline tree into temporary index\n')
-    end
     
     -- Write content to temporary file
     local temp_file = temp_dir .. '/content'
@@ -235,9 +178,6 @@ function M.update_baseline_for_file(relative_path, git_root)
       error('Failed to update file in index: ' .. update_err)
     end
     
-    if debug_file then
-      debug_file:write(string.format('  Updated file in index: %s\n', relative_path))
-    end
     
     -- Create tree from temporary index
     local write_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree',
@@ -248,9 +188,6 @@ function M.update_baseline_for_file(relative_path, git_root)
     end
     new_tree_hash = new_tree_hash:gsub('%s+$', '')
     
-    if debug_file then
-      debug_file:write(string.format('  Created new tree: %s\n', new_tree_hash))
-    end
     
     -- Create new commit
     local commit_message = string.format('nvim-claude: updated baseline for %s at %s', relative_path, os.date '%Y-%m-%d %H:%M:%S')
@@ -262,9 +199,6 @@ function M.update_baseline_for_file(relative_path, git_root)
     end
     new_commit_hash = new_commit_hash:gsub('%s+$', '')
     
-    if debug_file then
-      debug_file:write(string.format('  Created new commit: %s\n', new_commit_hash))
-    end
     
     -- Cleanup temporary directory
     vim.fn.delete(temp_dir, 'rf')
@@ -284,18 +218,12 @@ function M.update_baseline_for_file(relative_path, git_root)
       claude_edited_files = M.claude_edited_files
     })
     
-    if debug_file then
-      debug_file:write(string.format('  Updated baseline ref to: %s\n', new_commit_hash))
-    end
   end)
   
   -- Clean up temp file
   os.remove(temp_file)
   
   if not success then
-    if debug_file then
-      debug_file:write('  ERROR: Failed to update baseline\n')
-    end
   end
 end
 
@@ -477,12 +405,9 @@ function M.setup_file_open_autocmd()
           M.show_inline_diff_for_file(bufnr, relative_path, git_root, M.stable_baseline_ref)
         end, 50) -- Small delay to ensure buffer is fully loaded
       else
-        -- Check if persistence has pending restores for this file
+        -- Check persistence state for tracked files
         local persistence = require 'nvim-claude.inline-diff-persistence'
-        if persistence.pending_restores and persistence.pending_restores[file_path] then
-          -- Persistence system will handle this
-          persistence.check_pending_restore(bufnr)
-        elseif persistence.current_stash_ref then
+        if persistence.current_stash_ref then
           -- Check if we have persistence state but haven't restored claude_edited_files yet
           local state = persistence.load_state()
           if state and state.claude_edited_files and state.claude_edited_files[relative_path] then
@@ -734,22 +659,10 @@ function M.setup_commands()
   })
 
   vim.api.nvim_create_user_command('ClaudeUpdateBaseline', function()
-    local bufnr = vim.api.nvim_get_current_buf()
-    local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    local current_content = table.concat(current_lines, '\n')
-
-    local inline_diff = require 'nvim-claude.inline-diff'
-    inline_diff.original_content[bufnr] = current_content
-
-    -- Save updated state
-    local persistence = require 'nvim-claude.inline-diff-persistence'
-    if persistence.current_stash_ref then
-      persistence.save_state { stash_ref = persistence.current_stash_ref }
-    end
-
-    vim.notify('Baseline updated to current buffer state', vim.log.levels.INFO)
+    -- This command is deprecated - baselines are now managed via git stashes
+    vim.notify('ClaudeUpdateBaseline is deprecated. Use ClaudeAcceptAll to accept changes.', vim.log.levels.WARN)
   end, {
-    desc = 'Update Claude baseline to current buffer state',
+    desc = 'Update Claude baseline to current buffer state (deprecated)',
   })
 
   -- vim.api.nvim_create_user_command('ClaudeTestDiff', function()
@@ -810,11 +723,7 @@ function M.setup_commands()
 
   vim.api.nvim_create_user_command('ClaudeResetBaseline', function()
     -- Clear all baselines and force new baseline on next edit
-    local inline_diff = require 'nvim-claude.inline-diff'
     local persistence = require 'nvim-claude.inline-diff-persistence'
-
-    -- Clear in-memory baselines
-    inline_diff.original_content = {}
 
     -- Clear stable baseline reference
     M.stable_baseline_ref = nil

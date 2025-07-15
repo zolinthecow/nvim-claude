@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `:ClaudeResetInlineDiff` command to recover from corrupted baseline refs
 - Validation to prevent git error messages from being stored as refs
 - Automatic detection and cleanup of corrupted baseline refs on load
+- Auto-refresh diffs on save (`:w`) with preserved cursor position
+- Manual refresh keybinding `<leader>if` to update diffs without saving
+- Immediate baseline persistence in pre-hook to handle multiple Neovim instances
 
 ### Fixed
 - Fixed phantom diff hunks at end of files caused by newline inconsistencies
@@ -28,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cascading failures caused by corrupted refs in subsequent operations
 - Cross-project hook routing now uses edited file's project root instead of CWD
 - Improved robustness of git command execution in baseline update operations
+- Fixed baseline ref loss when pre-hook and post-hook connect to different Neovim instances
+- Fixed cursor jumping during diff refresh by only refreshing on save instead of while typing
+- Fixed manual edits in Claude-tracked files not showing as diffs
 
 ### Changed
 - `<leader>cb` behavior changed to match `:ClaudeBg` command (opens interactive UI)
@@ -39,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `save_state()` now validates refs before persisting to prevent corruption
 - Enhanced git command validation with better error detection and handling
 - Separated blob creation from index update to improve error isolation
+
+### Removed
+- Vestigial `applied_hunks` field from inline diff data structures
+- Empty `files` object from persistence state
+- Unused `original_content` tracking and related commands
+- Debug logging from all wrapper scripts and hook functions
+- Unnecessary `new_content` field from `active_diffs` structure
+- Debounced text change refresh in favor of save-only refresh
 
 ## [0.0.2] - 2025-01-12
 

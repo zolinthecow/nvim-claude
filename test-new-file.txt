@@ -1,3 +1,0 @@
-This is a new file - Claude is editing it now.
-It should trigger per-file baseline update logic.
-Current time: 2025-07-13 17:11:00
