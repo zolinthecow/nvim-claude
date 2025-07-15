@@ -10,11 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed "No baseline found" notification appearing on every file save
 - Only show baseline warnings for corrupted states (Claude-tracked files with missing baseline)
+- Fixed inline diff display timing issue by adding delay after buffer refresh
 
 ### Changed
 - Removed redundant `diff_files` tracking - now using only `claude_edited_files` for all file tracking
 - Simplified persistence state by removing `diff_files` from saved data
 - File navigation now computes absolute paths from `claude_edited_files` when needed
+- Claude Code hooks now use `settings.local.json` instead of `settings.json` for developer-specific configuration
+- Hook installation now properly merges with existing hooks instead of overwriting
+- Hook uninstallation only removes nvim-claude specific hooks, preserving user's custom hooks
+- Gitignore now only ignores `.claude/settings.local.json` instead of entire `.claude/` directory
 
 ### Added
 - Per-file baseline management for accurate diff tracking

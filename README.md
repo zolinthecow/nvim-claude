@@ -190,7 +190,7 @@ The plugin can automatically create baselines and track changes when Claude edit
 :ClaudeInstallHooks
 ```
 
-This creates a `.claude/settings.json` file in your project that integrates with Claude Code's hook system.
+This creates a `.claude/settings.local.json` file in your project that integrates with Claude Code's hook system. This file is developer-specific and should not be committed to version control.
 
 ## Troubleshooting
 

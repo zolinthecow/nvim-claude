@@ -495,47 +495,80 @@ function M.install_hooks()
   local pre_command = plugin_dir .. '/pre-hook-wrapper.sh'
   local post_command = plugin_dir .. '/post-hook-wrapper.sh'
 
-  local hooks_config = {
-    hooks = {
-      PreToolUse = {
-        {
-          matcher = 'Edit|Write|MultiEdit', -- Only match file editing tools
-          hooks = {
-            {
-              type = 'command',
-              command = pre_command,
-            },
-          },
-        },
-      },
-      PostToolUse = {
-        {
-          matcher = 'Edit|Write|MultiEdit', -- Only match file editing tools
-          hooks = {
-            {
-              type = 'command',
-              command = post_command,
-            },
-          },
-        },
-      },
-    },
-  }
+  -- We'll merge these hooks into existing configuration
 
-  -- Write hooks configuration
-  local settings_file = claude_dir .. '/settings.json'
-  local success, err = utils.write_json(settings_file, hooks_config)
+  -- Read existing settings.local.json if it exists
+  local settings_file = claude_dir .. '/settings.local.json'
+  local existing_settings = {}
+  
+  if utils.file_exists(settings_file) then
+    existing_settings = utils.read_json(settings_file) or {}
+  end
+  
+  -- Ensure hooks structure exists
+  existing_settings.hooks = existing_settings.hooks or {}
+  existing_settings.hooks.PreToolUse = existing_settings.hooks.PreToolUse or {}
+  existing_settings.hooks.PostToolUse = existing_settings.hooks.PostToolUse or {}
+  
+  -- Helper function to add hook to a specific tool use section
+  local function add_hook_to_section(section, command)
+    local matcher = 'Edit|Write|MultiEdit'
+    local hook = {
+      type = 'command',
+      command = command,
+    }
+    
+    -- Find existing matcher or create new one
+    local matcher_found = false
+    for i, entry in ipairs(section) do
+      if entry.matcher == matcher then
+        matcher_found = true
+        -- Ensure hooks array exists
+        entry.hooks = entry.hooks or {}
+        
+        -- Check if our hook already exists
+        local hook_exists = false
+        for _, existing_hook in ipairs(entry.hooks) do
+          if existing_hook.command == command then
+            hook_exists = true
+            break
+          end
+        end
+        
+        -- Add hook if it doesn't exist
+        if not hook_exists then
+          table.insert(entry.hooks, hook)
+        end
+        break
+      end
+    end
+    
+    -- If matcher wasn't found, create new entry
+    if not matcher_found then
+      table.insert(section, {
+        matcher = matcher,
+        hooks = { hook }
+      })
+    end
+  end
+  
+  -- Add our hooks
+  add_hook_to_section(existing_settings.hooks.PreToolUse, pre_command)
+  add_hook_to_section(existing_settings.hooks.PostToolUse, post_command)
+  
+  -- Write merged configuration
+  local success, err = utils.write_json(settings_file, existing_settings)
 
   if success then
-    -- Add .claude to gitignore if needed
+    -- Add entries to gitignore if needed
     local gitignore_path = project_root .. '/.gitignore'
     local gitignore_content = utils.read_file(gitignore_path) or ''
 
     local entries_to_add = {}
 
-    -- Check for .claude/
-    if not gitignore_content:match '%.claude/' then
-      table.insert(entries_to_add, '.claude/')
+    -- Check for .claude/settings.local.json
+    if not gitignore_content:match '%.claude/settings%.local%.json' then
+      table.insert(entries_to_add, '.claude/settings.local.json')
     end
 
     -- Check for .nvim-claude/
@@ -545,10 +578,12 @@ function M.install_hooks()
 
     -- Add entries if needed
     if #entries_to_add > 0 then
-      local new_content = gitignore_content .. '\n# Claude Code hooks\n' .. table.concat(entries_to_add, '\n') .. '\n'
+      local new_content = gitignore_content .. '\n# nvim-claude\n' .. table.concat(entries_to_add, '\n') .. '\n'
       utils.write_file(gitignore_path, new_content)
       vim.notify('Added ' .. table.concat(entries_to_add, ', ') .. ' to .gitignore', vim.log.levels.INFO)
     end
+    
+    vim.notify('Claude Code hooks installed successfully', vim.log.levels.INFO)
   else
     vim.notify('Failed to install hooks: ' .. (err or 'unknown error'), vim.log.levels.ERROR)
   end
@@ -565,11 +600,90 @@ function M.uninstall_hooks()
     return
   end
 
-  local settings_file = project_root .. '/.claude/settings.json'
+  local settings_file = project_root .. '/.claude/settings.local.json'
 
-  if vim.fn.filereadable(settings_file) then
-    vim.fn.delete(settings_file)
-    vim.notify('Claude Code hooks uninstalled', vim.log.levels.INFO)
+  if vim.fn.filereadable(settings_file) == 1 then
+    -- Read existing settings
+    local existing_settings = utils.read_json(settings_file) or {}
+    
+    if existing_settings.hooks then
+      local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h')
+      local pre_command = plugin_dir .. '/pre-hook-wrapper.sh'
+      local post_command = plugin_dir .. '/post-hook-wrapper.sh'
+      local hooks_removed = false
+      
+      -- Helper function to remove our hooks from a section
+      local function remove_hooks_from_section(section, command)
+        if not section then return false end
+        
+        local removed = false
+        for i = #section, 1, -1 do
+          local entry = section[i]
+          if entry.matcher == 'Edit|Write|MultiEdit' and entry.hooks then
+            -- Remove our specific hook
+            for j = #entry.hooks, 1, -1 do
+              if entry.hooks[j].command == command then
+                table.remove(entry.hooks, j)
+                removed = true
+              end
+            end
+            
+            -- Remove entry if no hooks left
+            if #entry.hooks == 0 then
+              table.remove(section, i)
+            end
+          end
+        end
+        
+        return removed
+      end
+      
+      -- Remove from PreToolUse
+      if existing_settings.hooks.PreToolUse then
+        if remove_hooks_from_section(existing_settings.hooks.PreToolUse, pre_command) then
+          hooks_removed = true
+        end
+        
+        -- Clean up empty PreToolUse
+        if #existing_settings.hooks.PreToolUse == 0 then
+          existing_settings.hooks.PreToolUse = nil
+        end
+      end
+      
+      -- Remove from PostToolUse
+      if existing_settings.hooks.PostToolUse then
+        if remove_hooks_from_section(existing_settings.hooks.PostToolUse, post_command) then
+          hooks_removed = true
+        end
+        
+        -- Clean up empty PostToolUse
+        if #existing_settings.hooks.PostToolUse == 0 then
+          existing_settings.hooks.PostToolUse = nil
+        end
+      end
+      
+      -- Clean up empty hooks section
+      if not existing_settings.hooks.PreToolUse and not existing_settings.hooks.PostToolUse then
+        existing_settings.hooks = nil
+      end
+      
+      -- Save or delete file
+      if next(existing_settings) then
+        -- Still has other settings, write them back
+        utils.write_json(settings_file, existing_settings)
+      else
+        -- No other settings, delete the file
+        vim.fn.delete(settings_file)
+      end
+      
+      if hooks_removed then
+        vim.notify('Claude Code hooks uninstalled', vim.log.levels.INFO)
+      else
+        vim.notify('No nvim-claude hooks found', vim.log.levels.INFO)
+      end
+    else
+      vim.notify('No hooks configuration found', vim.log.levels.INFO)
+    end
   else
     vim.notify('No hooks configuration found', vim.log.levels.INFO)
   end
