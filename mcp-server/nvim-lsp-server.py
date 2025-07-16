@@ -66,23 +66,13 @@ def get_nvim_server() -> str:
     """Get the current Neovim server address.
 
     Search order:
-    1. Plugin-local path relative to this script's parent dir.
-    2. Project-local .nvim-claude/nvim-server (cwd).
-    3. Same but via absolute cwd path.
-    4. Global path under ~/.local/share/nvim/nvim-claude/nvim-server.
-    5. NVIM_SERVER environment variable.
-    6. /tmp/nvimsocket (common default).
+    1. Project-local .nvim-claude/nvim-server (relative to cwd).
+    2. Same but via absolute cwd path.
+    3. Global path under ~/.local/share/nvim/nvim-claude/nvim-server.
+    4. NVIM_SERVER environment variable.
+    5. /tmp/nvimsocket (common default).
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    plugin_dir = os.path.dirname(script_dir)  # Go up one level from mcp-server/
-
-    # Plugin-specific location first
-    plugin_nvim_server = os.path.join(plugin_dir, ".nvim-claude", "nvim-server")
-    if os.path.exists(plugin_nvim_server):
-        with open(plugin_nvim_server, "r", encoding="utf-8") as f:
-            return f.read().strip()
-
-    # Project-specific location (relative)
+    # Project-specific location (relative) - check this FIRST
     rel_project_path = os.path.join(".nvim-claude", "nvim-server")
     if os.path.exists(rel_project_path):
         with open(rel_project_path, "r", encoding="utf-8") as f:

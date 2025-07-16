@@ -102,10 +102,14 @@ function M.exec(cmd)
   if not handle then return nil, 'Failed to execute command' end
   local result = handle:read('*a')
   local ok = handle:close()
+  
+  -- Better error handling: if close() returns false, the command failed
+  -- but we still return the output (which might contain error messages)
   if ok then
     return result, nil
   else
-    return result, result
+    -- Command failed - the result likely contains stderr
+    return nil, result or 'Command failed with no output'
   end
 end
 

@@ -38,7 +38,8 @@ fi
 
 echo '✅ MCP server installed successfully!'
 echo ''
-echo 'To add to Claude Code (local scope), run:'
+echo 'To add to Claude Code, run this in your project directory:'
 echo "  claude mcp add nvim-lsp -s local $VENV_PATH/bin/python $SCRIPT_DIR/nvim-lsp-server.py"
 echo ''
-echo 'This will add the MCP server for the current project only.'
+echo 'Note: Use -s local to make it available only in the current project.'
+echo 'The MCP server will automatically connect to the Neovim instance for that project.'
