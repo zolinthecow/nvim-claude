@@ -20,6 +20,11 @@ function M.setup(config, commands)
     silent = true
   })
   
+  vim.keymap.set('v', prefix .. 'd', ':ClaudeSendWithDiagnostics<CR>', {
+    desc = 'Send selection with diagnostics to Claude',
+    silent = true
+  })
+  
   vim.keymap.set('n', prefix .. 'h', ':ClaudeSendHunk<CR>', {
     desc = 'Send git hunk to Claude',
     silent = true

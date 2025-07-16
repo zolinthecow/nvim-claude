@@ -215,6 +215,14 @@ function M.setup(claude_module)
       end,
     })
   end, { desc = 'Install Claude MCP server dependencies' })
+  
+  -- ClaudeSendWithDiagnostics command (visual mode)
+  vim.api.nvim_create_user_command('ClaudeSendWithDiagnostics', function(args)
+    M.send_selection_with_diagnostics(args.line1, args.line2)
+  end, {
+    desc = 'Send selected text with diagnostics to Claude',
+    range = true
+  })
 end
 
 -- Open Claude chat
@@ -318,6 +326,93 @@ function M.send_selection(line1, line2)
   claude.utils.exec('tmux select-pane -t ' .. pane_id)
   
   vim.notify('Selection sent to Claude', vim.log.levels.INFO)
+end
+
+-- Send selection with diagnostics to Claude
+function M.send_selection_with_diagnostics(line1, line2)
+  if not claude.tmux.validate() then
+    return
+  end
+  
+  local pane_id = claude.tmux.find_claude_pane()
+  if not pane_id then
+    pane_id = claude.tmux.create_pane('claude')
+  end
+  
+  if not pane_id then
+    vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR)
+    return
+  end
+  
+  -- Get selected lines
+  local lines = vim.api.nvim_buf_get_lines(0, line1 - 1, line2, false)
+  local code = table.concat(lines, '\n')
+  
+  -- Get relative path from git root
+  local git_root = claude.utils.get_project_root()
+  local file_path = vim.fn.expand('%:p')
+  local file = git_root and file_path:gsub('^' .. vim.pesc(git_root) .. '/', '') or vim.fn.expand('%:t')
+  
+  -- Get diagnostics for selected range
+  local all_diagnostics = vim.diagnostic.get(0)
+  local diagnostics = {}
+  
+  -- Filter diagnostics to only include those in the selected range
+  for _, diag in ipairs(all_diagnostics) do
+    if diag.lnum >= line1 - 1 and diag.lnum <= line2 - 1 then
+      table.insert(diagnostics, diag)
+    end
+  end
+  
+  -- Format diagnostics
+  local diagnostics_text = M.format_diagnostics_list(diagnostics)
+  
+  -- Build complete message
+  local filetype = vim.bo.filetype
+  local message = string.format([[
+I have a code snippet with LSP diagnostics that need to be fixed:
+
+File: %s
+Lines: %d-%d
+
+```%s
+%s
+```
+
+LSP Diagnostics:
+%s
+
+Please help me fix these issues.]],
+    file, line1, line2,
+    filetype ~= '' and filetype or '',
+    code,
+    diagnostics_text
+  )
+  
+  -- Send message
+  claude.tmux.send_text_to_pane(pane_id, message)
+  
+  -- Switch focus to Claude pane
+  claude.utils.exec('tmux select-pane -t ' .. pane_id)
+  
+  vim.notify('Selection with diagnostics sent to Claude', vim.log.levels.INFO)
+end
+
+-- Helper function to format diagnostics list
+function M.format_diagnostics_list(diagnostics)
+  if #diagnostics == 0 then
+    return 'No diagnostics in selected range'
+  end
+  
+  local lines = {}
+  for _, d in ipairs(diagnostics) do
+    local severity = vim.diagnostic.severity[d.severity]
+    table.insert(lines, string.format(
+      '- Line %d, Col %d [%s]: %s',
+      d.lnum + 1, d.col + 1, severity, d.message
+    ))
+  end
+  return table.concat(lines, '\n')
 end
 
 -- Send git hunk under cursor to Claude
