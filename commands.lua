@@ -186,6 +186,11 @@ function M.setup(claude_module)
     desc = 'Debug Claude registry state'
   })
   
+  -- ClaudeShowMCPCommand - show MCP setup instructions
+  vim.api.nvim_create_user_command('ClaudeShowMCPCommand', function()
+    require('nvim-claude').show_mcp_setup_command()
+  end, { desc = 'Show MCP server setup command' })
+  
   -- ClaudeInstallMCP command
   vim.api.nvim_create_user_command('ClaudeInstallMCP', function()
     local plugin_path = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')

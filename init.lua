@@ -163,31 +163,26 @@ end
 
 -- Check if MCP is configured with Claude Code
 function M.check_mcp_configuration()
-  -- Check if we've shown this reminder recently (within 24 hours)
-  local reminder_file = vim.fn.stdpath('data') .. '/nvim-claude/mcp-reminder'
-  if vim.fn.filereadable(reminder_file) == 1 then
-    local last_reminder = tonumber(vim.fn.readfile(reminder_file)[1] or 0)
-    local now = os.time()
-    if now - last_reminder < 86400 then -- 24 hours
-      return -- Don't nag too often
-    end
-  end
+  -- For now, we'll disable the configuration check since Claude Code stores
+  -- local MCP configurations in its internal database, not in easily checkable files.
+  -- The -s local flag stores configs in ~/.claude/__store.db or similar internal storage.
   
-  -- Check if .claude/mcp.local.json exists
-  local mcp_config = vim.fn.getcwd() .. '/.claude/mcp.local.json'
-  if vim.fn.filereadable(mcp_config) == 0 then
-    -- Get plugin directory and show reminder
-    local plugin_dir = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
-    local venv_python = M.config.mcp.install_path .. '/bin/python'
-    
-    vim.notify('nvim-claude: MCP server installed but not configured', vim.log.levels.INFO)
-    vim.notify('Run: claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
-               plugin_dir .. 'mcp-server/nvim-lsp-server.py', vim.log.levels.INFO)
-    
-    -- Update reminder timestamp
-    vim.fn.mkdir(vim.fn.fnamemodify(reminder_file, ':h'), 'p')
-    vim.fn.writefile({tostring(os.time())}, reminder_file)
-  end
+  -- Users who want to see the setup command can run :ClaudeShowMCPCommand
+  -- This avoids annoying notifications while still providing the info when needed.
+  
+  -- Uncomment the next line to re-enable the old behavior:
+  -- M.check_mcp_configuration_old()
+end
+
+-- Show MCP setup command on demand
+function M.show_mcp_setup_command()
+  local plugin_dir = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
+  local venv_python = M.config.mcp.install_path .. '/bin/python'
+  
+  vim.notify('To configure nvim-lsp MCP server:', vim.log.levels.INFO)
+  vim.notify('claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
+             plugin_dir .. 'mcp-server/nvim-lsp-server.py', vim.log.levels.INFO)
+  vim.notify('Then restart Claude Code in this directory.', vim.log.levels.INFO)
 end
 
 -- Plugin setup

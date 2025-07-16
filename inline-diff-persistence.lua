@@ -225,7 +225,8 @@ function M.create_stash(message)
   end
 
   -- Create a stash object without removing changes from working directory
-  local stash_cmd = 'git stash create'
+  -- Include untracked files with --include-untracked
+  local stash_cmd = 'git stash create --include-untracked'
   local stash_hash = nil
   local err = nil
   local max_retries = 3
@@ -448,4 +449,3 @@ function M.migrate_global_state()
 end
 
 return M
-

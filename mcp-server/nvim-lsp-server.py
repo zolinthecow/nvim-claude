@@ -37,22 +37,17 @@ import json
 import subprocess
 from typing import Iterable, Optional, Union, List, Any
 
+for key in ("FASTMCP_LOG_LEVEL", "LOG_LEVEL"):
+    if key in os.environ:
+        os.environ[key] = os.environ[key].upper()
+    else:
+        # Only set a default if nothing supplied
+        os.environ[key] = "INFO"
 # ---------------------------------------------------------------------------
 # MCP setup -----------------------------------------------------------------
 # ---------------------------------------------------------------------------
-try:
-    from mcp.server.stdio import StdioServer  # type: ignore  # noqa: F401 - imported for side effects/compat
-    from mcp.server import Server  # type: ignore  # noqa: F401
-except ImportError:  # fall back to FastMCP
-    try:
-        from fastmcp import FastMCP  # type: ignore
-    except ImportError:
-        print(
-            "Error: mcp package not installed. Run :ClaudeInstallMCP", file=sys.stderr
-        )
-        sys.exit(1)
+from fastmcp import FastMCP  # type: ignore
 
-# Using FastMCP for simpler implementation
 mcp = FastMCP("nvim-lsp")  # type: ignore
 
 # The Lua module we call inside Neovim
@@ -238,4 +233,3 @@ if __name__ == "__main__":
 #
 # Using long-bracket Lua strings ([[..]]) can reduce escaping, but the simple table
 # approach used above is usually sufficient and much easier to reason about.
-
