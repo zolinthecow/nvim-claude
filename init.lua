@@ -25,6 +25,10 @@ M.config = {
     prefix = '<leader>c',
     quick_prefix = '<C-c>',
   },
+  mcp = {
+    auto_install = true,  -- Automatically install MCP server on first use
+    install_path = vim.fn.stdpath('data') .. '/nvim-claude/mcp-env',
+  },
 }
 
 -- Validate configuration
@@ -105,6 +109,87 @@ local function merge_config(user_config)
   return merged
 end
 
+-- Check and install MCP server
+function M.check_and_install_mcp()
+  local install_path = M.config.mcp.install_path or vim.fn.stdpath('data') .. '/nvim-claude/mcp-env'
+  local venv_python = install_path .. '/bin/python'
+  
+  -- Check if MCP is already installed
+  if vim.fn.filereadable(venv_python) == 1 then
+    -- Check if fastmcp is installed
+    local check_cmd = venv_python .. ' -c "import fastmcp" 2>/dev/null'
+    local result = vim.fn.system(check_cmd)
+    if vim.v.shell_error == 0 then
+      -- MCP is installed, check if user has configured it
+      M.check_mcp_configuration()
+      return -- Already installed
+    end
+  end
+  
+  -- Install MCP server
+  vim.notify('nvim-claude: Installing MCP server dependencies...', vim.log.levels.INFO)
+  
+  -- Get plugin directory
+  local plugin_dir = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
+  local install_script = plugin_dir .. 'mcp-server/install.sh'
+  
+  -- Check if install script exists
+  if vim.fn.filereadable(install_script) == 0 then
+    vim.notify('nvim-claude: MCP install script not found', vim.log.levels.ERROR)
+    return
+  end
+  
+  -- Run installation in background
+  vim.fn.jobstart({'bash', install_script}, {
+    on_exit = function(_, code, _)
+      if code == 0 then
+        vim.notify('nvim-claude: MCP server installed successfully!', vim.log.levels.INFO)
+        vim.notify('Run "claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
+                   plugin_dir .. 'mcp-server/nvim-lsp-server.py" to complete setup', 
+                   vim.log.levels.INFO)
+      else
+        vim.notify('nvim-claude: MCP installation failed', vim.log.levels.ERROR)
+      end
+    end,
+    on_stderr = function(_, data)
+      for _, line in ipairs(data) do
+        if line ~= '' then
+          vim.notify('MCP install: ' .. line, vim.log.levels.WARN)
+        end
+      end
+    end,
+  })
+end
+
+-- Check if MCP is configured with Claude Code
+function M.check_mcp_configuration()
+  -- Check if we've shown this reminder recently (within 24 hours)
+  local reminder_file = vim.fn.stdpath('data') .. '/nvim-claude/mcp-reminder'
+  if vim.fn.filereadable(reminder_file) == 1 then
+    local last_reminder = tonumber(vim.fn.readfile(reminder_file)[1] or 0)
+    local now = os.time()
+    if now - last_reminder < 86400 then -- 24 hours
+      return -- Don't nag too often
+    end
+  end
+  
+  -- Check if .claude/mcp.local.json exists
+  local mcp_config = vim.fn.getcwd() .. '/.claude/mcp.local.json'
+  if vim.fn.filereadable(mcp_config) == 0 then
+    -- Get plugin directory and show reminder
+    local plugin_dir = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
+    local venv_python = M.config.mcp.install_path .. '/bin/python'
+    
+    vim.notify('nvim-claude: MCP server installed but not configured', vim.log.levels.INFO)
+    vim.notify('Run: claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
+               plugin_dir .. 'mcp-server/nvim-lsp-server.py', vim.log.levels.INFO)
+    
+    -- Update reminder timestamp
+    vim.fn.mkdir(vim.fn.fnamemodify(reminder_file, ':h'), 'p')
+    vim.fn.writefile({tostring(os.time())}, reminder_file)
+  end
+end
+
 -- Plugin setup
 function M.setup(user_config)
   M.config = merge_config(user_config)
@@ -130,6 +215,11 @@ function M.setup(user_config)
   M.hooks.setup()
   M.diff_review.setup()
   M.settings_updater.setup()
+  
+  -- Check and install MCP server if configured
+  if M.config.mcp.auto_install then
+    M.check_and_install_mcp()
+  end
   
   -- Set up commands
   M.commands.setup(M)

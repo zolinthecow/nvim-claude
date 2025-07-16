@@ -8,6 +8,7 @@
 
 local M = {}
 local utils = require('nvim-claude.utils')
+local logger = require('nvim-claude.logger')
 
 -- Get project-specific nvim-claude directory
 function M.get_nvim_claude_dir(file_path)
@@ -45,17 +46,30 @@ function M.save_state(diff_data)
   
   local hooks = require('nvim-claude.hooks')
   
+  logger.debug('save_state', 'Called with diff_data', diff_data)
+  
   -- Validate stash_ref before saving
   if diff_data.stash_ref and (diff_data.stash_ref:match('fatal:') or diff_data.stash_ref:match('error:')) then
+    logger.error('save_state', 'Refusing to save corrupted baseline ref', {
+      stash_ref = diff_data.stash_ref
+    })
     vim.notify('Refusing to save corrupted baseline ref: ' .. diff_data.stash_ref:sub(1, 50), vim.log.levels.ERROR)
     return
+  end
+  
+  -- Check for missing stash_ref when there are tracked files
+  local edited_files = diff_data.claude_edited_files or hooks.claude_edited_files or {}
+  if next(edited_files) and not diff_data.stash_ref then
+    logger.error('save_state', 'WARNING: Saving state with tracked files but no stash_ref!', {
+      claude_edited_files = vim.tbl_keys(edited_files)
+    })
   end
   
   local state = {
     version = 1,
     timestamp = os.time(),
     stash_ref = diff_data.stash_ref,
-    claude_edited_files = diff_data.claude_edited_files or hooks.claude_edited_files or {},
+    claude_edited_files = edited_files,
   }
   
   -- Note: We no longer persist hunks/content - diffs are computed fresh from git baseline
@@ -64,9 +78,19 @@ function M.save_state(diff_data)
   local state_file = M.get_state_file()
   local success, err = utils.write_json(state_file, state)
   if not success then
+    logger.error('save_state', 'Failed to save state file', {
+      file = state_file,
+      error = err
+    })
     vim.notify('Failed to save inline diff state: ' .. err, vim.log.levels.ERROR)
     return false
   end
+  
+  logger.info('save_state', 'Successfully saved state', {
+    file = state_file,
+    has_stash_ref = state.stash_ref ~= nil,
+    tracked_files_count = vim.tbl_count(state.claude_edited_files)
+  })
   
   return true
 end
@@ -134,8 +158,11 @@ end
 
 -- Restore diffs from saved state
 function M.restore_diffs()
+  logger.info('restore_diffs', 'Attempting to restore diffs from saved state')
+  
   local state = M.load_state()
   if not state then
+    logger.debug('restore_diffs', 'No saved state found')
     return false
   end
   
@@ -146,7 +173,12 @@ function M.restore_diffs()
   -- No need to restore saved hunks - they're computed fresh when files are opened
   
   -- Store the stash reference for future operations
-  M.current_stash_ref = state.stash_ref
+  if state.stash_ref then
+    M.current_stash_ref = state.stash_ref
+    logger.info('restore_diffs', 'Restored stash reference', { stash_ref = state.stash_ref })
+  else
+    logger.warn('restore_diffs', 'No stash reference in saved state')
+  end
   
   -- Stash reference restored silently
   
@@ -154,6 +186,10 @@ function M.restore_diffs()
   if state.claude_edited_files then
     local hooks = require('nvim-claude.hooks')
     hooks.claude_edited_files = state.claude_edited_files
+    logger.info('restore_diffs', 'Restored tracked files', {
+      count = vim.tbl_count(state.claude_edited_files),
+      files = vim.tbl_keys(state.claude_edited_files)
+    })
   end
   
   
@@ -167,22 +203,48 @@ function M.create_stash(message)
   local utils = require('nvim-claude.utils')
   message = message or 'nvim-claude: pre-edit state'
   
+  logger.info('create_stash', 'Creating stash with message: ' .. message)
+  
   -- Create a stash object without removing changes from working directory
   local stash_cmd = 'git stash create'
   local stash_hash, err = utils.exec(stash_cmd)
   
+  logger.debug('create_stash', 'Stash create result', {
+    stash_hash = stash_hash,
+    error = err,
+    cwd = vim.fn.getcwd()
+  })
   
   if not err and stash_hash and stash_hash ~= '' then
+    -- Check if result contains error message
+    if stash_hash:match('fatal:') or stash_hash:match('error:') then
+      logger.error('create_stash', 'Git returned error message instead of hash', {
+        result = stash_hash
+      })
+      return stash_hash -- Return the error message so it can be detected upstream
+    end
+    
     -- Store the stash with a message
     stash_hash = stash_hash:gsub('%s+', '') -- trim whitespace
     local store_cmd = string.format('git stash store -m "%s" %s', message, stash_hash)
     local store_result, store_err = utils.exec(store_cmd)
     
+    logger.debug('create_stash', 'Stash store result', {
+      store_result = store_result,
+      store_error = store_err
+    })
     
+    if store_err then
+      logger.error('create_stash', 'Failed to store stash', { error = store_err })
+      return nil
+    end
+    
+    logger.info('create_stash', 'Successfully created stash', { stash_hash = stash_hash })
     -- Return the SHA directly - it's more stable than stash@{0}
     return stash_hash
   end
   
+  logger.error('create_stash', 'Failed to create stash', { error = err })
   return nil
 end
 

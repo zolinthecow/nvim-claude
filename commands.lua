@@ -138,6 +138,29 @@ function M.setup(claude_module)
       return completions
     end
   })
+
+  vim.api.nvim_create_user_command('ClaudeViewLog', function()
+    local logger = require('nvim-claude.logger')
+    local log_file = logger.get_log_file()
+    
+    -- Check if log file exists
+    if vim.fn.filereadable(log_file) == 1 then
+      vim.cmd('edit ' .. log_file)
+      vim.cmd('normal! G') -- Go to end of file
+    else
+      vim.notify('No log file found at: ' .. log_file, vim.log.levels.INFO)
+    end
+  end, {
+    desc = 'View nvim-claude debug log',
+  })
+
+  vim.api.nvim_create_user_command('ClaudeClearLog', function()
+    local logger = require('nvim-claude.logger')
+    logger.clear()
+    vim.notify('Debug log cleared', vim.log.levels.INFO)
+  end, {
+    desc = 'Clear nvim-claude debug log',
+  })
   
   -- Debug command to check registry state
   vim.api.nvim_create_user_command('ClaudeDebugRegistry', function()
@@ -162,6 +185,36 @@ function M.setup(claude_module)
   end, {
     desc = 'Debug Claude registry state'
   })
+  
+  -- ClaudeInstallMCP command
+  vim.api.nvim_create_user_command('ClaudeInstallMCP', function()
+    local plugin_path = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
+    local install_script = plugin_path .. '../../mcp-server/install.sh'
+    
+    local function on_exit(job_id, code, event)
+      if code == 0 then
+        vim.notify('✅ MCP server installed successfully!', vim.log.levels.INFO)
+        vim.notify('Run "claude mcp list" to verify installation', vim.log.levels.INFO)
+      else
+        vim.notify('❌ MCP installation failed. Check :messages for details', vim.log.levels.ERROR)
+      end
+    end
+    
+    vim.notify('Installing MCP server dependencies...', vim.log.levels.INFO)
+    vim.fn.jobstart({'bash', install_script}, {
+      on_exit = on_exit,
+      on_stdout = function(_, data)
+        for _, line in ipairs(data) do
+          if line ~= '' then print(line) end
+        end
+      end,
+      on_stderr = function(_, data)
+        for _, line in ipairs(data) do
+          if line ~= '' then vim.notify(line, vim.log.levels.WARN) end
+        end
+      end,
+    })
+  end, { desc = 'Install Claude MCP server dependencies' })
 end
 
 -- Open Claude chat
