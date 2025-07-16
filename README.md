@@ -190,9 +190,17 @@ The plugin can automatically create baselines and track changes when Claude edit
 :ClaudeInstallHooks
 ```
 
-This creates a `.claude/settings.json` file in your project that integrates with Claude Code's hook system.
+This creates a `.claude/settings.local.json` file in your project that integrates with Claude Code's hook system. This file is developer-specific and should not be committed to version control.
 
 ## Troubleshooting
+
+### Debug Logging
+The plugin includes comprehensive debug logging for diagnosing issues:
+- **View logs**: `:ClaudeViewLog` - Opens the debug log file
+- **Clear logs**: `:ClaudeClearLog` - Clears the debug log
+- **Log location**: `.nvim-claude/debug.log` (project-specific) or `~/.local/share/nvim/nvim-claude-debug.log` (global)
+
+See [debugging.md](debugging.md) for detailed debugging information.
 
 ### Tmux Issues
 - Ensure tmux is installed and you're running Neovim inside a tmux session
@@ -200,8 +208,10 @@ This creates a `.claude/settings.json` file in your project that integrates with
 
 ### Diff Not Showing
 - Check `:ClaudeDebugInlineDiff` for state information
+- View debug log with `:ClaudeViewLog` to see hook execution details
 - Ensure git is available and you're in a git repository
 - Try `:ClaudeResetBaseline` to reset the diff system
+- If state is corrupted, use `:ClaudeResetInlineDiff`
 
 ### Agent Issues
 - Check available disk space for worktrees

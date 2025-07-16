@@ -64,7 +64,7 @@ State cleanup happens when:
 - All tracked files processed → Baseline cleared, persistence deleted
 
 #### 4. Hook System Integration
-The plugin integrates with Claude Code's hook system via `.claude/settings.json`:
+The plugin integrates with Claude Code's hook system via `.claude/settings.local.json`:
 
 ```json
 {

@@ -6,3 +6,6 @@
 
 # Claude Code hooks
 .nvim-claude/
+
+# nvim-claude
+.claude/settings.local.json
