@@ -226,9 +226,20 @@ function M.create_stash(message)
     return nil
   end
 
+  -- When working directory is clean, we should use HEAD as the baseline
   if not status_result or status_result:gsub('%s+', '') == '' then
-    logger.warn('create_stash', 'No changes to stash - working directory is clean')
-    return nil
+    logger.info('create_stash', 'Working directory is clean, using HEAD as baseline')
+    -- Get HEAD commit SHA
+    local head_cmd = string.format('cd "%s" && git rev-parse HEAD', git_root)
+    local head_sha, head_err = utils.exec(head_cmd)
+    if not head_err and head_sha then
+      head_sha = head_sha:gsub('%s+', '')
+      logger.info('create_stash', 'Using HEAD commit as baseline', { sha = head_sha })
+      return head_sha
+    else
+      logger.error('create_stash', 'Failed to get HEAD commit', { error = head_err })
+      return nil
+    end
   end
 
   -- Create a stash object without removing changes from working directory

@@ -114,23 +114,42 @@ function M.check_and_install_mcp()
   local install_path = M.config.mcp.install_path or vim.fn.stdpath('data') .. '/nvim-claude/mcp-env'
   local venv_python = install_path .. '/bin/python'
   
+  -- Debug logging
+  if vim.fn.getcwd():match('wags') then
+    vim.notify('MCP Check Debug: install_path = ' .. install_path, vim.log.levels.DEBUG)
+    vim.notify('MCP Check Debug: venv_python = ' .. venv_python, vim.log.levels.DEBUG)
+    vim.notify('MCP Check Debug: filereadable = ' .. vim.fn.filereadable(venv_python), vim.log.levels.DEBUG)
+  end
+  
   -- Check if MCP is already installed
   if vim.fn.filereadable(venv_python) == 1 then
     -- Check if fastmcp is installed
-    local check_cmd = venv_python .. ' -c "import fastmcp" 2>/dev/null'
+    local check_cmd = {venv_python, '-c', 'import fastmcp'}
     local result = vim.fn.system(check_cmd)
     if vim.v.shell_error == 0 then
       -- MCP is installed, check if user has configured it
       M.check_mcp_configuration()
       return -- Already installed
+    else
+      if vim.fn.getcwd():match('wags') then
+        vim.notify('MCP Check Debug: fastmcp check failed, shell_error = ' .. vim.v.shell_error, vim.log.levels.DEBUG)
+      end
     end
   end
   
   -- Install MCP server
   vim.notify('nvim-claude: Installing MCP server dependencies...', vim.log.levels.INFO)
   
-  -- Get plugin directory
-  local plugin_dir = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
+  -- Get plugin directory - handle both development and installed paths
+  local source_path = debug.getinfo(1, 'S').source:sub(2)
+  local plugin_dir = source_path:match('(.*/)')
+  
+  -- For development, the actual plugin files might be in .config/nvim/lua/nvim-claude
+  local dev_plugin_dir = vim.fn.expand('~/.config/nvim/lua/nvim-claude/')
+  if vim.fn.isdirectory(dev_plugin_dir .. 'mcp-server') == 1 then
+    plugin_dir = dev_plugin_dir
+  end
+  
   local install_script = plugin_dir .. 'mcp-server/install.sh'
   
   -- Check if install script exists
@@ -144,8 +163,13 @@ function M.check_and_install_mcp()
     on_exit = function(_, code, _)
       if code == 0 then
         vim.notify('nvim-claude: MCP server installed successfully!', vim.log.levels.INFO)
+        -- Use development path if available
+        local mcp_server_path = plugin_dir .. 'mcp-server/nvim-lsp-server.py'
+        if not vim.fn.filereadable(mcp_server_path) and vim.fn.filereadable(dev_plugin_dir .. 'mcp-server/nvim-lsp-server.py') then
+          mcp_server_path = dev_plugin_dir .. 'mcp-server/nvim-lsp-server.py'
+        end
         vim.notify('Run "claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
-                   plugin_dir .. 'mcp-server/nvim-lsp-server.py" to complete setup', 
+                   mcp_server_path .. '" to complete setup', 
                    vim.log.levels.INFO)
       else
         vim.notify('nvim-claude: MCP installation failed', vim.log.levels.ERROR)
@@ -176,12 +200,21 @@ end
 
 -- Show MCP setup command on demand
 function M.show_mcp_setup_command()
-  local plugin_dir = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
-  local venv_python = M.config.mcp.install_path .. '/bin/python'
+  local source_path = debug.getinfo(1, 'S').source:sub(2)
+  local plugin_dir = source_path:match('(.*/)')
+  
+  -- For development, use the actual location
+  local dev_plugin_dir = vim.fn.expand('~/.config/nvim/lua/nvim-claude/')
+  local mcp_server_path = plugin_dir .. 'mcp-server/nvim-lsp-server.py'
+  if vim.fn.filereadable(dev_plugin_dir .. 'mcp-server/nvim-lsp-server.py') == 1 then
+    mcp_server_path = dev_plugin_dir .. 'mcp-server/nvim-lsp-server.py'
+  end
+  
+  local venv_python = (M.config.mcp.install_path or vim.fn.stdpath('data') .. '/nvim-claude/mcp-env') .. '/bin/python'
   
   vim.notify('To configure nvim-lsp MCP server:', vim.log.levels.INFO)
   vim.notify('claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
-             plugin_dir .. 'mcp-server/nvim-lsp-server.py', vim.log.levels.INFO)
+             mcp_server_path, vim.log.levels.INFO)
   vim.notify('Then restart Claude Code in this directory.', vim.log.levels.INFO)
 end
 
