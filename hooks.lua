@@ -527,7 +527,7 @@ function M.install_hooks()
         end
       end
 
-      -- Add hook if it doesn't exist - always create new entry for Stop hooks
+      -- Add hook if it doesn't exist
       if not hook_exists then
         table.insert(section, {
           hooks = { hook },
