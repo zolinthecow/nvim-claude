@@ -205,47 +205,127 @@ function M.create_stash(message)
   
   logger.info('create_stash', 'Creating stash with message: ' .. message)
   
+  -- First, check git status to see if there are any changes to stash
+  local status_cmd = 'git status --porcelain'
+  local status_result, status_err = utils.exec(status_cmd)
+  
+  logger.debug('create_stash', 'Git status check', {
+    status_result = status_result,
+    status_error = status_err,
+    has_changes = status_result and status_result ~= '',
+    cwd = vim.fn.getcwd()
+  })
+  
+  if status_err then
+    logger.error('create_stash', 'Failed to check git status', { error = status_err })
+    return nil
+  end
+  
+  if not status_result or status_result:gsub('%s+', '') == '' then
+    logger.warn('create_stash', 'No changes to stash - working directory is clean')
+    return nil
+  end
+  
   -- Create a stash object without removing changes from working directory
   local stash_cmd = 'git stash create'
   local stash_hash, err = utils.exec(stash_cmd)
   
-  logger.debug('create_stash', 'Stash create result', {
-    stash_hash = stash_hash,
+  logger.debug('create_stash', 'Stash create command output', {
+    command = stash_cmd,
+    raw_output = stash_hash,
     error = err,
+    output_length = stash_hash and #stash_hash or 0,
+    output_trimmed = stash_hash and stash_hash:gsub('%s+', '') or '',
     cwd = vim.fn.getcwd()
   })
   
-  if not err and stash_hash and stash_hash ~= '' then
-    -- Check if result contains error message
-    if stash_hash:match('fatal:') or stash_hash:match('error:') then
-      logger.error('create_stash', 'Git returned error message instead of hash', {
-        result = stash_hash
-      })
-      return stash_hash -- Return the error message so it can be detected upstream
-    end
-    
-    -- Store the stash with a message
-    stash_hash = stash_hash:gsub('%s+', '') -- trim whitespace
-    local store_cmd = string.format('git stash store -m "%s" %s', message, stash_hash)
-    local store_result, store_err = utils.exec(store_cmd)
-    
-    logger.debug('create_stash', 'Stash store result', {
-      store_result = store_result,
-      store_error = store_err
+  if err then
+    logger.error('create_stash', 'Command execution failed', { 
+      command = stash_cmd,
+      error = err,
+      output = stash_hash 
     })
-    
-    if store_err then
-      logger.error('create_stash', 'Failed to store stash', { error = store_err })
-      return nil
-    end
-    
-    logger.info('create_stash', 'Successfully created stash', { stash_hash = stash_hash })
-    -- Return the SHA directly - it's more stable than stash@{0}
-    return stash_hash
+    return nil
   end
   
-  logger.error('create_stash', 'Failed to create stash', { error = err })
-  return nil
+  if not stash_hash then
+    logger.error('create_stash', 'No output from git stash create command')
+    return nil
+  end
+  
+  -- Trim whitespace from the result
+  stash_hash = stash_hash:gsub('%s+', '')
+  
+  if stash_hash == '' then
+    logger.error('create_stash', 'Empty output from git stash create - this should not happen with changes present')
+    return nil
+  end
+  
+  -- Check if result contains error message
+  if stash_hash:match('fatal:') or stash_hash:match('error:') or stash_hash:match('warning:') then
+    logger.error('create_stash', 'Git returned error/warning message instead of hash', {
+      result = stash_hash,
+      command = stash_cmd
+    })
+    return nil
+  end
+  
+  -- Validate that the result looks like a git SHA
+  if not stash_hash:match('^[a-f0-9]+$') or #stash_hash < 7 then
+    logger.error('create_stash', 'Output does not look like a valid git SHA', {
+      result = stash_hash,
+      length = #stash_hash,
+      hex_pattern_match = stash_hash:match('^[a-f0-9]+$') ~= nil
+    })
+    return nil
+  end
+  
+  logger.info('create_stash', 'Valid stash SHA created', { stash_hash = stash_hash })
+  
+  -- Store the stash with a message
+  local store_cmd = string.format('git stash store -m "%s" %s', message, stash_hash)
+  local store_result, store_err = utils.exec(store_cmd)
+  
+  logger.debug('create_stash', 'Stash store command output', {
+    command = store_cmd,
+    store_result = store_result,
+    store_error = store_err
+  })
+  
+  if store_err then
+    logger.error('create_stash', 'Failed to store stash', { 
+      command = store_cmd,
+      error = store_err,
+      output = store_result
+    })
+    return nil
+  end
+  
+  -- Verify the stash was actually stored
+  local verify_cmd = string.format('git stash list --grep="%s"', message)
+  local verify_result, verify_err = utils.exec(verify_cmd)
+  
+  logger.debug('create_stash', 'Stash verification', {
+    command = verify_cmd,
+    verify_result = verify_result,
+    verify_error = verify_err,
+    found_stash = verify_result and verify_result ~= ''
+  })
+  
+  if verify_err or not verify_result or verify_result:gsub('%s+', '') == '' then
+    logger.warn('create_stash', 'Stash may not have been stored properly', {
+      verify_error = verify_err,
+      verify_result = verify_result
+    })
+  end
+  
+  logger.info('create_stash', 'Successfully created and stored stash', { 
+    stash_hash = stash_hash,
+    message = message
+  })
+  
+  -- Return the SHA directly - it's more stable than stash@{0}
+  return stash_hash
 end
 
 -- Setup autocmds for persistence

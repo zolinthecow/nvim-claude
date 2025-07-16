@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Immediate baseline persistence in pre-hook to handle multiple Neovim instances
 - Stop hook validation that blocks Claude from completing when lint errors/warnings exist
 - Session-based file tracking for targeted diagnostic checking
+- MCP server integration with 4 diagnostic tools: `get_diagnostics`, `get_diagnostic_summary`, `get_session_diagnostics`, `get_diagnostic_context`
+- LSP diagnostics bridge for Claude to query and understand errors/warnings in real-time
 
 ### Fixed
 - Fixed phantom diff hunks at end of files caused by newline inconsistencies
