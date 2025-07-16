@@ -589,7 +589,7 @@ function M.accept_current_hunk(bufnr)
     return
   end
 
-  local baseline_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, relative_path)
+  local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
   local baseline_content, git_err = utils.exec(baseline_cmd)
   if git_err or not baseline_content then
     baseline_content = '' -- Treat as new file
@@ -697,7 +697,7 @@ function M.reject_current_hunk(bufnr)
     vim.notify('No baseline stash reference found', vim.log.levels.ERROR)
     return
   end
-  local baseline_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, relative_path)
+  local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
   local new_baseline = utils.exec(baseline_cmd)
 
   if new_baseline then
@@ -1153,7 +1153,7 @@ function M.refresh_inline_diff(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
 
   -- Get baseline content
-  local baseline_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, relative_path)
+  local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
   local baseline_content = utils.exec(baseline_cmd)
   if not baseline_content then
     baseline_content = '' -- New file
@@ -1335,7 +1335,7 @@ function M.reject_all_files()
     local full_path = git_root .. '/' .. relative_path
 
     -- Use git show to get the file content from baseline
-    local cmd = string.format('cd "%s" && git show %s:"%s" > "%s"', git_root, baseline_ref, relative_path, full_path)
+    local cmd = string.format("cd '%s' && git show %s:'%s' > '%s'", git_root, baseline_ref, relative_path, full_path)
     local result, err = utils.exec(cmd)
 
     if not err then

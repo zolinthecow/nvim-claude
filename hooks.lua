@@ -335,11 +335,22 @@ function M.show_inline_diff_for_file(buf, file, git_root, stash_ref)
   end
 
   -- Get baseline from git stash
-  local stash_cmd = string.format('cd "%s" && git show %s:%s 2>/dev/null', git_root, stash_ref, file)
+  local stash_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, file)
+  logger.info('show_inline_diff_for_file', 'Executing git show command', {
+    git_root = git_root,
+    stash_ref = stash_ref,
+    file = file,
+    command = stash_cmd
+  })
   local original_content, git_err = utils.exec(stash_cmd)
 
   -- If file doesn't exist in baseline, treat as new file (empty baseline)
   if git_err or not original_content then
+    logger.warn('show_inline_diff_for_file', 'Failed to get baseline content', {
+      git_err = git_err,
+      original_content = original_content,
+      file = file
+    })
     original_content = ''
   end
 

@@ -203,8 +203,15 @@ function M.create_stash(message)
 
   logger.info('create_stash', 'Creating stash with message: ' .. message)
 
+  -- Get git root to run commands in the correct directory
+  local git_root = utils.get_project_root()
+  if not git_root then
+    logger.error('create_stash', 'No git root found')
+    return nil
+  end
+
   -- First, check git status to see if there are any changes to stash
-  local status_cmd = 'git status --porcelain'
+  local status_cmd = string.format('cd "%s" && git status --porcelain', git_root)
   local status_result, status_err = utils.exec(status_cmd)
 
   logger.debug('create_stash', 'Git status check', {
@@ -226,7 +233,7 @@ function M.create_stash(message)
 
   -- Create a stash object without removing changes from working directory
   -- Include untracked files with --include-untracked
-  local stash_cmd = 'git stash create --include-untracked'
+  local stash_cmd = string.format('cd "%s" && git stash create --include-untracked', git_root)
   local stash_hash = nil
   local err = nil
   local max_retries = 3
@@ -310,7 +317,7 @@ function M.create_stash(message)
   logger.info('create_stash', 'Valid stash SHA created', { stash_hash = stash_hash })
 
   -- Store the stash with a message
-  local store_cmd = string.format('git stash store -m "%s" %s', message, stash_hash)
+  local store_cmd = string.format('cd "%s" && git stash store -m "%s" %s', git_root, message, stash_hash)
   local store_result, store_err = utils.exec(store_cmd)
 
   logger.debug('create_stash', 'Stash store command output', {
@@ -329,7 +336,7 @@ function M.create_stash(message)
   end
 
   -- Verify the stash was actually stored
-  local verify_cmd = string.format('git stash list --grep="%s"', message)
+  local verify_cmd = string.format('cd "%s" && git stash list --grep="%s"', git_root, message)
   local verify_result, verify_err = utils.exec(verify_cmd)
 
   logger.debug('create_stash', 'Stash verification', {
