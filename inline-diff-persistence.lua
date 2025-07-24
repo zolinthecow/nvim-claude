@@ -10,6 +10,16 @@ local M = {}
 local utils = require 'nvim-claude.utils'
 local logger = require 'nvim-claude.logger'
 
+-- Get the current baseline reference
+function M.get_baseline_ref()
+  return M.current_stash_ref
+end
+
+-- Set the baseline reference and update in-memory state
+function M.set_baseline_ref(ref)
+  M.current_stash_ref = ref
+end
+
 -- Get project-specific nvim-claude directory
 function M.get_nvim_claude_dir(file_path)
   local project_root

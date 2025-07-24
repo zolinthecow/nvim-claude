@@ -539,13 +539,9 @@ function M.update_baseline_with_content(git_root, relative_path, content, curren
     -- Cleanup temporary directory
     vim.fn.delete(temp_dir, 'rf')
 
-    -- Update baseline reference
-    hooks.stable_baseline_ref = new_commit_hash
-    
-    -- IMPORTANT: Also update persistence's current_stash_ref
+    -- Update baseline reference in persistence module
     local persistence = require 'nvim-claude.inline-diff-persistence'
-    persistence.current_stash_ref = new_commit_hash
-    vim.notify('DEBUG: Updated both refs to: ' .. new_commit_hash, vim.log.levels.INFO)
+    persistence.set_baseline_ref(new_commit_hash)
 
     return true
   end)
@@ -590,7 +586,7 @@ function M.accept_current_hunk(bufnr)
   local hunk_patch = M.generate_hunk_patch(hunk, relative_path)
 
   -- Step 2: Get current baseline from stash
-  local stash_ref = hooks.stable_baseline_ref or persistence.current_stash_ref
+  local stash_ref = persistence.get_baseline_ref()
   if not stash_ref then
     vim.notify('No baseline stash found', vim.log.levels.ERROR)
     return
@@ -611,13 +607,11 @@ function M.accept_current_hunk(bufnr)
   end
 
   -- Step 4: Update baseline stash with patched content
-  vim.notify('DEBUG: Updating baseline for ' .. relative_path .. ' with stash_ref: ' .. stash_ref, vim.log.levels.INFO)
   local success = M.update_baseline_with_content(git_root, relative_path, updated_baseline_content, stash_ref)
   if not success then
     vim.notify('Failed to update baseline stash', vim.log.levels.ERROR)
     return
   end
-  vim.notify('DEBUG: Baseline updated, new ref: ' .. (hooks.stable_baseline_ref or 'nil'), vim.log.levels.INFO)
 
   -- Step 5: Recompute diff against updated baseline
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -630,9 +624,8 @@ function M.accept_current_hunk(bufnr)
     vim.notify('All changes accepted for this file.', vim.log.levels.INFO)
 
     hooks.claude_edited_files[relative_path] = nil
-    vim.notify('DEBUG: Saving persistence with stash_ref: ' .. (hooks.stable_baseline_ref or 'nil'), vim.log.levels.INFO)
     persistence.save_state {
-      stash_ref = hooks.stable_baseline_ref,
+      stash_ref = persistence.get_baseline_ref(),
       claude_edited_files = hooks.claude_edited_files,
     }
 
@@ -703,7 +696,8 @@ function M.reject_current_hunk(bufnr)
   local hooks = require 'nvim-claude.hooks'
 
   -- Get the new baseline content
-  local stash_ref = hooks.stable_baseline_ref
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+  local stash_ref = persistence.get_baseline_ref()
   if not stash_ref then
     vim.notify('No baseline stash reference found', vim.log.levels.ERROR)
     return
@@ -951,7 +945,7 @@ function M.reject_all_hunks(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
 
   -- Get baseline content from stash
-  local stash_ref = hooks.stable_baseline_ref
+  local stash_ref = persistence.get_baseline_ref()
   if not stash_ref then
     vim.notify('No baseline stash reference found', vim.log.levels.ERROR)
     return
@@ -1011,7 +1005,7 @@ function M.reject_all_hunks(bufnr)
 
   -- If no other files are tracked, clear the baseline
   if not has_other_files then
-    hooks.stable_baseline_ref = nil
+    persistence.set_baseline_ref(nil)
     persistence.clear_state()
   end
 end
@@ -1061,7 +1055,7 @@ function M.close_inline_diff(bufnr, keep_baseline)
     persistence.current_stash_ref = nil
 
     -- Reset the stable baseline in hooks
-    hooks.stable_baseline_ref = nil
+    persistence.set_baseline_ref(nil)
     hooks.claude_edited_files = {}
   end
 
@@ -1189,9 +1183,7 @@ function M.refresh_inline_diff(bufnr)
   local utils = require 'nvim-claude.utils'
   local persistence = require 'nvim-claude.inline-diff-persistence'
 
-  local stash_ref = hooks.stable_baseline_ref or persistence.current_stash_ref
-  vim.notify('DEBUG: Refreshing with stash_ref: ' .. (stash_ref or 'nil'), vim.log.levels.INFO)
-  
+  local stash_ref = persistence.get_baseline_ref()
   if not stash_ref then
     -- Check if this file is Claude-tracked - only warn if it should have a baseline
     local git_root = utils.get_project_root()
@@ -1217,12 +1209,8 @@ function M.refresh_inline_diff(bufnr)
   local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
   local baseline_content, git_err = utils.exec(baseline_cmd)
   
-  vim.notify('DEBUG: Git command: ' .. baseline_cmd, vim.log.levels.INFO)
-  vim.notify('DEBUG: Baseline content (first 100 chars): ' .. (baseline_content and baseline_content:sub(1, 100) or 'nil'), vim.log.levels.INFO)
-  
   -- Check for git error messages that indicate file doesn't exist in stash
   if git_err or not baseline_content or baseline_content:match('^fatal:') or baseline_content:match('^error:') then
-    vim.notify('DEBUG: Treating as new file due to: ' .. (git_err or (baseline_content and baseline_content:sub(1, 50) or 'nil')), vim.log.levels.INFO)
     baseline_content = '' -- New file
   end
 
@@ -1360,7 +1348,7 @@ function M.accept_all_files()
 
   -- Clear all tracking
   hooks.claude_edited_files = {}
-  hooks.stable_baseline_ref = nil
+  persistence.set_baseline_ref(nil)
 
   -- Clear persistence
   persistence.clear_state()
@@ -1390,7 +1378,7 @@ function M.reject_all_files()
   end
 
   -- Get baseline reference
-  local baseline_ref = hooks.stable_baseline_ref
+  local baseline_ref = persistence.get_baseline_ref()
   if not baseline_ref then
     vim.notify('No baseline found to restore from', vim.log.levels.ERROR)
     return
@@ -1427,7 +1415,7 @@ function M.reject_all_files()
 
   -- Clear all tracking
   hooks.claude_edited_files = {}
-  hooks.stable_baseline_ref = nil
+  persistence.set_baseline_ref(nil)
 
   -- Clear persistence completely for consistency with accept all
   persistence.clear_state()
