@@ -360,7 +360,8 @@ function M.show_inline_diff_for_file(buf, file, git_root, stash_ref, preserve_cu
   local original_content, git_err = utils.exec(stash_cmd)
 
   -- If file doesn't exist in baseline, treat as new file (empty baseline)
-  if git_err or not original_content then
+  -- Check for git error messages that indicate file doesn't exist in stash
+  if git_err or not original_content or original_content:match('^fatal:') or original_content:match('^error:') then
     logger.warn('show_inline_diff_for_file', 'Failed to get baseline content', {
       git_err = git_err,
       original_content = original_content,
