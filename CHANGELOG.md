@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed cursor jumping to first diff hunk when Claude edits an open buffer
+- Cursor position is now preserved when inline diffs are refreshed after Claude's edits
+- Fixed reject all changes (`<leader>iR`) not working - now properly reverts file to baseline state
+
 ## [0.0.3] - 2025-07-16
 
 ### Fixed

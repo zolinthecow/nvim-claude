@@ -308,8 +308,23 @@ function M.post_tool_use_hook(file_path)
 
         -- Show inline diff if we have a baseline (with delay for buffer refresh)
         if M.stable_baseline_ref then
+          -- Save cursor position before showing diff
+          local cursor_pos = nil
+          local win = vim.fn.bufwinid(buf)
+          if win ~= -1 then
+            cursor_pos = vim.api.nvim_win_get_cursor(win)
+          end
+          
           vim.defer_fn(function()
-            M.show_inline_diff_for_file(buf, relative_path, git_root, M.stable_baseline_ref)
+            M.show_inline_diff_for_file(buf, relative_path, git_root, M.stable_baseline_ref, true)
+            
+            -- Restore cursor position if we saved it
+            if cursor_pos then
+              local current_win = vim.fn.bufwinid(buf)
+              if current_win ~= -1 then
+                pcall(vim.api.nvim_win_set_cursor, current_win, cursor_pos)
+              end
+            end
           end, 100)
         end
         break
@@ -319,7 +334,7 @@ function M.post_tool_use_hook(file_path)
 end
 
 -- Helper function to show inline diff for a file
-function M.show_inline_diff_for_file(buf, file, git_root, stash_ref)
+function M.show_inline_diff_for_file(buf, file, git_root, stash_ref, preserve_cursor)
   local utils = require 'nvim-claude.utils'
   local inline_diff = require 'nvim-claude.inline-diff'
 
@@ -359,7 +374,8 @@ function M.show_inline_diff_for_file(buf, file, git_root, stash_ref)
   local current_content = table.concat(current_lines, '\n')
 
   -- Show inline diff (empty baseline will show entire file as additions)
-  inline_diff.show_inline_diff(buf, original_content, current_content)
+  local opts = preserve_cursor and { preserve_cursor = true } or {}
+  inline_diff.show_inline_diff(buf, original_content, current_content, opts)
   return true
 end
 

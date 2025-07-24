@@ -123,16 +123,39 @@ function M.check_and_install_mcp()
   
   -- Check if MCP is already installed
   if vim.fn.filereadable(venv_python) == 1 then
-    -- Check if fastmcp is installed
-    local check_cmd = {venv_python, '-c', 'import fastmcp'}
+    -- Check if either fastmcp or mcp is installed
+    -- Set environment variables to uppercase as fastmcp expects
+    local env_prefix = 'FASTMCP_LOG_LEVEL=INFO LOG_LEVEL=INFO '
+    local check_cmd = string.format('%s%s -c "import fastmcp"', env_prefix, venv_python)
     local result = vim.fn.system(check_cmd)
-    if vim.v.shell_error == 0 then
-      -- MCP is installed, check if user has configured it
+    local fastmcp_installed = vim.v.shell_error == 0
+    
+    -- Debug: show exact command being run
+    if vim.fn.getcwd():match('wags') or vim.fn.getcwd():match('nvim-claude') then
+      vim.notify('MCP Check Debug: Running command: ' .. check_cmd, vim.log.levels.DEBUG)
+      if not fastmcp_installed then
+        vim.notify('MCP Check Debug: import fastmcp error: ' .. result, vim.log.levels.DEBUG)
+        vim.notify('MCP Check Debug: shell_error = ' .. vim.v.shell_error, vim.log.levels.DEBUG)
+      end
+    end
+    
+    local check_mcp_cmd = string.format('%s%s -c "import mcp"', env_prefix, venv_python)
+    vim.fn.system(check_mcp_cmd)
+    local mcp_installed = vim.v.shell_error == 0
+    
+    if fastmcp_installed or mcp_installed then
+      -- Either fastmcp or mcp is installed, check if user has configured it
       M.check_mcp_configuration()
       return -- Already installed
     else
-      if vim.fn.getcwd():match('wags') then
-        vim.notify('MCP Check Debug: fastmcp check failed, shell_error = ' .. vim.v.shell_error, vim.log.levels.DEBUG)
+      -- Alternative check: see if the MCP server script can run
+      local server_script = vim.fn.expand('~/.config/nvim/lua/nvim-claude/mcp-server/nvim-lsp-server.py')
+      local check_server = {venv_python, server_script, '--help'}
+      vim.fn.system(check_server)
+      if vim.v.shell_error == 0 then
+        -- Server works, skip reinstall
+        M.check_mcp_configuration()
+        return
       end
     end
   end

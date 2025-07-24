@@ -10,9 +10,9 @@ local ns_id = vim.api.nvim_create_namespace 'nvim_claude_inline_diff'
 M.active_diffs = {} -- Track active inline diffs by buffer number
 
 -- Initialize inline diff for a buffer
-function M.show_inline_diff(bufnr, old_content, new_content)
+function M.show_inline_diff(bufnr, old_content, new_content, opts)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
-
+  opts = opts or {}
 
   -- Get the diff between old and new content
   local diff_data = M.compute_diff(old_content, new_content)
@@ -36,8 +36,10 @@ function M.show_inline_diff(bufnr, old_content, new_content)
   -- Set up buffer-local keymaps
   M.setup_inline_keymaps(bufnr)
 
-  -- Jump to first hunk
-  M.jump_to_hunk(bufnr, 1)
+  -- Jump to first hunk only if not preserving cursor
+  if not opts.preserve_cursor then
+    M.jump_to_hunk(bufnr, 1)
+  end
 
   -- Silent activation - no notification
 end
@@ -927,22 +929,70 @@ end
 
 -- Reject all hunks
 function M.reject_all_hunks(bufnr)
+  local diff_data = M.active_diffs[bufnr]
+  if not diff_data or #diff_data.hunks == 0 then
+    vim.notify('No changes to reject', vim.log.levels.INFO)
+    return
+  end
+
+  local utils = require 'nvim-claude.utils'
+  local hooks = require 'nvim-claude.hooks'
+  local git_root = utils.get_project_root()
+  local file_path = vim.api.nvim_buf_get_name(bufnr)
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+
+  -- Get baseline content from stash
+  local stash_ref = hooks.stable_baseline_ref
+  if not stash_ref then
+    vim.notify('No baseline stash reference found', vim.log.levels.ERROR)
+    return
+  end
+
+  local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
+  local baseline_content, err = utils.exec(baseline_cmd)
+  
+  if err or not baseline_content then
+    vim.notify('Failed to get baseline content: ' .. (err or 'unknown error'), vim.log.levels.ERROR)
+    return
+  end
+
+  -- If baseline is empty string, it means the file didn't exist in the baseline
+  if baseline_content == '' then
+    baseline_content = ''  -- Explicitly set to empty for new files
+  end
+
+  -- Set buffer content directly to baseline
+  local baseline_lines = vim.split(baseline_content, '\n', { plain = true })
+  -- Remove empty last line if present (vim.split adds it)
+  if baseline_lines[#baseline_lines] == '' then
+    table.remove(baseline_lines)
+  end
+  
+  -- Set buffer lines and mark as modified
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, baseline_lines)
+  
+  -- Write the buffer to disk
+  vim.api.nvim_buf_call(bufnr, function()
+    vim.cmd 'write!'
+  end)
+
   vim.notify('Rejected all Claude changes', vim.log.levels.INFO)
 
   -- Close inline diff
   M.close_inline_diff(bufnr)
 
-  -- Clear baseline tracking for consistency with accept all
-  local hooks = require 'nvim-claude.hooks'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
+  -- Remove this file from Claude edited files tracking
+  if hooks.claude_edited_files[relative_path] then
+    hooks.claude_edited_files[relative_path] = nil
+    local persistence = require 'nvim-claude.inline-diff-persistence'
+    persistence.save_state {
+      stash_ref = persistence.current_stash_ref,
+      claude_edited_files = hooks.claude_edited_files,
+    }
+  end
 
   -- Check if there are any other tracked files
   local has_other_files = false
-  local current_file = vim.api.nvim_buf_get_name(bufnr)
-  local utils = require 'nvim-claude.utils'
-  local git_root = utils.get_project_root()
-  local relative_path = current_file:gsub('^' .. vim.pesc(git_root) .. '/', '')
-
   for file_path, _ in pairs(hooks.claude_edited_files) do
     if file_path ~= relative_path then
       has_other_files = true
