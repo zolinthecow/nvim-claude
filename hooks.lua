@@ -999,8 +999,14 @@ end
 function M.get_session_diagnostic_counts()
   local counts = { errors = 0, warnings = 0 }
 
-  -- Use session files if available, otherwise fall back to all claude edited files
-  local files_to_check = vim.tbl_count(M.session_edited_files) > 0 and M.session_edited_files or M.claude_edited_files
+  -- Only check files edited in the current session
+  local files_to_check = M.session_edited_files
+  
+  -- If no files were edited in this session, return early
+  if vim.tbl_count(files_to_check) == 0 then
+    logger.info('get_session_diagnostic_counts', 'No files edited in current session, skipping diagnostics')
+    return '{"errors":0,"warnings":0}'
+  end
 
   logger.info('get_session_diagnostic_counts', 'Checking files', vim.tbl_keys(files_to_check))
 
