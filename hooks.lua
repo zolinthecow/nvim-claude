@@ -258,13 +258,13 @@ function M.post_tool_use_hook(file_path)
     return
   end
 
+  local utils = require 'nvim-claude.utils'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+
   logger.info('post_tool_use_hook', 'Called with file_path: ' .. file_path, {
     stable_baseline_ref = persistence.get_baseline_ref(),
     claude_edited_files_count = vim.tbl_count(M.claude_edited_files),
   })
-
-  local utils = require 'nvim-claude.utils'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
   local git_root = utils.get_project_root_for_file(file_path)
 
   if not git_root then
@@ -400,6 +400,9 @@ function M.setup_file_open_autocmd()
 
       -- Get relative path
       local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+      
+      -- Require persistence module
+      local persistence = require 'nvim-claude.inline-diff-persistence'
 
       -- Check if this file was edited by Claude
       if M.claude_edited_files[relative_path] and persistence.get_baseline_ref() then
@@ -409,7 +412,6 @@ function M.setup_file_open_autocmd()
         end, 50) -- Small delay to ensure buffer is fully loaded
       else
         -- Check persistence state for tracked files
-        local persistence = require 'nvim-claude.inline-diff-persistence'
         if persistence.current_stash_ref then
           -- Check if we have persistence state but haven't restored claude_edited_files yet
           local state = persistence.load_state()

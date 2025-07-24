@@ -9,8 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Fixed cursor jumping to first diff hunk when Claude edits an open buffer
-- Cursor position is now preserved when inline diffs are refreshed after Claude's edits
-- Fixed reject all changes (`<leader>iR`) not working - now properly reverts file to baseline state
+  - Added `preserve_cursor` option to maintain cursor position during diff updates
+- Fixed "reject all" (`<leader>iR`) command that was accepting changes instead of rejecting
+  - Now properly replaces file content with baseline version
+- Fixed stale LSP diagnostics not refreshing when files change
+  - Added buffer refresh before querying diagnostics
+  - Dynamically waits for LSP attachment instead of fixed delay
+- Fixed error messages showing for new files in inline diffs
+  - Properly detects git errors when files don't exist in baseline
+  - Shows new files as all additions (green) without error text
+- Fixed baseline not persisting after accepting changes for new files
+  - Unified baseline reference to single source of truth in persistence module
+  - Eliminated dual reference synchronization bugs
+- Fixed stop hook firing when no files were edited
+  - Now only checks diagnostics for files edited in current session
+  - Prevents interruptions during non-editing conversations
+- Fixed persistence module not being required before use in hooks.lua
+  - Caused "attempt to index global 'persistence' (a nil value)" error
+
+### Changed
+- Refactored baseline reference management to use single source of truth
+  - All baseline access now goes through `persistence.get_baseline_ref()` and `set_baseline_ref()`
+  - Removed `hooks.stable_baseline_ref` in favor of `persistence.current_stash_ref`
+  - Updated all code and documentation to reflect new architecture
+
+### Added
+- Comprehensive onboarding section to CLAUDE.md for future Claude instances
+  - Key concepts, common gotchas, and debugging workflow
+  - Architecture overview and mental model
+  - Common tasks and where to look when things break
 
 ## [0.0.3] - 2025-07-16
 
