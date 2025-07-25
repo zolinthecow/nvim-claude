@@ -322,6 +322,54 @@ function M.post_tool_use_hook(file_path)
   end
 end
 
+-- Track a file deletion (called from bash hook wrapper)
+function M.track_deleted_file(file_path)
+  local utils = require 'nvim-claude.utils'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+  
+  -- Get git root
+  local git_root = utils.get_project_root()
+  if not git_root then
+    return
+  end
+  
+  -- Convert to relative path
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  
+  logger.info('track_deleted_file', 'Tracking deleted file', {
+    file_path = file_path,
+    relative_path = relative_path,
+  })
+  
+  -- Check if file exists in baseline
+  local baseline_ref = persistence.get_baseline_ref()
+  if baseline_ref then
+    local check_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, baseline_ref, relative_path)
+    local baseline_content, err = utils.exec(check_cmd)
+    
+    if not err and baseline_content and not baseline_content:match('^fatal:') then
+      -- File exists in baseline, track it as edited
+      M.claude_edited_files[relative_path] = true
+      M.session_edited_files[relative_path] = true
+      
+      -- Save to persistence
+      persistence.save_state {
+        stash_ref = baseline_ref,
+        claude_edited_files = M.claude_edited_files,
+      }
+      
+      logger.info('track_deleted_file', 'File tracked as deleted', {
+        relative_path = relative_path,
+        had_baseline = true,
+      })
+    else
+      logger.info('track_deleted_file', 'File not in baseline, not tracking', {
+        relative_path = relative_path,
+      })
+    end
+  end
+end
+
 -- Helper function to show inline diff for a file
 function M.show_inline_diff_for_file(buf, file, git_root, stash_ref, preserve_cursor)
   local utils = require 'nvim-claude.utils'
