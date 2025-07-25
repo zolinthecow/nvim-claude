@@ -512,11 +512,11 @@ function M.install_hooks()
   end
 
   -- Create hooks configuration using proxy scripts
-  local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h')
+  local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h:h:h')
   -- Use a simpler command that doesn't require complex quoting
-  local pre_command = plugin_dir .. '/pre-hook-wrapper.sh'
-  local post_command = plugin_dir .. '/post-hook-wrapper.sh'
-  local stop_command = plugin_dir .. '/stop-hook-validator.sh'
+  local pre_command = plugin_dir .. '/scripts/pre-hook-wrapper.sh'
+  local post_command = plugin_dir .. '/scripts/post-hook-wrapper.sh'
+  local stop_command = plugin_dir .. '/scripts/stop-hook-validator.sh'
 
   -- We'll merge these hooks into existing configuration
 
@@ -659,10 +659,10 @@ function M.uninstall_hooks()
     local existing_settings = utils.read_json(settings_file) or {}
 
     if existing_settings.hooks then
-      local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h')
-      local pre_command = plugin_dir .. '/pre-hook-wrapper.sh'
-      local post_command = plugin_dir .. '/post-hook-wrapper.sh'
-      local stop_command = plugin_dir .. '/stop-hook-validator.sh'
+      local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h:h:h')
+      local pre_command = plugin_dir .. '/scripts/pre-hook-wrapper.sh'
+      local post_command = plugin_dir .. '/scripts/post-hook-wrapper.sh'
+      local stop_command = plugin_dir .. '/scripts/stop-hook-validator.sh'
       local hooks_removed = false
 
       -- Helper function to remove our hooks from a section
