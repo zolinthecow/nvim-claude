@@ -193,8 +193,26 @@ function M.setup(claude_module)
   
   -- ClaudeInstallMCP command
   vim.api.nvim_create_user_command('ClaudeInstallMCP', function()
-    local plugin_path = debug.getinfo(1, 'S').source:sub(2):match('(.*/)')
-    local install_script = plugin_path .. '../../mcp-server/install.sh'
+    -- Get plugin directory - handle both development and installed paths
+    local source_path = debug.getinfo(1, 'S').source:sub(2)
+    local plugin_dir = source_path:match('(.*/)')
+    
+    -- For development, the actual plugin files might be in .config/nvim/lua/nvim-claude
+    local dev_plugin_dir = vim.fn.expand('~/.config/nvim/lua/nvim-claude/')
+    if vim.fn.isdirectory(dev_plugin_dir .. 'mcp-server') == 1 then
+      plugin_dir = dev_plugin_dir
+    else
+      -- For installed plugins, go up to the plugin root
+      plugin_dir = plugin_dir .. '../../../../'
+    end
+    
+    local install_script = plugin_dir .. 'mcp-server/install.sh'
+    
+    -- Check if install script exists
+    if vim.fn.filereadable(install_script) == 0 then
+      vim.notify('nvim-claude: MCP install script not found at: ' .. install_script, vim.log.levels.ERROR)
+      return
+    end
     
     local function on_exit(job_id, code, event)
       if code == 0 then
