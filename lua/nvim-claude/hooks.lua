@@ -11,27 +11,18 @@ local logger = require 'nvim-claude.logger'
 
 -- Update stable baseline after accepting changes
 function M.update_stable_baseline()
-  local utils = require 'nvim-claude.utils'
   local persistence = require 'nvim-claude.inline-diff-persistence'
 
-  -- Create a new stash with current state as the new baseline
+  -- Create a new baseline with current state
   local message = 'nvim-claude-baseline-accepted-' .. os.time()
+  local baseline_ref = persistence.create_baseline(message)
 
-  -- Create a stash object without removing changes from working directory
-  local stash_cmd = 'git stash create'
-  local stash_hash, err = utils.exec(stash_cmd)
-
-  if not err and stash_hash and stash_hash ~= '' then
-    -- Store the stash with a message
-    stash_hash = stash_hash:gsub('%s+', '') -- trim whitespace
-    local store_cmd = string.format('git stash store -m "%s" %s', message, stash_hash)
-    utils.exec(store_cmd)
-
-    -- Update baseline reference in persistence module
-    persistence.set_baseline_ref(stash_hash)
+  if baseline_ref then
+    -- Update baseline reference (already done by create_baseline but be explicit)
+    persistence.set_baseline_ref(baseline_ref)
 
     -- Save the updated state
-    persistence.save_state { stash_ref = stash_hash }
+    persistence.save_state { stash_ref = baseline_ref }
   end
 end
 
@@ -64,6 +55,7 @@ function M.pre_tool_use_hook(file_path)
   local utils = require 'nvim-claude.utils'
   local persistence = require 'nvim-claude.inline-diff-persistence'
 
+
   logger.info('pre_tool_use_hook', 'Called with file_path: ' .. (file_path or 'nil'), {
     stable_baseline_ref = persistence.get_baseline_ref(),
     claude_edited_files_count = vim.tbl_count(M.claude_edited_files),
@@ -87,31 +79,30 @@ function M.pre_tool_use_hook(file_path)
     relative_path = relative_path,
   })
 
-  -- Case 1: No baseline exists at all → create full baseline stash
+  -- Case 1: No baseline exists at all → create full baseline
   if not persistence.get_baseline_ref() then
-    logger.info('pre_tool_use_hook', 'No baseline exists, creating new stash')
-    local stash_ref = persistence.create_stash('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S')
-    if stash_ref then
-      -- Check for error messages in stash_ref
-      if stash_ref:match 'fatal:' or stash_ref:match 'error:' then
-        logger.error('pre_tool_use_hook', 'Got error when creating stash', {
-          stash_ref = stash_ref,
+    logger.info('pre_tool_use_hook', 'No baseline exists, creating new baseline')
+    local baseline_ref = persistence.create_baseline('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S')
+    if baseline_ref then
+      -- Check for error messages in baseline_ref
+      if baseline_ref:match 'fatal:' or baseline_ref:match 'error:' then
+        logger.error('pre_tool_use_hook', 'Got error when creating baseline', {
+          baseline_ref = baseline_ref,
           cwd = vim.fn.getcwd(),
         })
         return true
       end
 
-      persistence.set_baseline_ref(stash_ref)
-      persistence.current_stash_ref = stash_ref
-      logger.info('pre_tool_use_hook', 'Created baseline stash', { stash_ref = stash_ref })
+      persistence.set_baseline_ref(baseline_ref)
+      logger.info('pre_tool_use_hook', 'Created baseline', { baseline_ref = baseline_ref })
 
       -- IMPORTANT: Save state immediately to handle multiple Neovim instances
       persistence.save_state {
-        stash_ref = stash_ref,
+        stash_ref = baseline_ref,
         claude_edited_files = M.claude_edited_files,
       }
     else
-      logger.error('pre_tool_use_hook', 'Failed to create baseline stash')
+      logger.error('pre_tool_use_hook', 'Failed to create baseline')
     end
 
   -- Case 2: File already Claude-edited → do nothing (baseline already captured)
@@ -139,10 +130,9 @@ function M.legacy_pre_tool_use_hook()
 
   -- Only create a baseline if we don't have one yet
   if not persistence.get_baseline_ref() then
-    local stash_ref = persistence.create_stash('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S')
+    local stash_ref = persistence.create_baseline('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S')
     if stash_ref then
       persistence.set_baseline_ref(stash_ref)
-      persistence.current_stash_ref = stash_ref
 
       -- IMPORTANT: Save state immediately to handle multiple Neovim instances
       persistence.save_state {
@@ -258,13 +248,13 @@ function M.post_tool_use_hook(file_path)
     return
   end
 
+  local utils = require 'nvim-claude.utils'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+
   logger.info('post_tool_use_hook', 'Called with file_path: ' .. file_path, {
     stable_baseline_ref = persistence.get_baseline_ref(),
     claude_edited_files_count = vim.tbl_count(M.claude_edited_files),
   })
-
-  local utils = require 'nvim-claude.utils'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
   local git_root = utils.get_project_root_for_file(file_path)
 
   if not git_root then
@@ -400,6 +390,9 @@ function M.setup_file_open_autocmd()
 
       -- Get relative path
       local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+      
+      -- Require persistence module
+      local persistence = require 'nvim-claude.inline-diff-persistence'
 
       -- Check if this file was edited by Claude
       if M.claude_edited_files[relative_path] and persistence.get_baseline_ref() then
@@ -409,7 +402,6 @@ function M.setup_file_open_autocmd()
         end, 50) -- Small delay to ensure buffer is fully loaded
       else
         -- Check persistence state for tracked files
-        local persistence = require 'nvim-claude.inline-diff-persistence'
         if persistence.current_stash_ref then
           -- Check if we have persistence state but haven't restored claude_edited_files yet
           local state = persistence.load_state()
@@ -472,11 +464,11 @@ function M.install_hooks()
   end
 
   -- Create hooks configuration using proxy scripts
-  local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h')
+  local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h:h:h')
   -- Use a simpler command that doesn't require complex quoting
-  local pre_command = plugin_dir .. '/pre-hook-wrapper.sh'
-  local post_command = plugin_dir .. '/post-hook-wrapper.sh'
-  local stop_command = plugin_dir .. '/stop-hook-validator.sh'
+  local pre_command = plugin_dir .. '/scripts/pre-hook-wrapper.sh'
+  local post_command = plugin_dir .. '/scripts/post-hook-wrapper.sh'
+  local stop_command = plugin_dir .. '/scripts/stop-hook-validator.sh'
 
   -- We'll merge these hooks into existing configuration
 
@@ -619,10 +611,10 @@ function M.uninstall_hooks()
     local existing_settings = utils.read_json(settings_file) or {}
 
     if existing_settings.hooks then
-      local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h')
-      local pre_command = plugin_dir .. '/pre-hook-wrapper.sh'
-      local post_command = plugin_dir .. '/post-hook-wrapper.sh'
-      local stop_command = plugin_dir .. '/stop-hook-validator.sh'
+      local plugin_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h:h:h')
+      local pre_command = plugin_dir .. '/scripts/pre-hook-wrapper.sh'
+      local post_command = plugin_dir .. '/scripts/post-hook-wrapper.sh'
+      local stop_command = plugin_dir .. '/scripts/stop-hook-validator.sh'
       local hooks_removed = false
 
       -- Helper function to remove our hooks from a section

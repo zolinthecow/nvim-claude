@@ -19,6 +19,7 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 - Tmux (for chat interface and background agents)
 - Git (for diff management and worktrees)
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) - Required dependency
+- [neovim-remote](https://github.com/mhinz/neovim-remote) - Install with `pip install neovim-remote` or `pipx install neovim-remote`
 
 ### Optional but Recommended
 - [diffview.nvim](https://github.com/sindrets/diffview.nvim) - For reviewing agent changes

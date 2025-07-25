@@ -188,7 +188,7 @@ This is a Neovim plugin that integrates with Claude Code (the CLI tool). It trac
 
 **Adding Debug Logging:**
 ```lua
-vim.notify('DEBUG: ' .. message, vim.log.levels.INFO)
+logger.debug('function_name', 'Description', { key = value })
 ```
 
 **Checking if a file exists in baseline:**

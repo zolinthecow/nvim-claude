@@ -940,6 +940,7 @@ function M.reject_all_hunks(bufnr)
 
   local utils = require 'nvim-claude.utils'
   local hooks = require 'nvim-claude.hooks'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')

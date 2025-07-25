@@ -114,12 +114,6 @@ function M.check_and_install_mcp()
   local install_path = M.config.mcp.install_path or vim.fn.stdpath('data') .. '/nvim-claude/mcp-env'
   local venv_python = install_path .. '/bin/python'
   
-  -- Debug logging
-  if vim.fn.getcwd():match('wags') then
-    vim.notify('MCP Check Debug: install_path = ' .. install_path, vim.log.levels.DEBUG)
-    vim.notify('MCP Check Debug: venv_python = ' .. venv_python, vim.log.levels.DEBUG)
-    vim.notify('MCP Check Debug: filereadable = ' .. vim.fn.filereadable(venv_python), vim.log.levels.DEBUG)
-  end
   
   -- Check if MCP is already installed
   if vim.fn.filereadable(venv_python) == 1 then
@@ -130,14 +124,6 @@ function M.check_and_install_mcp()
     local result = vim.fn.system(check_cmd)
     local fastmcp_installed = vim.v.shell_error == 0
     
-    -- Debug: show exact command being run
-    if vim.fn.getcwd():match('wags') or vim.fn.getcwd():match('nvim-claude') then
-      vim.notify('MCP Check Debug: Running command: ' .. check_cmd, vim.log.levels.DEBUG)
-      if not fastmcp_installed then
-        vim.notify('MCP Check Debug: import fastmcp error: ' .. result, vim.log.levels.DEBUG)
-        vim.notify('MCP Check Debug: shell_error = ' .. vim.v.shell_error, vim.log.levels.DEBUG)
-      end
-    end
     
     local check_mcp_cmd = string.format('%s%s -c "import mcp"', env_prefix, venv_python)
     vim.fn.system(check_mcp_cmd)
