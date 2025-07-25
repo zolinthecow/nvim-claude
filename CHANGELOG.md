@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Work-in-progress file deletion tracking for rm commands
+
+### Changed
+- Replaced git stash-based baseline system with git commit objects and custom refs
+  - Baselines now stored in `refs/nvim-claude/baseline` instead of stash list
+  - No longer pollutes user's git stash list with nvim-claude entries
+  - Properly includes untracked files in baselines using temporary git index
+  - Preserves user's staging area during baseline creation
+
 ### Fixed
 - Fixed cursor jumping to first diff hunk when Claude edits an open buffer
   - Added `preserve_cursor` option to maintain cursor position during diff updates
@@ -25,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Now only checks diagnostics for files edited in current session
   - Prevents interruptions during non-editing conversations
 - Fixed persistence module not being required before use in hooks.lua
+- Fixed missing require statement in reject_all_hunks function causing nil reference error
   - Caused "attempt to index global 'persistence' (a nil value)" error
 
 ### Changed

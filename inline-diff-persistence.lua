@@ -12,12 +12,54 @@ local logger = require 'nvim-claude.logger'
 
 -- Get the current baseline reference
 function M.get_baseline_ref()
-  return M.current_stash_ref
+  -- First check memory cache
+  if M.current_stash_ref then
+    return M.current_stash_ref
+  end
+  
+  -- Then check git custom ref
+  local utils = require 'nvim-claude.utils'
+  local git_root = utils.get_project_root()
+  if git_root then
+    local ref_cmd = string.format('cd "%s" && git rev-parse refs/nvim-claude/baseline 2>/dev/null', git_root)
+    local ref, err = utils.exec(ref_cmd)
+    if ref and not err then
+      ref = ref:gsub('%s+', '')
+      if ref ~= '' and ref:match '^[a-f0-9]+$' then
+        M.current_stash_ref = ref
+        return ref
+      end
+    end
+  end
+  
+  return nil
 end
 
--- Set the baseline reference and update in-memory state
+-- Set the baseline reference and update both memory and git ref
 function M.set_baseline_ref(ref)
   M.current_stash_ref = ref
+  
+  -- Also update the git ref if we have a valid SHA
+  if ref and ref:match '^[a-f0-9]+$' then
+    local utils = require 'nvim-claude.utils'
+    local git_root = utils.get_project_root()
+    if git_root then
+      local ref_cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, ref)
+      utils.exec(ref_cmd)
+    end
+  end
+end
+
+-- Clear baseline ref (both memory and git ref)
+function M.clear_baseline_ref()
+  M.current_stash_ref = nil
+  
+  local utils = require 'nvim-claude.utils'
+  local git_root = utils.get_project_root()
+  if git_root then
+    local ref_cmd = string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root)
+    utils.exec(ref_cmd)
+  end
 end
 
 -- Get project-specific nvim-claude directory
@@ -157,12 +199,133 @@ function M.load_state()
   return state
 end
 
+-- Create baseline using temporary index and custom refs
+function M.create_baseline(message)
+  local utils = require 'nvim-claude.utils'
+  message = message or 'nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S'
+  
+  logger.info('create_baseline', 'Creating baseline with message: ' .. message)
+  vim.notify('DEBUG create_baseline: Starting with message: ' .. message, vim.log.levels.INFO)
+  
+  -- Get git root to run commands in the correct directory
+  local git_root = utils.get_project_root()
+  if not git_root then
+    logger.error('create_baseline', 'No git root found')
+    vim.notify('DEBUG create_baseline: No git root found!', vim.log.levels.ERROR)
+    return nil
+  end
+  vim.notify('DEBUG create_baseline: Git root: ' .. git_root, vim.log.levels.INFO)
+  
+  -- Find the actual .git directory (could be in a parent directory)
+  local git_dir_cmd = string.format('cd "%s" && git rev-parse --git-dir', git_root)
+  local git_dir, git_dir_err = utils.exec(git_dir_cmd)
+  if git_dir_err or not git_dir then
+    logger.error('create_baseline', 'Failed to find .git directory', { error = git_dir_err })
+    vim.notify('DEBUG create_baseline: Failed to find .git directory', vim.log.levels.ERROR)
+    return nil
+  end
+  git_dir = git_dir:gsub('%s+', '')
+  
+  -- If git_dir is relative, make it absolute
+  if not git_dir:match('^/') then
+    git_dir = git_root .. '/' .. git_dir
+  end
+  
+  -- Create temporary index file with unique name
+  local temp_index = string.format('%s/nvim-claude-index-%s-%s', git_dir, os.time(), vim.fn.getpid())
+  
+  -- Add all files to temporary index (preserves user's staging area)
+  local add_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git add -A', git_root, temp_index)
+  vim.notify('DEBUG create_baseline: Running: ' .. add_cmd, vim.log.levels.INFO)
+  local add_result, add_err = utils.exec(add_cmd)
+  
+  logger.debug('create_baseline', 'Add all files to temp index', {
+    command = add_cmd,
+    temp_index = temp_index,
+    error = add_err,
+  })
+  
+  if add_err then
+    logger.error('create_baseline', 'Failed to add files to temp index', { error = add_err })
+    vim.notify('DEBUG create_baseline: Failed to add files: ' .. (add_err or 'unknown error'), vim.log.levels.ERROR)
+    os.remove(temp_index)
+    return nil
+  end
+  vim.notify('DEBUG create_baseline: Successfully added files to temp index', vim.log.levels.INFO)
+  
+  -- Create tree object from temp index
+  local tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree', git_root, temp_index)
+  vim.notify('DEBUG create_baseline: Running tree cmd: ' .. tree_cmd, vim.log.levels.INFO)
+  local tree_sha, tree_err = utils.exec(tree_cmd)
+  
+  logger.debug('create_baseline', 'Create tree from temp index', {
+    command = tree_cmd,
+    tree_sha = tree_sha,
+    error = tree_err,
+  })
+  
+  if tree_err or not tree_sha then
+    logger.error('create_baseline', 'Failed to create tree', { error = tree_err })
+    vim.notify('DEBUG create_baseline: Failed to create tree: ' .. (tree_err or 'no output'), vim.log.levels.ERROR)
+    os.remove(temp_index)
+    return nil
+  end
+  tree_sha = tree_sha:gsub('%s+', '')
+  vim.notify('DEBUG create_baseline: Tree SHA: ' .. tree_sha, vim.log.levels.INFO)
+  
+  -- Create commit object
+  local commit_cmd = string.format('cd "%s" && git commit-tree %s -m "%s"', git_root, tree_sha, message)
+  local commit_sha, commit_err = utils.exec(commit_cmd)
+  
+  logger.debug('create_baseline', 'Create commit object', {
+    command = commit_cmd,
+    commit_sha = commit_sha,
+    error = commit_err,
+  })
+  
+  if commit_err or not commit_sha then
+    logger.error('create_baseline', 'Failed to create commit', { error = commit_err })
+    os.remove(temp_index)
+    return nil
+  end
+  commit_sha = commit_sha:gsub('%s+', '')
+  
+  -- Store in custom ref
+  local ref_cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, commit_sha)
+  local _, ref_err = utils.exec(ref_cmd)
+  
+  logger.debug('create_baseline', 'Store commit in custom ref', {
+    command = ref_cmd,
+    commit_sha = commit_sha,
+    error = ref_err,
+  })
+  
+  if ref_err then
+    logger.error('create_baseline', 'Failed to update ref', { error = ref_err })
+    -- Continue anyway - we still have the commit SHA
+  end
+  
+  -- Clean up temp index
+  os.remove(temp_index)
+  
+  logger.info('create_baseline', 'Successfully created baseline', {
+    commit_sha = commit_sha,
+    tree_sha = tree_sha,
+    ref = 'refs/nvim-claude/baseline',
+  })
+  
+  return commit_sha
+end
+
 -- Clear saved state
 function M.clear_state()
   local state_file = M.get_state_file()
   if utils.file_exists(state_file) then
     os.remove(state_file)
   end
+  
+  -- Also clear the git ref
+  M.clear_baseline_ref()
 end
 
 -- Restore diffs from saved state
