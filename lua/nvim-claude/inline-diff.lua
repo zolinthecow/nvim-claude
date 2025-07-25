@@ -1268,6 +1268,9 @@ function M.list_diff_files()
   for relative_path, _ in pairs(hooks.claude_edited_files) do
     local full_path = git_root .. '/' .. relative_path
     
+    -- Check if file exists on disk
+    local file_exists = vim.fn.filereadable(full_path) == 1
+    
     -- Check if we have an open buffer for this file
     local bufnr = vim.fn.bufnr(full_path)
     local diff_data = nil
@@ -1281,6 +1284,7 @@ function M.list_diff_files()
       name = vim.fn.fnamemodify(full_path, ':t'),
       relative_path = relative_path,
       current_hunk = diff_data and diff_data.current_hunk or 1,
+      deleted = not file_exists,
     })
   end
 
@@ -1301,7 +1305,12 @@ function M.list_diff_files()
   for i, file_info in ipairs(files_with_diffs) do
     table.insert(items, file_info)
     local hunk_info = type(file_info.hunks) == 'number' and string.format('%d hunks, on hunk %d', file_info.hunks, file_info.current_hunk) or 'not opened yet'
-    table.insert(display_items, string.format('%s (%s)', file_info.relative_path, hunk_info))
+    local display_text = file_info.relative_path
+    if file_info.deleted then
+      display_text = '[DELETED] ' .. display_text
+      hunk_info = 'file deleted'
+    end
+    table.insert(display_items, string.format('%s (%s)', display_text, hunk_info))
   end
 
   -- Use vim.ui.select for a telescope-like experience
@@ -1313,12 +1322,46 @@ function M.list_diff_files()
   }, function(choice, idx)
     if choice and idx then
       local selected_file = items[idx]
-      vim.cmd('edit ' .. vim.fn.fnameescape(selected_file.path))
+      
+      if selected_file.deleted then
+        -- For deleted files, use the special handler
+        local hooks = require 'nvim-claude.hooks'
+        local persistence = require 'nvim-claude.inline-diff-persistence'
+        local baseline_ref = persistence.get_baseline_ref()
+        
+        if baseline_ref then
+          hooks.show_deleted_file_diff(selected_file.path, git_root, baseline_ref)
+        else
+          vim.notify('No baseline found for deleted file', vim.log.levels.ERROR)
+        end
+      else
+        -- Normal file - check if it still exists
+        if vim.fn.filereadable(selected_file.path) == 0 then
+          -- File was deleted outside of Claude, untrack it
+          vim.notify('File no longer exists: ' .. selected_file.relative_path, vim.log.levels.WARN)
+          
+          -- Untrack the file
+          local hooks = require 'nvim-claude.hooks'
+          hooks.claude_edited_files[selected_file.relative_path] = nil
+          
+          -- Save the updated state
+          local persistence = require 'nvim-claude.inline-diff-persistence'
+          persistence.save_state({
+            stash_ref = persistence.get_baseline_ref(),
+            claude_edited_files = hooks.claude_edited_files
+          })
+          
+          vim.notify('File has been untracked', vim.log.levels.INFO)
+        else
+          -- File exists, open it normally
+          vim.cmd('edit ' .. vim.fn.fnameescape(selected_file.path))
 
-      -- Jump to the current hunk in the selected file if it has an active diff
-      local bufnr = vim.fn.bufnr(selected_file.path)
-      if bufnr > 0 and M.active_diffs[bufnr] then
-        M.jump_to_hunk(bufnr, M.active_diffs[bufnr].current_hunk)
+          -- Jump to the current hunk in the selected file if it has an active diff
+          local bufnr = vim.fn.bufnr(selected_file.path)
+          if bufnr > 0 and M.active_diffs[bufnr] then
+            M.jump_to_hunk(bufnr, M.active_diffs[bufnr].current_hunk)
+          end
+        end
       end
     end
   end)

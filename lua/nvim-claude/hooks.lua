@@ -163,9 +163,9 @@ function M.update_baseline_for_file(relative_path, git_root)
   end
 
   -- Use simpler approach with temporary index
+  local temp_dir = '/tmp/nvim-claude-baseline-' .. os.time() .. '-' .. math.random(10000)
   local success = pcall(function()
-    -- Create a unique temporary directory
-    local temp_dir = '/tmp/nvim-claude-baseline-' .. os.time() .. '-' .. math.random(10000)
+    -- Create temporary directory
     vim.fn.mkdir(temp_dir, 'p')
 
     -- Set up temporary index file
@@ -212,8 +212,7 @@ function M.update_baseline_for_file(relative_path, git_root)
     end
     new_commit_hash = new_commit_hash:gsub('%s+$', '')
 
-    -- Cleanup temporary directory
-    vim.fn.delete(temp_dir, 'rf')
+    -- Cleanup is done after pcall
 
     -- Validate before updating baseline reference
     if new_commit_hash:match 'fatal:' or new_commit_hash:match 'error:' then
@@ -231,10 +230,13 @@ function M.update_baseline_for_file(relative_path, git_root)
     }
   end)
 
-  -- Clean up temp file
-  os.remove(temp_file)
+  -- Clean up temp directory
+  if vim.fn.isdirectory(temp_dir) == 1 then
+    vim.fn.delete(temp_dir, 'rf')
+  end
 
   if not success then
+    logger.error('update_baseline_for_file', 'Failed to update baseline')
   end
 end
 
@@ -322,6 +324,113 @@ function M.post_tool_use_hook(file_path)
   end
 end
 
+-- Track a file deletion (called from bash hook wrapper)
+function M.track_deleted_file(file_path)
+  local utils = require 'nvim-claude.utils'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+  
+  -- Get git root
+  local git_root = utils.get_project_root()
+  if not git_root then
+    return false
+  end
+  
+  -- Convert to relative path
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  
+  logger.info('track_deleted_file', 'Tracking deleted file', {
+    file_path = file_path,
+    relative_path = relative_path,
+  })
+  
+  -- Always create or update baseline before deletion to ensure we capture the file's state
+  local baseline_ref = persistence.get_baseline_ref()
+  if not baseline_ref then
+    logger.info('track_deleted_file', 'No baseline exists, creating one')
+    local new_baseline = persistence.create_baseline('Baseline for deletion tracking')
+    if new_baseline then
+      baseline_ref = new_baseline
+      logger.info('track_deleted_file', 'Created baseline', { baseline_ref = baseline_ref })
+    else
+      logger.error('track_deleted_file', 'Failed to create baseline')
+      return
+    end
+  else
+    -- Baseline exists, but we should update it to include the current state of the file
+    -- This ensures we capture the file content right before deletion
+    logger.info('track_deleted_file', 'Updating baseline before deletion', { file = relative_path })
+    M.update_baseline_for_file(relative_path, git_root)
+    -- Get the updated baseline ref
+    baseline_ref = persistence.get_baseline_ref()
+  end
+  
+  -- Check if file exists in baseline
+  if baseline_ref then
+    local check_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, baseline_ref, relative_path)
+    local baseline_content, err = utils.exec(check_cmd)
+    
+    if not err and baseline_content and not baseline_content:match('^fatal:') then
+      -- File exists in baseline, track it as edited
+      M.claude_edited_files[relative_path] = true
+      M.session_edited_files[relative_path] = true
+      
+      -- Save to persistence
+      persistence.save_state {
+        stash_ref = baseline_ref,
+        claude_edited_files = M.claude_edited_files,
+      }
+      
+      logger.info('track_deleted_file', 'File tracked as deleted', {
+        relative_path = relative_path,
+        had_baseline = true,
+      })
+    else
+      logger.info('track_deleted_file', 'File not in baseline, not tracking', {
+        relative_path = relative_path,
+      })
+    end
+  end
+  
+  return true  -- Return true so nvr doesn't complain
+end
+
+-- Untrack a file whose deletion failed (called from bash post-hook)
+function M.untrack_failed_deletion(file_path)
+  local utils = require 'nvim-claude.utils'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+  
+  -- Get git root
+  local git_root = utils.get_project_root()
+  if not git_root then
+    return false
+  end
+  
+  -- Convert to relative path
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  
+  logger.info('untrack_failed_deletion', 'Untracking file whose deletion failed', {
+    file_path = file_path,
+    relative_path = relative_path,
+  })
+  
+  -- Remove from tracking if it was tracked
+  if M.claude_edited_files[relative_path] then
+    M.claude_edited_files[relative_path] = nil
+    
+    -- Save updated state
+    persistence.save_state({
+      stash_ref = persistence.get_baseline_ref(),
+      claude_edited_files = M.claude_edited_files
+    })
+    
+    logger.info('untrack_failed_deletion', 'File untracked', {
+      relative_path = relative_path,
+    })
+  end
+  
+  return true
+end
+
 -- Helper function to show inline diff for a file
 function M.show_inline_diff_for_file(buf, file, git_root, stash_ref, preserve_cursor)
   local utils = require 'nvim-claude.utils'
@@ -366,6 +475,167 @@ function M.show_inline_diff_for_file(buf, file, git_root, stash_ref, preserve_cu
   -- Show inline diff (empty baseline will show entire file as additions)
   local opts = preserve_cursor and { preserve_cursor = true } or {}
   inline_diff.show_inline_diff(buf, original_content, current_content, opts)
+  return true
+end
+
+-- Show diff for a deleted file
+function M.show_deleted_file_diff(file_path, git_root, baseline_ref)
+  local inline_diff = require 'nvim-claude.inline-diff'
+  local utils = require 'nvim-claude.utils'
+  local logger = require 'nvim-claude.logger'
+  
+  logger.info('show_deleted_file_diff', 'Showing diff for deleted file', { file = file_path })
+  
+  -- Get the relative path
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  
+  -- Get baseline content
+  local cmd = string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, baseline_ref, relative_path)
+  local original_content, git_err = utils.exec(cmd)
+  
+  -- Check for git error messages
+  if git_err or not original_content or original_content:match('^fatal:') or original_content:match('^error:') then
+    logger.warn('show_deleted_file_diff', 'Failed to get baseline content for deleted file', {
+      git_err = git_err,
+      original_content = original_content,
+      file = relative_path
+    })
+    vim.notify('Failed to get baseline content for deleted file: ' .. relative_path, vim.log.levels.ERROR)
+    return false
+  end
+  
+  -- Create a new buffer with the baseline content
+  local buf = vim.api.nvim_create_buf(false, true) -- nofile, scratch buffer
+  
+  -- Set buffer options
+  vim.api.nvim_buf_set_option(buf, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
+  vim.api.nvim_buf_set_option(buf, 'swapfile', false)
+  
+  -- Set the buffer name to show it's deleted
+  vim.api.nvim_buf_set_name(buf, file_path .. ' [DELETED]')
+  
+  -- Set buffer lines to baseline content
+  local lines = vim.split(original_content, '\n', { plain = true })
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  
+  -- Open the buffer in current window
+  vim.api.nvim_set_current_buf(buf)
+  
+  -- Highlight all lines as deleted (red) using extmarks
+  local line_count = vim.api.nvim_buf_line_count(buf)
+  local ns_id = vim.api.nvim_create_namespace('nvim-claude-deleted')
+  
+  -- Get window width for padding
+  local win_width = vim.api.nvim_win_get_width(0)
+  
+  for i = 0, line_count - 1 do
+    local line_text = lines[i + 1] or ''
+    local line_display_width = vim.fn.strdisplaywidth(line_text)
+    local padding_needed = math.max(0, win_width - line_display_width)
+    
+    -- Highlight the entire line including EOL
+    vim.api.nvim_buf_set_extmark(buf, ns_id, i, 0, {
+      end_line = i + 1,
+      end_col = 0,
+      hl_group = 'DiffDelete',
+      hl_eol = true,
+      priority = 1000
+    })
+  end
+  
+  -- Add a sign to show it's deleted
+  vim.fn.sign_define('NvimClaudeDeleted', { text = 'X', texthl = 'DiffDelete' })
+  for i = 1, line_count do
+    vim.fn.sign_place(0, 'nvim-claude-deleted', 'NvimClaudeDeleted', buf, { lnum = i })
+  end
+  
+  -- Make buffer non-modifiable
+  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
+  
+  -- Set up keymap to restore the file (reject deletion)
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<leader>ir', '', {
+    callback = function()
+      -- Restore the file by writing the baseline content
+      vim.fn.mkdir(vim.fn.fnamemodify(file_path, ':h'), 'p')
+      
+      -- Get the content from the current buffer
+      local buf_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      local content_to_restore = table.concat(buf_lines, '\n')
+      if content_to_restore ~= '' and not content_to_restore:match('\n$') then
+        content_to_restore = content_to_restore .. '\n'
+      end
+      
+      utils.write_file(file_path, content_to_restore)
+      
+      -- Remove from tracking
+      M.claude_edited_files[relative_path] = nil
+      local persistence = require('nvim-claude.inline-diff-persistence')
+      persistence.save_state({
+        stash_ref = persistence.get_baseline_ref(),
+        claude_edited_files = M.claude_edited_files
+      })
+      
+      -- Close the deleted file buffer and open the restored file
+      local deleted_buf = vim.api.nvim_get_current_buf()
+      -- First open the restored file
+      vim.cmd('edit ' .. vim.fn.fnameescape(file_path))
+      -- Then delete the old buffer (if it still exists and is valid)
+      if vim.api.nvim_buf_is_valid(deleted_buf) then
+        vim.api.nvim_buf_delete(deleted_buf, { force = true })
+      end
+      
+      vim.notify('File restored: ' .. relative_path, vim.log.levels.INFO)
+    end,
+    desc = 'Restore deleted file (reject deletion)',
+    noremap = true,
+    silent = true
+  })
+  
+  -- Set up keymap to accept the deletion
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<leader>ia', '', {
+    callback = function()
+      -- Accept deletion - just remove from tracking
+      M.claude_edited_files[relative_path] = nil
+      local persistence = require('nvim-claude.inline-diff-persistence')
+      persistence.save_state({
+        stash_ref = persistence.get_baseline_ref(),
+        claude_edited_files = M.claude_edited_files
+      })
+      
+      -- Close the buffer
+      local current_buf = vim.api.nvim_get_current_buf()
+      vim.api.nvim_buf_delete(current_buf, { force = true })
+      
+      vim.notify('Deletion accepted for: ' .. relative_path, vim.log.levels.INFO)
+    end,
+    desc = 'Accept file deletion',
+    noremap = true,
+    silent = true
+  })
+  
+  -- Also support <leader>iA and <leader>IA for consistency
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<leader>iA', '', {
+    callback = function()
+      vim.cmd('normal! \\<leader>ia')
+    end,
+    desc = 'Accept file deletion',
+    noremap = true,
+    silent = true
+  })
+  
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<leader>IA', '', {
+    callback = function()
+      vim.cmd('normal! \\<leader>ia')
+    end,
+    desc = 'Accept file deletion',
+    noremap = true,
+    silent = true
+  })
+  
+  -- Show help message
+  vim.notify('File was deleted. Press <leader>ia to accept deletion or <leader>ir to restore.', vim.log.levels.WARN)
+  
   return true
 end
 
@@ -469,6 +739,8 @@ function M.install_hooks()
   local pre_command = plugin_dir .. '/scripts/pre-hook-wrapper.sh'
   local post_command = plugin_dir .. '/scripts/post-hook-wrapper.sh'
   local stop_command = plugin_dir .. '/scripts/stop-hook-validator.sh'
+  local bash_command = plugin_dir .. '/scripts/bash-hook-wrapper.sh'
+  local bash_post_command = plugin_dir .. '/scripts/bash-post-hook-wrapper.sh'
 
   -- We'll merge these hooks into existing configuration
 
@@ -487,14 +759,13 @@ function M.install_hooks()
   existing_settings.hooks.Stop = existing_settings.hooks.Stop or {}
 
   -- Helper function to add hook to a specific tool use section
-  local function add_hook_to_section(section, command, needs_matcher)
-    local matcher = needs_matcher and 'Edit|Write|MultiEdit' or nil
+  local function add_hook_to_section(section, command, matcher)
     local hook = {
       type = 'command',
       command = command,
     }
 
-    if needs_matcher then
+    if matcher then
       -- For PreToolUse/PostToolUse - need matcher
       -- Find existing matcher or create new one
       local matcher_found = false
@@ -556,9 +827,11 @@ function M.install_hooks()
   end
 
   -- Add our hooks
-  add_hook_to_section(existing_settings.hooks.PreToolUse, pre_command, true)
-  add_hook_to_section(existing_settings.hooks.PostToolUse, post_command, true)
-  add_hook_to_section(existing_settings.hooks.Stop, stop_command, false)
+  add_hook_to_section(existing_settings.hooks.PreToolUse, pre_command, 'Edit|Write|MultiEdit')
+  add_hook_to_section(existing_settings.hooks.PostToolUse, post_command, 'Edit|Write|MultiEdit')
+  add_hook_to_section(existing_settings.hooks.PreToolUse, bash_command, 'Bash')
+  add_hook_to_section(existing_settings.hooks.PostToolUse, bash_post_command, 'Bash')
+  add_hook_to_section(existing_settings.hooks.Stop, stop_command, nil)
 
   -- Write merged configuration
   local success, err = utils.write_json(settings_file, existing_settings)

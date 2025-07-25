@@ -226,5 +226,109 @@ The flow is: Claude edits → Hooks capture → Baseline created/updated → Dif
 - **Persistence issues**: Check both baseline references are in sync
 - **New file issues**: Look for error message handling in baseline retrieval
 
+### Hook Debugging Methodology
+
+When hooks aren't working as expected, follow this step-by-step debugging process:
+
+#### 1. Check the Hook Logs
+```bash
+# View recent hook activity
+tail -50 ~/.local/share/nvim/nvim-claude-hooks.log
+
+# Search for specific file or command
+tail -100 ~/.local/share/nvim/nvim-claude-hooks.log | grep -A5 -B5 "filename"
+```
+
+#### 2. Test nvr Commands Manually
+Before debugging complex hook flows, test individual components:
+
+```bash
+# Test basic nvr connectivity
+./scripts/nvr-proxy.sh --remote-expr "1+1"
+
+# Test luaeval syntax
+./scripts/nvr-proxy.sh --remote-expr 'luaeval("1+1")'
+
+# Test requiring a module
+./scripts/nvr-proxy.sh --remote-expr 'luaeval("require(\"nvim-claude.hooks\")")'
+
+# Test specific functions (with TARGET_FILE for correct project)
+TARGET_FILE="/path/to/file" ./scripts/nvr-proxy.sh --remote-expr 'luaeval("require(\"nvim-claude.hooks\").some_function()")'
+```
+
+#### 3. Debug Hook Command Construction
+If hooks are failing, manually construct and test the exact command:
+
+```bash
+# Example: Test what the bash hook would send
+ABS_PATH="/path/to/file"
+ABS_PATH_ESCAPED=$(echo "$ABS_PATH" | sed "s/\\\\/\\\\\\\\/g" | sed "s/'/\\\\'/g")
+echo "Escaped path: $ABS_PATH_ESCAPED"
+TARGET_FILE="$ABS_PATH" ./scripts/nvr-proxy.sh --remote-expr "luaeval(\"require('nvim-claude.hooks').track_deleted_file('$ABS_PATH_ESCAPED')\")"
+```
+
+#### 4. Check Module Loading
+If functions appear to not exist:
+
+```bash
+# Force reload module and test
+./scripts/nvr-proxy.sh -c "lua package.loaded['nvim-claude.hooks'] = nil; require('nvim-claude.hooks')"
+
+# Check if function exists
+./scripts/nvr-proxy.sh --remote-expr "luaeval(\"type(require('nvim-claude.hooks').function_name)\")"
+```
+
+#### 5. Trace Execution Flow
+When debugging complex issues like deletion tracking:
+
+1. **Verify hook is called**: Check logs for "Hook called at"
+2. **Check command parsing**: Look for "Detected rm command" or similar
+3. **Verify nvr execution**: Look for "Calling nvr-proxy with:"
+4. **Check return values**: Look for exit codes and output
+5. **Verify state changes**: Check `claude_edited_files` and baseline refs
+
+```bash
+# Check current state
+./scripts/nvr-proxy.sh --remote-expr "luaeval(\"vim.inspect(require('nvim-claude.hooks').claude_edited_files)\")"
+./scripts/nvr-proxy.sh --remote-expr "luaeval(\"require('nvim-claude.inline-diff-persistence').get_baseline_ref()\")"
+```
+
+#### 6. Common Hook Issues and Solutions
+
+**"No valid expression" errors**:
+- Usually means syntax error in the luaeval expression
+- Check quoting and escaping
+- Test simpler expressions first
+
+**Function not found errors**:
+- Module might not be loaded/reloaded
+- Function might not be exported (check `return M` at end of module)
+- Typo in function name
+
+**Baseline not updating**:
+- Check if baseline ref is valid: `git cat-file -t <ref>`
+- Verify git commands aren't failing silently
+- Check temp file/directory cleanup issues
+
+**Files not being tracked**:
+- Verify pre-hook creates/updates baseline
+- Check if file exists in baseline
+- Ensure relative paths are calculated correctly
+
+#### 7. Hook Testing Workflow
+```bash
+# 1. Make changes to hook-related code
+# 2. Reload plugin in Neovim
+:source lua/nvim-claude/init.lua
+
+# 3. Create test file through Claude (to trigger pre-hook)
+# 4. Check logs immediately
+tail -20 ~/.local/share/nvim/nvim-claude-hooks.log
+
+# 5. Test the specific operation (edit/delete)
+# 6. Verify state changes
+:lua vim.inspect(require('nvim-claude.hooks').claude_edited_files)
+```
+
 ## Coding Guidelines
 - Always use single quotes instead of double quotes.
