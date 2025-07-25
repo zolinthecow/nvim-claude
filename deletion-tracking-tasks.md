@@ -23,7 +23,7 @@ Add support for tracking, displaying, and reverting files deleted by Claude usin
     - `rm -f file1.txt file2.txt` - multiple files
     - `rm *.txt` - glob patterns (need to expand)
   - For each deleted file:
-    - Check if file existed in baseline stash
+    - Check if file existed in baseline
     - Add to `claude_edited_files` map (same as edited files)
     - Add to `session_edited_files` for stop hook
   - Save persistence state
@@ -49,7 +49,7 @@ Add support for tracking, displaying, and reverting files deleted by Claude usin
   - Detect when file doesn't exist
   - Create scratch buffer: `vim.api.nvim_create_buf(false, true)`
   - Set appropriate buffer name
-  - Get baseline content from stash
+  - Get baseline content from baseline commit
   - Call `show_inline_diff()` with baseline content and empty string
   - This will show entire file as red deletions
 
@@ -61,7 +61,7 @@ Add support for tracking, displaying, and reverting files deleted by Claude usin
 
 ### 7. Handle Edge Cases
 - [ ] Directory deletions (`rm -rf dir/`):
-  - Need to list all files in directory from baseline stash
+  - Need to list all files in directory from baseline commit
   - Track each file individually
 - [ ] Glob patterns (`rm *.txt`):
   - Option 1: Run the glob in a safe way to see what would be deleted
@@ -82,9 +82,6 @@ Add support for tracking, displaying, and reverting files deleted by Claude usin
 
 ## Technical Considerations
 
-### Debug Test Edit
-Testing baseline creation after accepting all changes.
-
 ### Command Parsing Strategy
 ```bash
 # Extract command from JSON
@@ -104,6 +101,7 @@ For commands like `rm *.txt`, we need to:
 
 ### Performance
 - Parsing bash commands adds overhead to every bash operation
+- The git commit-based baseline system is fast for content retrieval
 - Consider caching baseline file listings for faster deletion detection
 - Batch multiple deletions in same command
 
