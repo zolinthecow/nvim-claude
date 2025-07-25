@@ -1324,29 +1324,43 @@ function M.list_diff_files()
       local selected_file = items[idx]
       
       if selected_file.deleted then
-        -- For deleted files, we need to create a scratch buffer
+        -- For deleted files, use the special handler
         local hooks = require 'nvim-claude.hooks'
         local persistence = require 'nvim-claude.inline-diff-persistence'
+        local baseline_ref = persistence.get_baseline_ref()
         
-        -- Create a scratch buffer
-        local bufnr = vim.api.nvim_create_buf(false, true)
-        vim.api.nvim_buf_set_name(bufnr, selected_file.path .. ' [DELETED]')
-        
-        -- Switch to the buffer
-        vim.api.nvim_set_current_buf(bufnr)
-        
-        -- Show the deletion diff
-        vim.defer_fn(function()
-          hooks.show_inline_diff_for_file(bufnr, selected_file.relative_path, git_root, persistence.get_baseline_ref())
-        end, 50)
+        if baseline_ref then
+          hooks.show_deleted_file_diff(selected_file.path, git_root, baseline_ref)
+        else
+          vim.notify('No baseline found for deleted file', vim.log.levels.ERROR)
+        end
       else
-        -- Normal file - just open it
-        vim.cmd('edit ' .. vim.fn.fnameescape(selected_file.path))
+        -- Normal file - check if it still exists
+        if vim.fn.filereadable(selected_file.path) == 0 then
+          -- File was deleted outside of Claude, untrack it
+          vim.notify('File no longer exists: ' .. selected_file.relative_path, vim.log.levels.WARN)
+          
+          -- Untrack the file
+          local hooks = require 'nvim-claude.hooks'
+          hooks.claude_edited_files[selected_file.relative_path] = nil
+          
+          -- Save the updated state
+          local persistence = require 'nvim-claude.inline-diff-persistence'
+          persistence.save_state({
+            stash_ref = persistence.get_baseline_ref(),
+            claude_edited_files = hooks.claude_edited_files
+          })
+          
+          vim.notify('File has been untracked', vim.log.levels.INFO)
+        else
+          -- File exists, open it normally
+          vim.cmd('edit ' .. vim.fn.fnameescape(selected_file.path))
 
-        -- Jump to the current hunk in the selected file if it has an active diff
-        local bufnr = vim.fn.bufnr(selected_file.path)
-        if bufnr > 0 and M.active_diffs[bufnr] then
-          M.jump_to_hunk(bufnr, M.active_diffs[bufnr].current_hunk)
+          -- Jump to the current hunk in the selected file if it has an active diff
+          local bufnr = vim.fn.bufnr(selected_file.path)
+          if bufnr > 0 and M.active_diffs[bufnr] then
+            M.jump_to_hunk(bufnr, M.active_diffs[bufnr].current_hunk)
+          end
         end
       end
     end
