@@ -46,6 +46,45 @@ function M.setup(claude_module)
     complete = function() return {} end
   })
   
+  -- Checkpoint commands
+  vim.api.nvim_create_user_command('ClaudeCheckpoints', function()
+    M.open_checkpoints()
+  end, {
+    desc = 'Open checkpoint browser'
+  })
+  
+  vim.api.nvim_create_user_command('ClaudeCheckpointCreate', function(opts)
+    M.create_checkpoint(opts.args)
+  end, {
+    desc = 'Create a checkpoint manually',
+    nargs = '?'
+  })
+  
+  vim.api.nvim_create_user_command('ClaudeCheckpointRestore', function(opts)
+    M.restore_checkpoint(opts.args)
+  end, {
+    desc = 'Restore a specific checkpoint',
+    nargs = 1
+  })
+  
+  vim.api.nvim_create_user_command('ClaudeCheckpointStatus', function()
+    M.checkpoint_status()
+  end, {
+    desc = 'Show current checkpoint status'
+  })
+  
+  vim.api.nvim_create_user_command('ClaudeCheckpointAccept', function()
+    M.accept_checkpoint()
+  end, {
+    desc = 'Accept current preview checkpoint'
+  })
+  
+  vim.api.nvim_create_user_command('ClaudeCheckpointReturn', function()
+    M.return_from_checkpoint()
+  end, {
+    desc = 'Return to original state (exit preview)'
+  })
+  
   -- ClaudeAgents command
   vim.api.nvim_create_user_command('ClaudeAgents', function()
     M.list_agents()
@@ -1812,6 +1851,98 @@ function M.diff_agent(agent_id)
         original_cwd
       ), vim.log.levels.INFO)
     end
+  end
+end
+
+-- Checkpoint commands
+
+-- Open checkpoint browser
+function M.open_checkpoints()
+  local checkpoint = require('nvim-claude.checkpoint')
+  local checkpoints = checkpoint.list_checkpoints()
+  
+  if #checkpoints == 0 then
+    vim.notify('No checkpoints found', vim.log.levels.INFO)
+    return
+  end
+  
+  -- TODO: Implement telescope picker
+  -- For now, use basic vim.ui.select
+  local items = {}
+  for _, cp in ipairs(checkpoints) do
+    local date = os.date('%Y-%m-%d %H:%M:%S', cp.timestamp)
+    table.insert(items, string.format('%s | %s', date, cp.prompt))
+  end
+  
+  vim.ui.select(items, {
+    prompt = 'Select checkpoint to restore:',
+  }, function(choice, idx)
+    if choice and idx then
+      checkpoint.restore_checkpoint(checkpoints[idx].id)
+    end
+  end)
+end
+
+-- Create checkpoint manually
+function M.create_checkpoint(message)
+  local checkpoint = require('nvim-claude.checkpoint')
+  local checkpoint_id = checkpoint.create_checkpoint(message or 'Manual checkpoint')
+  
+  if checkpoint_id then
+    vim.notify('Created checkpoint: ' .. checkpoint_id, vim.log.levels.INFO)
+  else
+    vim.notify('Failed to create checkpoint', vim.log.levels.ERROR)
+  end
+end
+
+-- Restore specific checkpoint
+function M.restore_checkpoint(checkpoint_id)
+  local checkpoint = require('nvim-claude.checkpoint')
+  if checkpoint.restore_checkpoint(checkpoint_id) then
+    vim.notify('Restored checkpoint: ' .. checkpoint_id, vim.log.levels.INFO)
+  else
+    vim.notify('Failed to restore checkpoint', vim.log.levels.ERROR)
+  end
+end
+
+-- Show checkpoint status
+function M.checkpoint_status()
+  local checkpoint = require('nvim-claude.checkpoint')
+  
+  if checkpoint.is_preview_mode() then
+    local state = checkpoint.load_state()
+    vim.notify(string.format(
+      'Preview mode active\nCheckpoint: %s\nOriginal ref: %s\nStash: %s',
+      state.preview_checkpoint,
+      state.original_ref,
+      state.preview_stash or 'none'
+    ), vim.log.levels.INFO)
+  else
+    local checkpoints = checkpoint.list_checkpoints()
+    vim.notify(string.format(
+      'Working mode\nTotal checkpoints: %d',
+      #checkpoints
+    ), vim.log.levels.INFO)
+  end
+end
+
+-- Accept current checkpoint
+function M.accept_checkpoint()
+  local checkpoint = require('nvim-claude.checkpoint')
+  if checkpoint.accept_checkpoint() then
+    vim.notify('Checkpoint accepted', vim.log.levels.INFO)
+  else
+    vim.notify('Not in preview mode', vim.log.levels.WARN)
+  end
+end
+
+-- Return from checkpoint
+function M.return_from_checkpoint()
+  local checkpoint = require('nvim-claude.checkpoint')
+  if checkpoint.exit_preview_mode() then
+    vim.notify('Returned to original state', vim.log.levels.INFO)
+  else
+    vim.notify('Not in preview mode', vim.log.levels.WARN)
   end
 end
 

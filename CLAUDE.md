@@ -332,3 +332,8 @@ tail -20 ~/.local/share/nvim/nvim-claude-hooks.log
 
 ## Coding Guidelines
 - Always use single quotes instead of double quotes.
+
+### Important Hints for Claude Code
+- Hooks and anything passing strings to luaeval should use our base64 encoding strategy
+
+```

@@ -48,12 +48,12 @@ if [[ "$COMMAND" =~ ^rm[[:space:]] ]]; then
                 if [ -e "$ABS_PATH" ]; then
                     echo "[bash-hook-wrapper] File exists, will be deleted: $ABS_PATH" >> "$LOG_FILE"
                     
-                    # Escape the path for Lua
-                    ABS_PATH_ESCAPED=$(echo "$ABS_PATH" | sed "s/\\\\/\\\\\\\\/g" | sed "s/'/\\\\'/g")
+                    # Base64 encode the path to avoid escaping issues
+                    ABS_PATH_B64=$(echo -n "$ABS_PATH" | base64)
                     
                     # Send notification to Neovim using nvr-proxy
-                    echo "[bash-hook-wrapper] Calling nvr-proxy with: $ABS_PATH_ESCAPED" >> "$LOG_FILE"
-                    TARGET_FILE="$ABS_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').track_deleted_file('$ABS_PATH_ESCAPED')\")" 2>&1 | tee -a "$LOG_FILE"
+                    echo "[bash-hook-wrapper] Calling nvr-proxy with base64 encoded path" >> "$LOG_FILE"
+                    TARGET_FILE="$ABS_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').track_deleted_file_b64('$ABS_PATH_B64')\")" 2>&1 | tee -a "$LOG_FILE"
                     echo "[bash-hook-wrapper] nvr-proxy exit code: $?" >> "$LOG_FILE"
                 else
                     echo "[bash-hook-wrapper] File doesn't exist: $ABS_PATH" >> "$LOG_FILE"

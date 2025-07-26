@@ -463,8 +463,6 @@ function M.apply_patch_to_content(content, patch)
   if not err then
     -- Patch applied successfully, read the result
     patched_content = utils.read_file(temp_file)
-  else
-    -- Patch failed, return nil
   end
 
   -- Cleanup
@@ -597,6 +595,11 @@ function M.accept_current_hunk(bufnr)
   -- Check for git error messages that indicate file doesn't exist in stash
   if git_err or not baseline_content or baseline_content:match('^fatal:') or baseline_content:match('^error:') then
     baseline_content = '' -- Treat as new file
+  else
+    -- Ensure baseline content ends with a newline for proper diff/patch handling
+    if baseline_content ~= '' and not baseline_content:match('\n$') then
+      baseline_content = baseline_content .. '\n'
+    end
   end
 
   -- Step 3: Apply patch to baseline
@@ -607,15 +610,18 @@ function M.accept_current_hunk(bufnr)
   end
 
   -- Step 4: Update baseline stash with patched content
-  local success = M.update_baseline_with_content(git_root, relative_path, updated_baseline_content, stash_ref)
+  local success, err = pcall(function()
+    return M.update_baseline_with_content(git_root, relative_path, updated_baseline_content, stash_ref)
+  end)
   if not success then
-    vim.notify('Failed to update baseline stash', vim.log.levels.ERROR)
+    vim.notify('Failed to update baseline stash: ' .. tostring(err), vim.log.levels.ERROR)
     return
   end
 
   -- Step 5: Recompute diff against updated baseline
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local current_content = table.concat(current_lines, '\n')
+  
   local new_diff_data = M.compute_diff(updated_baseline_content, current_content)
 
   -- Step 6: Update state based on remaining hunks

@@ -5,6 +5,11 @@
 # Log file location
 LOG_FILE="${HOME}/.local/share/nvim/nvim-claude-hooks.log"
 
+# Simple logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+}
+
 # Function to send commands to Neovim
 send_to_nvim() {
     local lua_cmd="$1"

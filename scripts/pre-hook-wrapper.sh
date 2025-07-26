@@ -13,12 +13,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Call the proxy script with the file path
 if [ -n "$FILE_PATH" ]; then
-    # Escape single quotes and backslashes in file path for Lua
-    FILE_PATH_ESCAPED=$(echo "$FILE_PATH" | sed "s/\\\\/\\\\\\\\/g" | sed "s/'/\\\\'/g")
-    # Execute the pre-hook with file path
-    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').pre_tool_use_hook('$FILE_PATH_ESCAPED')\")"
+    # Base64 encode the file path to avoid escaping issues
+    FILE_PATH_B64=$(echo -n "$FILE_PATH" | base64)
+    # Execute the pre-hook with base64 encoded file path
+    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').pre_tool_use_hook_b64('$FILE_PATH_B64')\")"
 else
-    "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr 'luaeval("require(\"nvim-claude.hooks\").pre_tool_use_hook()")'
+    "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr 'luaeval("require(\"nvim-claude.hooks\").pre_tool_use_hook_b64()")'
 fi
 
 # Return the exit code from nvr

@@ -50,6 +50,72 @@ function M.pre_tool_use_hook_test()
   return true
 end
 
+-- User prompt submit hook: Create checkpoint before Claude processes message
+function M.user_prompt_submit_hook(prompt)
+  local checkpoint = require('nvim-claude.checkpoint')
+  
+  -- Exit preview mode if we're in it
+  if checkpoint.is_preview_mode() then
+    checkpoint.accept_checkpoint()
+  end
+  
+  -- Create checkpoint with prompt
+  local checkpoint_id = checkpoint.create_checkpoint(prompt)
+  if checkpoint_id then
+    logger.info('user_prompt_submit_hook', 'Created checkpoint', {
+      checkpoint_id = checkpoint_id,
+      prompt_preview = prompt and prompt:sub(1, 50) or 'No prompt'
+    })
+  else
+    logger.warn('user_prompt_submit_hook', 'Failed to create checkpoint')
+  end
+  
+  return true
+end
+
+-- Base64 version of user prompt submit hook
+function M.user_prompt_submit_hook_b64(prompt_b64)
+  -- Decode base64 - properly quote the string
+  local decoded = vim.fn.system('echo -n "' .. prompt_b64 .. '" | base64 -d')
+  -- Remove trailing newline if any
+  decoded = decoded:gsub('\n$', '')
+  return M.user_prompt_submit_hook(decoded)
+end
+
+-- Base64 version of pre_tool_use_hook
+function M.pre_tool_use_hook_b64(file_path_b64)
+  if not file_path_b64 or file_path_b64 == '' then
+    return M.pre_tool_use_hook()
+  end
+  local decoded = vim.fn.system('echo -n "' .. file_path_b64 .. '" | base64 -d')
+  decoded = decoded:gsub('\n$', '')
+  return M.pre_tool_use_hook(decoded)
+end
+
+-- Base64 version of post_tool_use_hook
+function M.post_tool_use_hook_b64(file_path_b64)
+  if not file_path_b64 or file_path_b64 == '' then
+    return M.post_tool_use_hook()
+  end
+  local decoded = vim.fn.system('echo -n "' .. file_path_b64 .. '" | base64 -d')
+  decoded = decoded:gsub('\n$', '')
+  return M.post_tool_use_hook(decoded)
+end
+
+-- Base64 version of track_deleted_file
+function M.track_deleted_file_b64(file_path_b64)
+  local decoded = vim.fn.system('echo -n "' .. file_path_b64 .. '" | base64 -d')
+  decoded = decoded:gsub('\n$', '')
+  return M.track_deleted_file(decoded)
+end
+
+-- Base64 version of untrack_failed_deletion
+function M.untrack_failed_deletion_b64(file_path_b64)
+  local decoded = vim.fn.system('echo -n "' .. file_path_b64 .. '" | base64 -d')
+  decoded = decoded:gsub('\n$', '')
+  return M.untrack_failed_deletion(decoded)
+end
+
 -- Per-file baseline management pre-hook
 function M.pre_tool_use_hook(file_path)
   local utils = require 'nvim-claude.utils'
@@ -826,6 +892,11 @@ function M.install_hooks()
     end
   end
 
+  -- Add user prompt submit hook
+  local user_prompt_command = plugin_dir .. '/scripts/user-prompt-hook-wrapper.sh'
+  existing_settings.hooks.UserPromptSubmit = existing_settings.hooks.UserPromptSubmit or {}
+  add_hook_to_section(existing_settings.hooks.UserPromptSubmit, user_prompt_command, nil)
+  
   -- Add our hooks
   add_hook_to_section(existing_settings.hooks.PreToolUse, pre_command, 'Edit|Write|MultiEdit')
   add_hook_to_section(existing_settings.hooks.PostToolUse, post_command, 'Edit|Write|MultiEdit')
@@ -976,9 +1047,21 @@ function M.uninstall_hooks()
           existing_settings.hooks.Stop = nil
         end
       end
+      
+      -- Remove from UserPromptSubmit
+      local user_prompt_command = plugin_dir .. '/scripts/user-prompt-hook-wrapper.sh'
+      if existing_settings.hooks.UserPromptSubmit then
+        if remove_hooks_from_section(existing_settings.hooks.UserPromptSubmit, user_prompt_command, false) then
+          hooks_removed = true
+        end
+        -- Clean up empty UserPromptSubmit
+        if #existing_settings.hooks.UserPromptSubmit == 0 then
+          existing_settings.hooks.UserPromptSubmit = nil
+        end
+      end
 
       -- Clean up empty hooks section
-      if not existing_settings.hooks.PreToolUse and not existing_settings.hooks.PostToolUse and not existing_settings.hooks.Stop then
+      if not existing_settings.hooks.PreToolUse and not existing_settings.hooks.PostToolUse and not existing_settings.hooks.Stop and not existing_settings.hooks.UserPromptSubmit then
         existing_settings.hooks = nil
       end
 

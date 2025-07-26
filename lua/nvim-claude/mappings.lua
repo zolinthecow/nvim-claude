@@ -50,12 +50,34 @@ function M.setup(config, commands)
     silent = true
   })
   
+  -- Checkpoint commands
+  vim.keymap.set('n', prefix .. 'p', ':ClaudeCheckpoints<CR>', {
+    desc = 'Browse checkpoints',
+    silent = true
+  })
+  
+  vim.keymap.set('n', prefix .. 'ps', ':ClaudeCheckpointStatus<CR>', {
+    desc = 'Checkpoint status',
+    silent = true
+  })
+  
+  vim.keymap.set('n', prefix .. 'pa', ':ClaudeCheckpointAccept<CR>', {
+    desc = 'Accept checkpoint',
+    silent = true
+  })
+  
+  vim.keymap.set('n', prefix .. 'pr', ':ClaudeCheckpointReturn<CR>', {
+    desc = 'Return from checkpoint',
+    silent = true
+  })
+  
   -- Register with which-key if available
   local ok, which_key = pcall(require, 'which-key')
   if ok and which_key.add then
     -- Use the new which-key spec format
     which_key.add({
       { prefix, group = "claude" },
+      { prefix .. "p", group = "checkpoints" },
       { "<leader>i", group = "inline-diffs" },
     })
   end
