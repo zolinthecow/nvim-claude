@@ -110,6 +110,13 @@ function M.setup(claude_module)
     end
   })
   
+  -- ClaudeKillAll command
+  vim.api.nvim_create_user_command('ClaudeKillAll', function()
+    M.kill_all_agents()
+  end, {
+    desc = 'Kill all active Claude agents'
+  })
+  
   -- ClaudeClean command
   vim.api.nvim_create_user_command('ClaudeClean', function()
     M.clean_agents()
@@ -756,6 +763,9 @@ end
 
 -- Show fork options UI with telescope-like styling
 function M.show_fork_options_ui(state)
+  -- Ensure we're in normal mode when showing this UI
+  vim.cmd('stopinsert')
+  
   local default_branch = claude.git.default_branch()
   local options = {
     { label = 'Current branch', desc = 'Fork from your current branch state', value = 1 },
@@ -856,11 +866,19 @@ function M.show_fork_options_ui(state)
       fork_from = { type = 'stash' }
     elseif state.fork_option == 4 then
       -- Other branch - show branch selection
-      M.show_branch_selection(function(branch)
-        if branch then
-          fork_from = { type = 'branch', branch = branch }
-          M.create_agent_from_task(state.mission, fork_from)
-        end
+      -- Ensure we're in normal mode before transitioning
+      vim.cmd('stopinsert')
+      -- Close the fork options window first
+      if vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_close(win, true)
+      end
+      vim.schedule(function()
+        M.show_branch_selection(function(branch)
+          if branch then
+            fork_from = { type = 'branch', branch = branch }
+            M.create_agent_from_task(state.mission, fork_from)
+          end
+        end)
       end)
       return
     end
@@ -944,9 +962,125 @@ function M.show_branch_selection(callback)
     end
   end
   
-  vim.ui.select(unique_branches, {
-    prompt = 'Select branch to fork from:',
-  }, callback)
+  -- Create custom branch selection UI
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_option(buf, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
+  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
+  
+  -- Create display lines
+  local lines = { 'Select branch to fork from:', '' }
+  local branch_map = {}
+  
+  for i, branch in ipairs(unique_branches) do
+    table.insert(lines, string.format(' %d. %s', i, branch))
+    branch_map[i] = branch
+  end
+  
+  table.insert(lines, '')
+  table.insert(lines, 'Press number to select, q to cancel')
+  
+  vim.api.nvim_buf_set_option(buf, 'modifiable', true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
+  
+  -- Create window
+  local width = math.min(80, vim.o.columns - 10)
+  local height = math.min(#lines + 2, vim.o.lines - 6)
+  
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = 'editor',
+    width = width,
+    height = height,
+    col = math.floor((vim.o.columns - width) / 2),
+    row = math.floor((vim.o.lines - height) / 2),
+    style = 'minimal',
+    border = 'rounded',
+    title = ' Branch Selection ',
+    title_pos = 'center',
+  })
+  
+  -- Ensure we start in normal mode
+  vim.cmd('stopinsert')
+  vim.api.nvim_win_set_option(win, 'cursorline', true)
+  
+  -- Force normal mode immediately and after delays
+  vim.schedule(function()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.cmd('stopinsert')
+      vim.api.nvim_set_current_win(win)
+      -- Set initial cursor position
+      vim.api.nvim_win_set_cursor(win, {3, 0})
+    end
+  end)
+  
+  -- Additional insurance after a small delay
+  vim.defer_fn(function()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.cmd('stopinsert')
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
+    end
+  end, 50)
+  
+  -- Create autocommand to prevent entering insert mode
+  local augroup = vim.api.nvim_create_augroup('ClaudeBranchSelect', { clear = true })
+  vim.api.nvim_create_autocmd('InsertEnter', {
+    group = augroup,
+    buffer = buf,
+    callback = function()
+      vim.cmd('stopinsert')
+    end,
+  })
+  
+  -- Clean up autocommand when window closes
+  vim.api.nvim_create_autocmd('BufWipeout', {
+    group = augroup,
+    buffer = buf,
+    callback = function()
+      vim.api.nvim_del_augroup_by_id(augroup)
+    end,
+  })
+  
+  -- Function to close window
+  local function close_window()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+  
+  -- Set up number key mappings
+  for i = 1, math.min(9, #unique_branches) do
+    vim.api.nvim_buf_set_keymap(buf, 'n', tostring(i), '', {
+      callback = function()
+        local branch = branch_map[i]
+        close_window()
+        callback(branch)
+      end,
+      silent = true,
+    })
+  end
+  
+  -- Navigation for more than 9 branches
+  if #unique_branches > 9 then
+    -- TODO: Add j/k navigation with Enter to select
+  end
+  
+  -- Cancel keys
+  vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '', {
+    callback = function()
+      close_window()
+      callback(nil)
+    end,
+    silent = true,
+  })
+  
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<Esc>', '', {
+    callback = function()
+      close_window()
+      callback(nil)
+    end,
+    silent = true,
+  })
 end
 
 -- Create agent from task and fork options
@@ -982,24 +1116,38 @@ function M.create_agent_from_task(task, fork_from)
   local base_info = ''
   
   if fork_from and fork_from.type == 'stash' then
-    -- Create a stash first
-    vim.notify('Creating stash of current changes...', vim.log.levels.INFO)
-    local stash_cmd = 'git stash push -m "Agent fork: ' .. task:sub(1, 50) .. '"'
+    -- Create a stash first (including untracked files)
+    vim.notify('Creating stash of current changes (including untracked files)...', vim.log.levels.INFO)
+    local stash_cmd = 'git stash push -u -m "Agent fork: ' .. task:sub(1, 50) .. '"'
     local stash_result = claude.utils.exec(stash_cmd)
     
     if stash_result and stash_result:match('Saved working directory') then
+      -- Get the stash reference (it's the latest stash)
+      local stash_ref = claude.utils.exec('git rev-parse stash@{0}')
+      if stash_ref then
+        stash_ref = stash_ref:gsub('\n', '')
+      end
+      
       -- Create worktree from current branch
       local branch = claude.git.current_branch() or claude.git.default_branch()
       success, result = claude.git.create_worktree(agent_dir, branch)
       
-      if success then
-        -- Apply the stash in the new worktree
-        local apply_cmd = string.format('cd "%s" && git stash pop', agent_dir)
-        claude.utils.exec(apply_cmd)
-        base_info = string.format('Forked from: %s (with stashed changes)', branch)
+      if success and stash_ref then
+        -- Apply the stash in the new worktree using the SHA reference
+        local apply_cmd = string.format('cd "%s" && git stash apply %s', agent_dir, stash_ref)
+        local apply_result = claude.utils.exec(apply_cmd)
+        
+        if apply_result and not apply_result:match('error:') then
+          base_info = string.format('Forked from: %s (with stashed changes including untracked files)', branch)
+          -- Pop the stash from the main repository since it was successfully applied
+          claude.utils.exec('git stash pop')
+        else
+          vim.notify('Warning: Could not apply stashed changes to worktree', vim.log.levels.WARN)
+          base_info = string.format('Forked from: %s (stash apply failed)', branch)
+        end
       end
     else
-      vim.notify('No changes to stash, using current branch', vim.log.levels.INFO)
+      vim.notify('No changes or untracked files to stash, using current branch', vim.log.levels.INFO)
       fork_from = { type = 'branch', branch = claude.git.current_branch() or claude.git.default_branch() }
     end
   end
@@ -1064,6 +1212,61 @@ function M.create_agent_from_task(task, fork_from)
     local progress_file = agent_dir .. '/progress.txt'
     claude.utils.write_file(progress_file, 'Starting...')
     
+    -- Create or update CLAUDE.local.md with agent context
+    local claude_local_path = agent_dir .. '/CLAUDE.local.md'
+    
+    -- Check if CLAUDE.local.md already exists (from forked branch/stash)
+    local existing_content = ''
+    if claude.utils.file_exists(claude_local_path) then
+      existing_content = claude.utils.read_file(claude_local_path) or ''
+      -- Add separator if there's existing content
+      if existing_content ~= '' then
+        existing_content = existing_content .. '\n\n---\n\n'
+      end
+    end
+    
+    local agent_context = string.format([[# Agent Context
+
+## You are an autonomous agent
+
+You are operating as an independent agent with a specific task to complete. This is your isolated workspace where you should work independently to accomplish your mission.
+
+## Working Environment
+
+- **Current directory**: `%s`
+- **This is your isolated workspace** - all your work should be done here
+- **Git worktree**: You're in a separate git worktree, so your changes won't affect the main repository
+
+## Progress Reporting
+
+To report your progress, update the file: `progress.txt`
+
+Example:
+```bash
+echo 'Analyzing codebase structure...' > progress.txt
+echo 'Found 3 areas that need refactoring' >> progress.txt
+```
+
+## Important Guidelines
+
+1. **Work autonomously** - You should complete the task independently without asking for clarification
+2. **Document your work** - Update progress.txt regularly with what you're doing
+3. **Stay in this directory** - All work should be done in this agent workspace
+4. **Complete the task** - Work until the task is fully completed or you encounter a blocking issue
+
+## Additional Context
+
+%s
+
+## Mission Log
+
+The file `mission.log` contains additional details about this agent's creation and configuration.
+]], agent_dir, base_info)
+    
+    -- Combine with any existing content
+    local final_content = existing_content .. agent_context
+    claude.utils.write_file(claude_local_path, final_content)
+    
     -- In first pane (0) open Neovim
     claude.tmux.send_to_window(window_id, 'nvim .')
 
@@ -1072,18 +1275,9 @@ function M.create_agent_from_task(task, fork_from)
     if pane_claude then
       claude.tmux.send_to_pane(pane_claude, 'claude --dangerously-skip-permissions')
       
-      -- Send initial task description to Claude
+      -- Send the task as the initial prompt
       vim.wait(1000) -- Wait for Claude to start
-      local task_msg = string.format(
-        "I'm an autonomous agent working on the following task:\n\n%s\n\n" ..
-        "My workspace is: %s\n" ..
-        "I should work independently to complete this task.\n\n" ..
-        "To report progress, update the file: %s/progress.txt\n" ..
-        "Example: echo 'Analyzing codebase...' > progress.txt\n\n" ..
-        "%s",
-        task, agent_dir, agent_dir, base_info
-      )
-      claude.tmux.send_text_to_pane(pane_claude, task_msg)
+      claude.tmux.send_text_to_pane(pane_claude, task)
     end
 
     vim.notify(string.format(
@@ -1205,18 +1399,14 @@ function M.list_agents()
     callback = function()
       local agent = get_current_agent()
       if agent and agent.status == 'active' then
-        vim.ui.confirm(
-          string.format('Kill agent "%s"?', agent.task:match('[^\n]*') or agent.task),
-          { '&Yes', '&No' },
-          function(choice)
-            if choice == 1 then
-              M.kill_agent(agent._registry_id)
-              close_window()
-              -- Reopen the list to show updated state
-              vim.defer_fn(function() M.list_agents() end, 100)
-            end
-          end
-        )
+        local msg = string.format('Kill agent "%s"?', agent.task:match('[^\n]*') or agent.task)
+        local choice = vim.fn.confirm(msg, '&Yes\n&No', 2)
+        if choice == 1 then
+          M.kill_agent(agent._registry_id)
+          close_window()
+          -- Reopen the list to show updated state
+          vim.defer_fn(function() M.list_agents() end, 100)
+        end
       else
         vim.notify('Agent is not active', vim.log.levels.INFO)
       end
@@ -1277,6 +1467,58 @@ function M.kill_agent(agent_id)
   claude.registry.update_status(agent_id, 'killed')
   
   vim.notify(string.format('Agent killed: %s (%s)', agent_id, agent.task), vim.log.levels.INFO)
+end
+
+-- Kill all active agents
+function M.kill_all_agents()
+  -- Validate agents first
+  claude.registry.validate_agents()
+  
+  local agents = claude.registry.get_project_agents()
+  local active_agents = {}
+  
+  for id, agent in pairs(agents) do
+    if agent.status == 'active' then
+      agent.id = id
+      table.insert(active_agents, agent)
+    end
+  end
+  
+  if #active_agents == 0 then
+    vim.notify('No active agents to kill', vim.log.levels.INFO)
+    return
+  end
+  
+  -- Show confirmation
+  local agent_list = {}
+  for _, agent in ipairs(active_agents) do
+    table.insert(agent_list, '• ' .. (agent.task:match('[^\n]*') or agent.task))
+  end
+  
+  local message = string.format(
+    'Kill %d active agent%s?\n\n%s', 
+    #active_agents,
+    #active_agents > 1 and 's' or '',
+    table.concat(agent_list, '\n')
+  )
+  
+  local choice = vim.fn.confirm(message, '&Yes\n&No', 2)
+  if choice == 1 then
+    local killed_count = 0
+    for _, agent in ipairs(active_agents) do
+      -- Kill tmux window
+      if agent.window_id then
+        local cmd = 'tmux kill-window -t ' .. agent.window_id
+        claude.utils.exec(cmd)
+      end
+      
+      -- Update registry
+      claude.registry.update_status(agent.id, 'killed')
+      killed_count = killed_count + 1
+    end
+    
+    vim.notify(string.format('Killed %d agent%s', killed_count, killed_count > 1 and 's' or ''), vim.log.levels.INFO)
+  end
 end
 
 -- Show agent kill selection UI
