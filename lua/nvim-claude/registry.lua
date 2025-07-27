@@ -8,18 +8,39 @@ M.registry_path = nil
 
 -- Initialize registry
 function M.setup(config)
-  -- Set up registry directory
-  local data_dir = vim.fn.stdpath('data') .. '/nvim-claude'
+  -- Registry will be loaded per-project when needed
+  -- No global setup needed
+  
+  -- Clean up old global registry if it exists
+  local old_registry = vim.fn.stdpath('data') .. '/nvim-claude/registry.json'
+  if utils.file_exists(old_registry) then
+    vim.fn.delete(old_registry)
+    -- Also try to remove the directory if empty
+    vim.fn.delete(vim.fn.stdpath('data') .. '/nvim-claude', 'd')
+  end
+end
+
+-- Get registry path for current project
+function M.get_registry_path()
+  local project_root = utils.get_project_root()
+  if not project_root then
+    return nil
+  end
+  
+  local data_dir = project_root .. '/.nvim-claude'
   utils.ensure_dir(data_dir)
   
-  M.registry_path = data_dir .. '/registry.json'
-  
-  -- Load existing registry
-  M.load()
+  return data_dir .. '/agent-registry.json'
 end
 
 -- Load registry from disk
 function M.load()
+  M.registry_path = M.get_registry_path()
+  if not M.registry_path then
+    M.agents = {}
+    return
+  end
+  
   local content = utils.read_file(M.registry_path)
   if content then
     local ok, data = pcall(vim.json.decode, content)
@@ -27,17 +48,17 @@ function M.load()
       M.agents = data
       M.validate_agents()
     else
-      vim.notify('registry.load: Failed to decode JSON, clearing agents', vim.log.levels.WARN)
       M.agents = {}
     end
   else
-    vim.notify('registry.load: No content read from file, clearing agents', vim.log.levels.WARN)
+    -- No registry file yet for this project
     M.agents = {}
   end
 end
 
 -- Save registry to disk
 function M.save()
+  M.registry_path = M.registry_path or M.get_registry_path()
   if not M.registry_path then return false end
   
   local content = vim.json.encode(M.agents)
@@ -104,7 +125,6 @@ function M.register(task, work_dir, window_id, window_name, fork_info)
     window_name = window_name,
     start_time = os.time(),
     status = 'active',
-    project_root = utils.get_project_root(),
     progress = 'Starting...',  -- Add progress field
     last_update = os.time(),
     fork_info = fork_info,  -- Store branch/stash info
@@ -123,20 +143,16 @@ end
 
 -- Get all agents for current project
 function M.get_project_agents()
-  -- Ensure registry is loaded
-  if not M.agents or vim.tbl_isempty(M.agents) then
-    M.load()
-  end
+  -- Load registry for current project
+  M.load()
   
-  local project_root = utils.get_project_root()
   local project_agents = {}
   
+  -- All agents in the registry are for this project now
   for id, agent in pairs(M.agents) do
-    if agent.project_root == project_root then
-      -- Include the registry ID with the agent
-      agent._registry_id = id
-      table.insert(project_agents, agent)
-    end
+    -- Include the registry ID with the agent
+    agent._registry_id = id
+    table.insert(project_agents, agent)
   end
   
   return project_agents
