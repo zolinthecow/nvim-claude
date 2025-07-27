@@ -8,7 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Work-in-progress file deletion tracking for rm commands
+- Checkpoint system that automatically saves codebase state before each Claude message
+  - Time-travel feature to browse and restore any previous checkpoint
+  - Preview mode for safely exploring checkpoints without committing
+  - Merge commits when accepting checkpoints for easy reversion
+  - UserPromptSubmit hook integration for automatic checkpoint creation
+  - Only displays 5 most recent checkpoints for performance
+- Base64 encoding for all hooks to handle special characters in file paths and prompts
+- Missing `log` function in `hook-common.sh`
+- File deletion tracking for rm commands (completed from work-in-progress)
+- Cursor-relative hunk navigation - `]h` and `[h` now navigate relative to cursor position instead of stored state
+
+### Changed
+- Checkpoint creation now uses temporary git index to avoid polluting staging area
+- Optimized checkpoint listing from O(n) to O(1) - uses single git command instead of multiple
+- All hooks (pre/post tool use, bash, user prompt) now use base64 encoding to avoid shell escaping issues
+
+### Fixed
+- Accept hunk functionality now properly handles files without trailing newlines
+- Hook string escaping issues with apostrophes and special characters
+
+## [0.0.4] - 2025-01-20
 
 ### Changed
 - Replaced git stash-based baseline system with git commit objects and custom refs

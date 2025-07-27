@@ -377,15 +377,63 @@ function M.jump_to_hunk(bufnr, hunk_idx)
   vim.notify(string.format('Hunk %d/%d', hunk_idx, #diff_data.hunks), vim.log.levels.INFO)
 end
 
+-- Helper function to get the line range of a hunk in the buffer
+local function get_hunk_line_range(hunk)
+  local start_line = hunk.new_start
+  local end_line = hunk.new_start
+  
+  -- Calculate the actual end line by counting non-deletion lines
+  local line_offset = 0
+  for _, line in ipairs(hunk.lines) do
+    if not line:match('^%-') then  -- Not a deletion
+      line_offset = line_offset + 1
+    end
+  end
+  
+  end_line = start_line + line_offset - 1
+  
+  -- For pure deletions, they show above the line
+  if hunk.new_length == 0 then
+    end_line = start_line
+  end
+  
+  return start_line, end_line
+end
+
 -- Navigate to next hunk
 function M.next_hunk(bufnr)
   local diff_data = M.active_diffs[bufnr]
-  if not diff_data then
+  if not diff_data or #diff_data.hunks == 0 then
     return
   end
 
-  local next_idx = diff_data.current_hunk + 1
-  if next_idx > #diff_data.hunks then
+  -- Get current cursor position
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  
+  -- Find the next hunk after cursor position
+  local next_idx = nil
+  local current_hunk_idx = nil
+  
+  for i, hunk in ipairs(diff_data.hunks) do
+    local hunk_start, hunk_end = get_hunk_line_range(hunk)
+    
+    -- Check if cursor is inside this hunk
+    if cursor_line >= hunk_start and cursor_line <= hunk_end then
+      current_hunk_idx = i
+    end
+    
+    -- Find first hunk that starts after cursor
+    if hunk_start > cursor_line then
+      next_idx = i
+      break
+    end
+  end
+
+  -- If cursor is inside a hunk and there's a next hunk, go to it
+  if current_hunk_idx and current_hunk_idx < #diff_data.hunks then
+    next_idx = current_hunk_idx + 1
+  elseif not next_idx then
+    -- No hunk found after cursor, wrap to first
     next_idx = 1
   end
 
@@ -395,12 +443,39 @@ end
 -- Navigate to previous hunk
 function M.prev_hunk(bufnr)
   local diff_data = M.active_diffs[bufnr]
-  if not diff_data then
+  if not diff_data or #diff_data.hunks == 0 then
     return
   end
 
-  local prev_idx = diff_data.current_hunk - 1
-  if prev_idx < 1 then
+  -- Get current cursor position
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  
+  -- Find the previous hunk before cursor position
+  local prev_idx = nil
+  local current_hunk_idx = nil
+  
+  -- First pass: identify if we're in a hunk and find previous hunks
+  for i = #diff_data.hunks, 1, -1 do
+    local hunk = diff_data.hunks[i]
+    local hunk_start, hunk_end = get_hunk_line_range(hunk)
+    
+    -- Check if cursor is inside this hunk
+    if cursor_line >= hunk_start and cursor_line <= hunk_end then
+      current_hunk_idx = i
+    end
+    
+    -- Find last hunk that starts before cursor
+    if hunk_start < cursor_line and not current_hunk_idx then
+      prev_idx = i
+      break
+    end
+  end
+
+  -- If cursor is inside a hunk and there's a previous hunk, go to it
+  if current_hunk_idx and current_hunk_idx > 1 then
+    prev_idx = current_hunk_idx - 1
+  elseif not prev_idx then
+    -- No hunk found before cursor, wrap to last
     prev_idx = #diff_data.hunks
   end
 
