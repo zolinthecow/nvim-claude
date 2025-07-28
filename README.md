@@ -50,6 +50,8 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 }
 ```
 
+**Important**: After installation, run `:ClaudeInstallMCP` to install the MCP server dependencies. If you encounter "MCP install script not found", see the Troubleshooting section below.
+
 ### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
 
 ```lua
@@ -156,6 +158,9 @@ When Claude makes changes to your files:
 ### Utility Commands
 - `:ClaudeInstallHooks` - Install Claude Code hooks for this project
 - `:ClaudeUninstallHooks` - Remove Claude Code hooks
+- `:ClaudeInstallMCP` - Install MCP server dependencies
+- `:ClaudeShowMCPCommand` - Show the command to add MCP server to Claude Code
+- `:ClaudeDebugInstall` - Debug plugin installation and paths
 - `:ClaudeDebugInlineDiff` - Debug inline diff state
 - `:ClaudeResetInlineDiff` - Reset inline diff state (use when corrupted)
 - `:ClaudeDebugTracking` - Debug file tracking state
@@ -195,11 +200,25 @@ This creates a `.claude/settings.local.json` file in your project that integrate
 
 ## Troubleshooting
 
+### Installation Issues
+
+#### MCP Install Script Not Found
+If you get "MCP install script not found" when running `:ClaudeInstallMCP`:
+
+1. **Debug the installation**: Run `:ClaudeDebugInstall` to see where the plugin is looking for files
+2. **Check plugin structure**: Ensure the plugin was installed completely with the `mcp-server/` directory
+3. **Manual installation**: If using a non-standard setup, you can manually run:
+   ```bash
+   cd ~/.local/share/nvim/lazy/nvim-claude  # or wherever your plugin is installed
+   bash mcp-server/install.sh
+   ```
+
 ### Debug Logging
 The plugin includes comprehensive debug logging for diagnosing issues:
 - **View logs**: `:ClaudeViewLog` - Opens the debug log file
 - **Clear logs**: `:ClaudeClearLog` - Clears the debug log
 - **Log location**: `.nvim-claude/debug.log` (project-specific) or `~/.local/share/nvim/nvim-claude-debug.log` (global)
+- **Debug installation**: `:ClaudeDebugInstall` - Shows plugin paths and installation status
 
 See [debugging.md](debugging.md) for detailed debugging information.
 

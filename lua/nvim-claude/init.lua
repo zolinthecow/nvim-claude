@@ -149,14 +149,11 @@ function M.check_and_install_mcp()
   -- Install MCP server
   vim.notify('nvim-claude: Installing MCP server dependencies...', vim.log.levels.INFO)
   
-  -- Get plugin directory - handle both development and installed paths
-  local source_path = debug.getinfo(1, 'S').source:sub(2)
-  local plugin_dir = source_path:match('(.*/)')
-  
-  -- For development, the actual plugin files might be in .config/nvim/lua/nvim-claude
-  local dev_plugin_dir = vim.fn.expand('~/.config/nvim/lua/nvim-claude/')
-  if vim.fn.isdirectory(dev_plugin_dir .. 'mcp-server') == 1 then
-    plugin_dir = dev_plugin_dir
+  -- Get plugin directory using shared function
+  local plugin_dir = M.get_plugin_dir()
+  if not plugin_dir then
+    vim.notify('nvim-claude: Could not find plugin directory', vim.log.levels.ERROR)
+    return
   end
   
   local install_script = plugin_dir .. 'mcp-server/install.sh'
@@ -172,11 +169,7 @@ function M.check_and_install_mcp()
     on_exit = function(_, code, _)
       if code == 0 then
         vim.notify('nvim-claude: MCP server installed successfully!', vim.log.levels.INFO)
-        -- Use development path if available
         local mcp_server_path = plugin_dir .. 'mcp-server/nvim-lsp-server.py'
-        if not vim.fn.filereadable(mcp_server_path) and vim.fn.filereadable(dev_plugin_dir .. 'mcp-server/nvim-lsp-server.py') then
-          mcp_server_path = dev_plugin_dir .. 'mcp-server/nvim-lsp-server.py'
-        end
         vim.notify('Run "claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
                    mcp_server_path .. '" to complete setup', 
                    vim.log.levels.INFO)
@@ -207,19 +200,67 @@ function M.check_mcp_configuration()
   -- M.check_mcp_configuration_old()
 end
 
--- Show MCP setup command on demand
-function M.show_mcp_setup_command()
+-- Helper function to find plugin directory
+function M.get_plugin_dir()
+  -- 1. Check if we're in development (source path contains lua/nvim-claude)
   local source_path = debug.getinfo(1, 'S').source:sub(2)
-  local plugin_dir = source_path:match('(.*/)')
-  
-  -- For development, use the actual location
-  local dev_plugin_dir = vim.fn.expand('~/.config/nvim/lua/nvim-claude/')
-  local mcp_server_path = plugin_dir .. 'mcp-server/nvim-lsp-server.py'
-  if vim.fn.filereadable(dev_plugin_dir .. 'mcp-server/nvim-lsp-server.py') == 1 then
-    mcp_server_path = dev_plugin_dir .. 'mcp-server/nvim-lsp-server.py'
+  if source_path:match('lua/nvim%-claude') then
+    -- Extract path up to and including nvim-claude root
+    local plugin_dir = source_path:match('(.*/)lua/nvim%-claude/')
+    if plugin_dir and vim.fn.isdirectory(plugin_dir .. 'mcp-server') == 1 then
+      return plugin_dir
+    end
   end
   
-  local venv_python = (M.config.mcp.install_path or vim.fn.stdpath('data') .. '/nvim-claude/mcp-env') .. '/bin/python'
+  -- 2. Try lazy.nvim location
+  local lazy_dir = vim.fn.stdpath('data') .. '/lazy/nvim-claude/'
+  if vim.fn.isdirectory(lazy_dir .. 'mcp-server') == 1 then
+    return lazy_dir
+  end
+  
+  -- 3. Try packer location
+  local packer_dir = vim.fn.stdpath('data') .. '/site/pack/packer/start/nvim-claude/'
+  if vim.fn.isdirectory(packer_dir .. 'mcp-server') == 1 then
+    return packer_dir
+  end
+  
+  -- 4. Try development location
+  local dev_dir = vim.fn.expand('~/.config/nvim/lua/nvim-claude/')
+  if vim.fn.isdirectory(dev_dir .. 'mcp-server') == 1 then
+    return dev_dir
+  end
+  
+  -- 5. Debug: show what we found
+  vim.notify('nvim-claude: Could not find mcp-server directory', vim.log.levels.WARN)
+  vim.notify('Searched in:', vim.log.levels.INFO)
+  vim.notify('  - ' .. lazy_dir .. ' (lazy.nvim)', vim.log.levels.INFO)
+  vim.notify('  - ' .. packer_dir .. ' (packer)', vim.log.levels.INFO)
+  vim.notify('  - ' .. dev_dir .. ' (development)', vim.log.levels.INFO)
+  vim.notify('\nThis might happen if:', vim.log.levels.INFO)
+  vim.notify('  1. The plugin was not fully cloned', vim.log.levels.INFO)
+  vim.notify('  2. Your package manager excluded the mcp-server directory', vim.log.levels.INFO)
+  vim.notify('\nTry reinstalling the plugin or check your package manager config', vim.log.levels.INFO)
+  
+  return nil
+end
+
+-- Show MCP setup command on demand
+function M.show_mcp_setup_command()
+  local project_root = M.utils and M.utils.get_project_root() or vim.fn.getcwd()
+  if not project_root then
+    vim.notify('Not in a project directory', vim.log.levels.ERROR)
+    return
+  end
+  
+  local plugin_dir = M.get_plugin_dir()
+  if not plugin_dir then
+    vim.notify('Could not find nvim-claude plugin directory', vim.log.levels.ERROR)
+    vim.notify('Run :ClaudeInstallMCP first', vim.log.levels.ERROR)
+    return
+  end
+  
+  local mcp_server_path = plugin_dir .. 'mcp-server/nvim-lsp-server.py'
+  local venv_python = vim.fn.expand('~/.local/share/nvim/nvim-claude/mcp-env/bin/python')
   
   vim.notify('To configure nvim-lsp MCP server:', vim.log.levels.INFO)
   vim.notify('claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
@@ -230,6 +271,15 @@ end
 -- Plugin setup
 function M.setup(user_config)
   M.config = merge_config(user_config)
+  
+  -- Check plugin integrity early
+  vim.defer_fn(function()
+    local plugin_dir = M.get_plugin_dir()
+    if not plugin_dir then
+      vim.notify('nvim-claude: Warning - mcp-server directory not found!', vim.log.levels.WARN)
+      vim.notify('Some features may not work. Run :ClaudeDebugInstall for details', vim.log.levels.WARN)
+    end
+  end, 100)
   
   -- Force reload modules to ensure latest code
   package.loaded['nvim-claude.hooks'] = nil

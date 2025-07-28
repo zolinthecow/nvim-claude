@@ -237,19 +237,54 @@ function M.setup(claude_module)
     require('nvim-claude').show_mcp_setup_command()
   end, { desc = 'Show MCP server setup command' })
   
+  -- ClaudeDebugInstall command to help diagnose installation issues
+  vim.api.nvim_create_user_command('ClaudeDebugInstall', function()
+    local nvim_claude = require('nvim-claude')
+    vim.notify('=== nvim-claude Installation Debug ===', vim.log.levels.INFO)
+    
+    -- Show Neovim data paths
+    vim.notify('Neovim data path: ' .. vim.fn.stdpath('data'), vim.log.levels.INFO)
+    
+    -- Check common plugin locations
+    local locations = {
+      { name = 'lazy.nvim', path = vim.fn.stdpath('data') .. '/lazy/nvim-claude/' },
+      { name = 'packer', path = vim.fn.stdpath('data') .. '/site/pack/packer/start/nvim-claude/' },
+      { name = 'development', path = vim.fn.expand('~/.config/nvim/lua/nvim-claude/') },
+    }
+    
+    for _, loc in ipairs(locations) do
+      local exists = vim.fn.isdirectory(loc.path) == 1
+      local has_mcp = vim.fn.isdirectory(loc.path .. 'mcp-server') == 1
+      vim.notify(string.format('%s: %s (mcp-server: %s)', loc.name, 
+                              exists and 'found' or 'not found',
+                              has_mcp and 'yes' or 'no'), vim.log.levels.INFO)
+    end
+    
+    -- Try to find plugin directory
+    local plugin_dir = nvim_claude.get_plugin_dir()
+    if plugin_dir then
+      vim.notify('\nDetected plugin directory: ' .. plugin_dir, vim.log.levels.INFO)
+    else
+      vim.notify('\nCould not detect plugin directory', vim.log.levels.ERROR)
+    end
+    
+    -- Check MCP installation
+    local venv_path = vim.fn.expand('~/.local/share/nvim/nvim-claude/mcp-env')
+    local venv_exists = vim.fn.isdirectory(venv_path) == 1
+    vim.notify('\nMCP venv: ' .. (venv_exists and 'installed' or 'not installed'), vim.log.levels.INFO)
+    if venv_exists then
+      local python_exists = vim.fn.filereadable(venv_path .. '/bin/python') == 1
+      vim.notify('Python executable: ' .. (python_exists and 'found' or 'not found'), vim.log.levels.INFO)
+    end
+  end, { desc = 'Debug nvim-claude installation' })
+  
   -- ClaudeInstallMCP command
   vim.api.nvim_create_user_command('ClaudeInstallMCP', function()
-    -- Get plugin directory - handle both development and installed paths
-    local source_path = debug.getinfo(1, 'S').source:sub(2)
-    local plugin_dir = source_path:match('(.*/)')
-    
-    -- For development, the actual plugin files might be in .config/nvim/lua/nvim-claude
-    local dev_plugin_dir = vim.fn.expand('~/.config/nvim/lua/nvim-claude/')
-    if vim.fn.isdirectory(dev_plugin_dir .. 'mcp-server') == 1 then
-      plugin_dir = dev_plugin_dir
-    else
-      -- For installed plugins, go up to the plugin root
-      plugin_dir = plugin_dir .. '../../../../'
+    -- Get plugin directory using shared function from init.lua
+    local plugin_dir = require('nvim-claude').get_plugin_dir()
+    if not plugin_dir then
+      vim.notify('nvim-claude: Could not find plugin directory. Please report this issue.', vim.log.levels.ERROR)
+      return
     end
     
     local install_script = plugin_dir .. 'mcp-server/install.sh'
