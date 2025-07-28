@@ -14,28 +14,32 @@ nvim  # Plugin automatically handles server setup
 
 ### Git Operations
 ```bash
-# Create test stash for baseline
-git stash create                     # Returns SHA hash
-git stash store -m "message" <SHA>   # Store with message
-git show <SHA>:path/to/file          # View file in stash
+# View baseline commit
+git show refs/nvim-claude/baseline   # Show baseline commit
+git show refs/nvim-claude/baseline:path/to/file  # View file in baseline
+
+# View checkpoints
+git for-each-ref refs/nvim-claude/checkpoints/  # List all checkpoints
+git show refs/nvim-claude/checkpoints/<id>     # Show checkpoint commit
 ```
 
 ## Architecture Overview
 
 ### Core Systems
 
-#### 1. Stash-Based Diff Tracking
-The inline diff system uses git stashes as immutable baselines for tracking changes:
+#### 1. Commit-Based Diff Tracking
+The inline diff system uses git commits as immutable baselines for tracking changes:
 
-- **Baseline Creation**: When Claude first edits files, `hooks.pre_tool_use_hook()` creates a baseline stash
+- **Baseline Creation**: When Claude first edits files, `hooks.pre_tool_use_hook()` creates a baseline commit
 - **File Tracking**: `hooks.claude_edited_files` tracks which files Claude has modified (relative paths)
-- **Diff Display**: When opening a tracked file, computes diff between baseline stash version and working directory
-- **State Persistence**: `inline-diff-persistence.lua` saves state to `~/.local/share/nvim/nvim-claude-inline-diff-state.json`
+- **Diff Display**: When opening a tracked file, computes diff between baseline commit version and working directory
+- **State Persistence**: `inline-diff-persistence.lua` saves state to project-local `.nvim-claude/inline-diff-state.json`
+- **Baseline Storage**: Commits are stored in git ref `refs/nvim-claude/baseline`
 
 Key functions flow:
-1. `hooks.pre_tool_use_hook()` → Creates baseline stash if none exists
+1. `hooks.pre_tool_use_hook()` → Creates baseline commit if none exists
 2. `hooks.post_tool_use_hook(file_path)` → Marks file as Claude-edited
-3. `hooks.show_inline_diff_for_file()` → Retrieves baseline from stash, shows diff
+3. `hooks.show_inline_diff_for_file()` → Retrieves baseline from commit, shows diff
 4. `inline-diff.accept_current_hunk()` → Updates git baseline commit, saves state
 5. `inline-diff.reject_current_hunk()` → Applies reverse patch to working directory
 
@@ -44,24 +48,39 @@ Key functions flow:
 init.lua (entry point)
 ├── hooks.lua (Claude Code integration)
 │   ├── inline-diff-persistence.lua (state management)
-│   └── inline-diff.lua (diff visualization)
+│   ├── inline-diff.lua (diff visualization)
+│   └── inline-diff-debug.lua (debug utilities)
 ├── tmux.lua (chat interface)
 ├── commands.lua (user commands)
 ├── mappings.lua (keybindings)
-└── git.lua (worktree management)
+├── git.lua (worktree management)
+├── checkpoint.lua (checkpoint system)
+├── registry.lua (agent registry)
+├── agent-viewer.lua (agent viewing)
+├── mcp-bridge.lua (MCP server integration)
+├── settings-updater.lua (settings management)
+├── statusline.lua (status line integration)
+├── diff-review.lua (diff review UI)
+├── logger.lua (logging system)
+└── utils.lua (utility functions)
 ```
 
 #### 3. State Management
 The plugin maintains several types of state:
 
-- **Baseline Reference**: `persistence.get_baseline_ref()` - SHA of the baseline stash
-- **Tracked Files**: `hooks.claude_edited_files` - Map of relative paths
+- **Baseline Reference**: `persistence.get_baseline_ref()` - SHA of the baseline commit
+- **Tracked Files**: `hooks.claude_edited_files` - Map of relative paths  
 - **Active Diffs**: `inline-diff.active_diffs[bufnr]` - Current diff data per buffer
-- **Persistence**: JSON file containing stash ref and tracked files
+- **Persistence Locations**:
+  - Project-local: `.nvim-claude/inline-diff-state.json` (primary)
+  - Global fallback: `~/.local/share/nvim/nvim-claude-inline-diff-state.json`
+- **Agent Registry**: `.nvim-claude/agent-registry.json` (project-specific)
+- **Checkpoint Data**: Stored as git commits with refs `refs/nvim-claude/checkpoints/*`
 
 State cleanup happens when:
 - All hunks in a file are accepted/rejected → File removed from tracking
 - All tracked files processed → Baseline cleared, persistence deleted
+- Project migration → Old global state migrated to project-local on first load
 
 #### 4. Hook System Integration
 The plugin integrates with Claude Code's hook system via `.claude/settings.local.json`:
@@ -69,20 +88,39 @@ The plugin integrates with Claude Code's hook system via `.claude/settings.local
 ```json
 {
   "hooks": {
-    "PreToolUse": { "matcher": "Edit|Write|MultiEdit", "command": "nvr --remote-expr..." },
-    "PostToolUse": { "matcher": "Edit|Write|MultiEdit", "command": "nvr --remote-send..." }
+    "PreToolUse": [{
+      "matcher": "Edit|Write|MultiEdit",
+      "hooks": [{
+        "type": "command",
+        "command": "/path/to/plugin/scripts/pre-hook-wrapper.sh"
+      }]
+    }],
+    "PostToolUse": [{
+      "matcher": "Edit|Write|MultiEdit", 
+      "hooks": [{
+        "type": "command",
+        "command": "/path/to/plugin/scripts/post-hook-wrapper.sh"
+      }]
+    }],
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "/path/to/plugin/scripts/user-prompt-hook-wrapper.sh"
+      }]
+    }]
   }
 }
 ```
 
-Hooks use `nvr` (neovim-remote) to communicate with the running Neovim instance.
+Hooks use wrapper scripts that handle base64 encoding and call `nvr` (neovim-remote) to communicate with the running Neovim instance.
 
 ### Key Implementation Details
 
-#### SHA vs Stash References
-- Always use SHA hashes (e.g., `8b0902ed0df...`) instead of `stash@{0}`
-- `inline-diff-persistence.create_stash()` returns SHA directly
-- Validation handles both formats for backward compatibility
+#### Commit References
+- Baselines are stored as git commits with SHA hashes (e.g., `8b0902ed0df...`)
+- `inline-diff-persistence.create_baseline()` creates a commit and returns its SHA
+- Commits are stored in custom git ref: `refs/nvim-claude/baseline`
+- The term "stash_ref" is still used in code for backward compatibility but refers to commit SHAs
 
 #### File Path Handling
 - Always use `file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')` for relative paths
@@ -108,10 +146,11 @@ Hooks use `nvr` (neovim-remote) to communicate with the running Neovim instance.
 4. Update README.md with new command/keymap
 
 #### Debugging State Issues
-1. Check persistence file: `cat ~/.local/share/nvim/nvim-claude-inline-diff-state.json | jq`
-2. Check stash exists: `git stash list | grep nvim-claude`
+1. Check persistence file: `cat .nvim-claude/inline-diff-state.json | jq`
+2. Check baseline commit exists: `git show refs/nvim-claude/baseline`
 3. Verify tracked files: `:lua vim.inspect(require('nvim-claude.hooks').claude_edited_files)`
 4. Check baseline ref: `:lua print(require('nvim-claude.inline-diff-persistence').get_baseline_ref())`
+5. View all nvim-claude refs: `git for-each-ref refs/nvim-claude/`
 
 ### Critical Functions
 
@@ -125,15 +164,36 @@ Hooks use `nvr` (neovim-remote) to communicate with the running Neovim instance.
 - Applies patch in reverse using `git apply --reverse`
 - Recalculates diff against unchanged baseline
 
-#### `hooks.show_inline_diff_for_file(buf, file, git_root, stash_ref)`
-- Retrieves baseline content: `git show <stash_ref>:<file>`
+#### `hooks.show_inline_diff_for_file(buf, file, git_root, baseline_ref)`
+- Retrieves baseline content: `git show <baseline_ref>:<file>`
 - Gets current buffer content
 - Calls `inline-diff.show_inline_diff()` with both contents
 
 #### `inline-diff-persistence.save_state(diff_data)`
 - Saves current tracking state to JSON
-- Includes stash ref, tracked files, and active diff data
+- Includes baseline ref, tracked files, and active diff data
 - Called on VimLeavePre and after accept/reject operations
+
+### New Features Not Yet Documented
+
+#### Checkpoint System
+- Save/restore work states independent of baselines
+- Commands: `:ClaudeCheckpoints`, `:ClaudeCheckpointCreate`, etc.
+- Stored as git commits in `refs/nvim-claude/checkpoints/*`
+
+#### Background Agents
+- Run Claude in isolated git worktrees
+- Project-specific agent registry
+- Commands: `:ClaudeBg`, `:ClaudeAgents`, `:ClaudeKillAll`
+
+#### MCP Server Integration
+- Provides LSP diagnostics to Claude
+- Install with `:ClaudeInstallMCP`
+- Requires Python 3.10+
+
+#### Status Line Integration
+- Shows active diff count in status line
+- Integrates with popular status line plugins
 
 ## Onboarding
 
@@ -145,16 +205,19 @@ If you're a new Claude instance working on this codebase, here's what you need t
 This is a Neovim plugin that integrates with Claude Code (the CLI tool). It tracks changes Claude makes to files and displays them as inline diffs that users can accept or reject, similar to a code review interface within their editor.
 
 #### 2. Key Concepts to Grasp First
-- **Baseline Stashes**: The plugin creates git stashes as "snapshots" before Claude edits files. These serve as the baseline for showing diffs.
+- **Baseline Commits**: The plugin creates git commits as "snapshots" before Claude edits files. These serve as the baseline for showing diffs.
 - **Single Baseline Reference**: The plugin uses a single source of truth for the baseline:
   - `persistence.current_stash_ref` (accessed via `get_baseline_ref()` and `set_baseline_ref()`)
+  - Despite the name, this stores commit SHAs, not stash references
 - **Claude Edited Files**: Files that Claude has modified are tracked in `hooks.claude_edited_files`
+- **Checkpoint System**: Separate from baselines, allows saving/restoring work states
 
 #### 3. Common Gotchas
-- **New Files**: Files that don't exist in the baseline stash will cause git errors. Always check for `fatal:` or `error:` in git command outputs.
+- **New Files**: Files that don't exist in the baseline commit will cause git errors. Always check for `fatal:` or `error:` in git command outputs.
 - **Path Handling**: Always use `vim.pesc()` when escaping paths for pattern matching.
-- **Persistence**: The plugin uses both global (`~/.local/share/nvim/`) and project-local (`.nvim-claude/`) persistence.
+- **Persistence**: The plugin uses project-local (`.nvim-claude/`) persistence with global fallback.
 - **Error Handling**: `utils.exec()` returns output even on error - check both return values and content for error messages.
+- **Baseline vs Checkpoints**: Baselines track Claude's edits; checkpoints save user work states.
 
 #### 4. Essential Files to Read First
 1. `hooks.lua` - Start here. Contains the Claude Code integration and baseline management.
@@ -193,9 +256,9 @@ logger.debug('function_name', 'Description', { key = value })
 
 **Checking if a file exists in baseline:**
 ```lua
-local baseline_content, err = utils.exec(string.format("git show %s:'%s' 2>/dev/null", stash_ref, file))
+local baseline_content, err = utils.exec(string.format("git show %s:'%s' 2>/dev/null", baseline_ref, file))
 if err or not baseline_content or baseline_content:match('^fatal:') then
-  -- File doesn't exist in baseline
+  -- File doesn't exist in baseline commit
 end
 ```
 
@@ -207,18 +270,23 @@ persistence.set_baseline_ref(new_ref)
 ```
 
 #### 8. Architecture Mental Model
-Think of it as a three-layer system:
+Think of it as a multi-layer system:
 1. **Hook Layer**: Intercepts Claude's file operations (pre/post hooks)
 2. **Diff Layer**: Computes and displays visual diffs in buffers
 3. **Persistence Layer**: Saves state between Neovim sessions
+4. **Checkpoint Layer**: Manages save points for work in progress
+5. **Agent Layer**: Manages background Claude instances in git worktrees
+6. **MCP Layer**: Provides LSP diagnostics to Claude via MCP protocol
 
-The flow is: Claude edits → Hooks capture → Baseline created/updated → Diff displayed → User accepts/rejects → State persisted
+The flow is: Claude edits → Hooks capture → Baseline commit created/updated → Diff displayed → User accepts/rejects → State persisted
 
 #### 9. Key Invariants to Maintain
 - If a file is in `claude_edited_files`, there must be a valid baseline reference
-- The baseline reference must always point to a valid git commit/stash
+- The baseline reference must always point to a valid git commit
 - Accepting all hunks in a file should remove it from tracking
 - Persistence should survive Neovim restarts
+- Agent registry is project-specific, not global
+- Checkpoints are separate from baselines and stored as git commits
 
 #### 10. Where to Look When Things Break
 - **Diff not showing**: Check if baseline exists and contains the file
@@ -334,6 +402,8 @@ tail -20 ~/.local/share/nvim/nvim-claude-hooks.log
 - Always use single quotes instead of double quotes.
 
 ### Important Hints for Claude Code
-- Hooks and anything passing strings to luaeval should use our base64 encoding strategy
+- Hooks use wrapper scripts that handle base64 encoding before calling nvr
+- The wrapper scripts are located in the `scripts/` directory of the plugin
+- Base64 encoding is used to safely pass file paths and other data through shell commands
 
 ```
