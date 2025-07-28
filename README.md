@@ -102,9 +102,22 @@ require('nvim-claude').setup({
 
 ### Chat Commands
 - `<leader>cc` - Open Claude chat in tmux pane
-- `<leader>cb` - Send current buffer to Claude
-- `<leader>cv` - Send visual selection to Claude
+- `<leader>cs` - Send current buffer to Claude
+- `<leader>cv` - Send visual selection to Claude (visual mode)
+- `<leader>cd` - Send selection with diagnostics to Claude (visual mode)
 - `<leader>ch` - Send git hunk at cursor to Claude
+
+### Background Agent Management
+- `<leader>cb` - Create a new background agent
+- `<leader>cl` - List all agents
+- `<leader>ck` - Kill a specific agent
+- `<leader>cx` - Clean up old agents
+
+### Checkpoint Commands
+- `<leader>cp` - Browse checkpoints
+- `<leader>cps` - Show checkpoint status
+- `<leader>cpa` - Accept current checkpoint
+- `<leader>cpr` - Return from checkpoint
 
 ### Inline Diff Review
 When Claude makes changes to your files:
@@ -127,43 +140,59 @@ When Claude makes changes to your files:
 - `<leader>IR` - Reject ALL diffs in ALL files
 - `]f` / `[f` - Navigate to next/previous file with diffs
 
-### Agent Management
-- `<leader>cA` - Create a new background agent
-- `<leader>cas` - Show/switch between agents
-- `<leader>cak` - Kill an agent
-- `<leader>caw` - Switch to agent's worktree
-- `<leader>cad` - Review agent's changes with diffview
-
 ## Commands
 
-### Basic Commands
-- `:Claude` - Open Claude chat
-- `:ClaudeBuffer` - Send current buffer
-- `:ClaudeSelection` - Send visual selection
-- `:ClaudeHunk` - Send git hunk at cursor
+All commands below can be accessed via Ex commands. Those with keybindings are noted above.
 
-### Agent Commands
-- `:ClaudeAgent <task>` - Create new background agent
-- `:ClaudeAgents` - List and manage agents
-- `:ClaudeKillAgent [id]` - Kill specific agent
-- `:ClaudeKillAll` - Kill all agents
-- `:ClaudeSwitchAgent [id]` - Switch to agent worktree
-- `:ClaudeDiffAgent [id]` - Review agent changes
+### Basic Chat Commands
+- `:ClaudeChat` - Open Claude chat (mapped to `<leader>cc`)
+- `:ClaudeSendBuffer` - Send current buffer (mapped to `<leader>cs`)
+- `:ClaudeSendSelection` - Send visual selection (mapped to `<leader>cv`)
+- `:ClaudeSendWithDiagnostics` - Send with diagnostics (mapped to `<leader>cd`)
+- `:ClaudeSendHunk` - Send git hunk at cursor (mapped to `<leader>ch`)
 
-### Diff Management
-- `:ClaudeAcceptAll` - Accept all Claude's changes
+### Background Agent Commands
+- `:ClaudeBg [task]` - Create new background agent (mapped to `<leader>cb`)
+- `:ClaudeAgents` - List and manage agents (mapped to `<leader>cl`)
+- `:ClaudeKill [id]` - Kill specific agent (mapped to `<leader>ck`)
+- `:ClaudeKillAll` - Kill all active agents
+- `:ClaudeClean` - Clean up old agents (mapped to `<leader>cx`)
+- `:ClaudeSwitch [id]` - Switch to agent worktree
+- `:ClaudeDiffAgent [id]` - Review agent changes with diffview
+- `:ClaudeCleanOrphans` - Clean orphaned worktrees
+
+### Checkpoint Commands
+- `:ClaudeCheckpoints` - Browse checkpoints (mapped to `<leader>cp`)
+- `:ClaudeCheckpointStatus` - Show status (mapped to `<leader>cps`)
+- `:ClaudeCheckpointAccept` - Accept checkpoint (mapped to `<leader>cpa`)
+- `:ClaudeCheckpointReturn` - Return from checkpoint (mapped to `<leader>cpr`)
+- `:ClaudeCheckpointCreate <message>` - Create checkpoint manually
+- `:ClaudeCheckpointRestore <id>` - Restore specific checkpoint
+
+### Inline Diff Management
+- `:ClaudeAcceptAll` - Accept all Claude's changes (same as `<leader>IA`)
 - `:ClaudeResetBaseline` - Reset diff baseline
+- `:ClaudeResetInlineDiff` - Reset inline diff state (use when corrupted)
 - `:ClaudeCleanStaleTracking` - Clean up stale file tracking
+- `:ClaudeUntrackFile` - Untrack current file from diff system
+- `:ClaudeTrackModified` - Track all modified files for diff
+- `:ClaudeUpdateBaseline` - Update baseline for current file
+- `:ClaudeRestoreState` - Restore saved diff state
 
-### Utility Commands
+### Setup & Configuration
 - `:ClaudeInstallHooks` - Install Claude Code hooks for this project
 - `:ClaudeUninstallHooks` - Remove Claude Code hooks
 - `:ClaudeInstallMCP` - Install MCP server dependencies
 - `:ClaudeShowMCPCommand` - Show the command to add MCP server to Claude Code
+
+### Debugging Commands
+- `:ClaudeDebug` - Show general debug information
+- `:ClaudeDebugAgents` - Debug agent state
+- `:ClaudeDebugRegistry` - Debug agent registry
 - `:ClaudeDebugInstall` - Debug plugin installation and paths
 - `:ClaudeDebugInlineDiff` - Debug inline diff state
-- `:ClaudeResetInlineDiff` - Reset inline diff state (use when corrupted)
-- `:ClaudeDebugTracking` - Debug file tracking state
+- `:ClaudeViewLog` - View debug log file
+- `:ClaudeClearLog` - Clear debug log file
 
 ## Usage Examples
 

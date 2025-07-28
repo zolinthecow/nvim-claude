@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Accept hunk functionality now properly handles files without trailing newlines
 - Hook string escaping issues with apostrophes and special characters
 
-## [0.0.4] - 2025-01-20
+## [0.0.4] - 2025-07-26
 
 ### Changed
 - Replaced git stash-based baseline system with git commit objects and custom refs
