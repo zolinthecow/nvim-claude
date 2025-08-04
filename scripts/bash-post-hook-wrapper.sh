@@ -57,9 +57,9 @@ if [[ "$COMMAND" =~ ^rm[[:space:]] ]]; then
                     ABS_PATH_B64=$(echo -n "$ABS_PATH" | base64)
                     
                     # Call untrack function in Neovim
-                    echo "[bash-post-hook-wrapper] Calling nvr-proxy to untrack with base64 encoded path" >> "$LOG_FILE"
-                    TARGET_FILE="$ABS_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').untrack_failed_deletion_b64('$ABS_PATH_B64')\")" 2>&1 | tee -a "$LOG_FILE"
-                    echo "[bash-post-hook-wrapper] nvr-proxy exit code: $?" >> "$LOG_FILE"
+                    echo "[bash-post-hook-wrapper] Calling nvim-rpc to untrack with base64 encoded path" >> "$LOG_FILE"
+                    TARGET_FILE="$ABS_PATH" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').untrack_failed_deletion_b64('$ABS_PATH_B64')\")" 2>&1 | tee -a "$LOG_FILE"
+                    echo "[bash-post-hook-wrapper] nvim-rpc exit code: $?" >> "$LOG_FILE"
                 fi
             fi
         done <<< "$FILES_OUTPUT"

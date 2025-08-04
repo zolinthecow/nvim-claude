@@ -8,7 +8,9 @@ check_python_version() {
     local python_cmd=$1
     if command -v "$python_cmd" &> /dev/null; then
         local version=$("$python_cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        if [[ $(echo "$version >= 3.10" | bc) -eq 1 ]]; then
+        local major=$(echo $version | cut -d. -f1)
+        local minor=$(echo $version | cut -d. -f2)
+        if [[ $major -gt 3 ]] || [[ $major -eq 3 && $minor -ge 10 ]]; then
             echo "$python_cmd"
             return 0
         fi
@@ -44,38 +46,33 @@ fi
 PYTHON_VERSION=$("$PYTHON_CMD" --version 2>&1 | cut -d' ' -f2)
 echo "✅ Found suitable Python: $PYTHON_CMD (version $PYTHON_VERSION)"
 
-if ! command -v nvr &> /dev/null; then
-    echo '❌ Error: nvr (neovim-remote) is required but not installed.'
-    echo '   Install with: pip install neovim-remote'
-    exit 1
-fi
-
 # Setup paths
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-VENV_PATH="$HOME/.local/share/nvim/nvim-claude/mcp-env"
+MCP_VENV_PATH="$HOME/.local/share/nvim/nvim-claude/mcp-env"
 
-# Create virtual environment
-echo '📦 Creating Python virtual environment...'
-"$PYTHON_CMD" -m venv "$VENV_PATH"
+# Create MCP virtual environment
+echo '📦 Creating MCP Python virtual environment...'
+"$PYTHON_CMD" -m venv "$MCP_VENV_PATH"
 
 # Install MCP (try fastmcp first, fallback to mcp)
 echo '📥 Installing MCP package...'
-"$VENV_PATH/bin/pip" install --quiet --upgrade pip
+"$MCP_VENV_PATH/bin/pip" install --quiet --upgrade pip
 
-if "$VENV_PATH/bin/pip" install --quiet fastmcp; then
+if "$MCP_VENV_PATH/bin/pip" install --quiet fastmcp; then
     echo 'fastmcp' > "$SCRIPT_DIR/requirements.txt"
     echo '✨ Using FastMCP (recommended)'
 else
     echo '⚠️  FastMCP not available, using standard mcp package'
-    "$VENV_PATH/bin/pip" install --quiet mcp
+    "$MCP_VENV_PATH/bin/pip" install --quiet mcp
     echo 'mcp' > "$SCRIPT_DIR/requirements.txt"
 fi
 
 echo '✅ MCP server installed successfully!'
 echo "   Using Python: $PYTHON_CMD ($PYTHON_VERSION)"
+echo "   MCP environment: $MCP_VENV_PATH"
 echo ''
 echo 'To add to Claude Code, run this in your project directory:'
-echo "  claude mcp add nvim-lsp -s local $VENV_PATH/bin/python $SCRIPT_DIR/nvim-lsp-server.py"
+echo "  claude mcp add nvim-lsp -s local $MCP_VENV_PATH/bin/python $SCRIPT_DIR/nvim-lsp-server.py"
 echo ''
 echo 'Note: Use -s local to make it available only in the current project.'
 echo 'The MCP server will automatically connect to the Neovim instance for that project.'

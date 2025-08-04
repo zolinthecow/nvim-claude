@@ -15,13 +15,27 @@ function M.update_claude_settings()
     return
   end
 
-  -- Ensure .nvim-claude directory exists
-  local nvim_claude_dir = project_root .. '/.nvim-claude'
-  utils.ensure_dir(nvim_claude_dir)
+  -- Create a unique temp file for this project's nvim server address
+  -- Use project path hash to ensure consistent filename
+  local project_state = require 'nvim-claude.project-state'
+  local project_key = project_state.get_project_key(project_root)
+  local key_hash = vim.fn.sha256(project_key)
   
-  -- Write server address to project-specific file for proxy script
-  local server_file = nvim_claude_dir .. '/nvim-server'
+  -- Store in system temp directory
+  -- Use XDG_RUNTIME_DIR if available, otherwise /tmp
+  local temp_dir = vim.env.XDG_RUNTIME_DIR or '/tmp'
+  local server_file = string.format('%s/nvim-claude-%s-server', temp_dir, key_hash:sub(1, 8))
   vim.fn.writefile({ server_addr }, server_file)
+  
+  -- Debug logging
+  local logger = require('nvim-claude.logger')
+  logger.debug('settings_updater', 'Writing server file', {
+    server_addr = server_addr,
+    server_file = server_file,
+    temp_dir = temp_dir,
+    project_key = project_key,
+    key_hash = key_hash:sub(1, 8)
+  })
   
   -- Migrate old .nvim-server file if it exists
   local old_server_file = project_root .. '/.nvim-server'

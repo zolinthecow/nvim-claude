@@ -32,9 +32,12 @@ if [ -z "$PROJECT_ROOT" ]; then
     exit 1
 fi
 
-# Look for server file in .nvim-claude directory first, then old location as fallback
-SERVER_FILE="$PROJECT_ROOT/.nvim-claude/nvim-server"
-OLD_SERVER_FILE="$PROJECT_ROOT/.nvim-server"
+# Generate the same hash as Neovim to find the server file
+PROJECT_HASH=$(echo -n "$PROJECT_ROOT" | shasum -a 256 | cut -c1-8)
+TEMP_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+SERVER_FILE="$TEMP_DIR/nvim-claude-$PROJECT_HASH-server"
+
+# Look for server file in temp location
 if [ -f "$SERVER_FILE" ]; then
     NVIM_SERVER=$(cat "$SERVER_FILE")
     if [ -n "$NVIM_SERVER" ] && [ -e "$NVIM_SERVER" ]; then
@@ -44,33 +47,6 @@ if [ -f "$SERVER_FILE" ]; then
         # Pass through the output to stdout
         echo "$OUTPUT"
         exit $EXIT_CODE
-    fi
-else
-    # Fallback: check script directory (useful for submodules)
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SERVER_FILE="$SCRIPT_DIR/.nvim-claude/nvim-server"
-    OLD_SERVER_FILE="$SCRIPT_DIR/.nvim-server"
-    if [ -f "$SERVER_FILE" ]; then
-        NVIM_SERVER=$(cat "$SERVER_FILE")
-        if [ -n "$NVIM_SERVER" ] && [ -e "$NVIM_SERVER" ]; then
-            # Capture output and exit code
-            OUTPUT=$(nvr --servername "$NVIM_SERVER" "$@" 2>&1)
-            EXIT_CODE=$?
-            # Pass through the output to stdout
-            echo "$OUTPUT"
-            exit $EXIT_CODE
-        fi
-    elif [ -f "$OLD_SERVER_FILE" ]; then
-        # Try old location as fallback
-        NVIM_SERVER=$(cat "$OLD_SERVER_FILE")
-        if [ -n "$NVIM_SERVER" ] && [ -e "$NVIM_SERVER" ]; then
-            # Capture output and exit code
-            OUTPUT=$(nvr --servername "$NVIM_SERVER" "$@" 2>&1)
-            EXIT_CODE=$?
-            # Pass through the output to stdout
-            echo "$OUTPUT"
-            exit $EXIT_CODE
-        fi
     fi
 fi
 

@@ -4,9 +4,9 @@ local M = {}
 
 -- Check if we're in a git repository
 function M.is_git_repo()
-  local handle = io.popen('git rev-parse --git-dir 2>/dev/null')
+  local handle = io.popen 'git rev-parse --git-dir 2>/dev/null'
   if handle then
-    local result = handle:read('*a')
+    local result = handle:read '*a'
     handle:close()
     return result ~= ''
   end
@@ -16,7 +16,7 @@ end
 -- Get project root (git root or current working directory)
 function M.get_project_root()
   if M.is_git_repo() then
-    local handle = io.popen('git rev-parse --show-toplevel 2>/dev/null')
+    local handle = io.popen 'git rev-parse --show-toplevel 2>/dev/null'
     if handle then
       local root = handle:read('*a'):gsub('\n', '')
       handle:close()
@@ -31,10 +31,10 @@ function M.get_project_root_for_file(file_path)
   if not file_path then
     return M.get_project_root()
   end
-  
+
   -- Get the directory of the file
   local file_dir = vim.fn.fnamemodify(file_path, ':h')
-  
+
   -- Run git command from the file's directory
   local cmd = string.format('cd "%s" && git rev-parse --show-toplevel 2>/dev/null', file_dir)
   local handle = io.popen(cmd)
@@ -45,7 +45,7 @@ function M.get_project_root_for_file(file_path)
       return root
     end
   end
-  
+
   -- Fallback to file's directory if not in git
   return file_dir
 end
@@ -63,8 +63,10 @@ end
 -- Read file contents
 function M.read_file(path)
   local file = io.open(path, 'r')
-  if not file then return nil end
-  local content = file:read('*a')
+  if not file then
+    return nil
+  end
+  local content = file:read '*a'
   file:close()
   return content
 end
@@ -72,7 +74,9 @@ end
 -- Write file contents
 function M.write_file(path, content)
   local file = io.open(path, 'w')
-  if not file then return false end
+  if not file then
+    return false
+  end
   file:write(content)
   file:close()
   return true
@@ -86,7 +90,7 @@ end
 
 -- Generate timestamp string
 function M.timestamp()
-  return os.date('%Y-%m-%d-%H%M%S')
+  return os.date '%Y-%m-%d-%H%M%S'
 end
 
 -- Generate agent directory name
@@ -99,10 +103,12 @@ end
 -- Execute shell command and return output
 function M.exec(cmd)
   local handle = io.popen(cmd .. ' 2>&1')
-  if not handle then return nil, 'Failed to execute command' end
-  local result = handle:read('*a')
+  if not handle then
+    return nil, 'Failed to execute command'
+  end
+  local result = handle:read '*a'
   local ok = handle:close()
-  
+
   -- Better error handling: if close() returns false, the command failed
   -- but we still return the output (which might contain error messages)
   if ok then
@@ -115,13 +121,13 @@ end
 
 -- Check if tmux is available
 function M.has_tmux()
-  local result = M.exec('which tmux')
-  return result and result:match('/tmux')
+  local result = M.exec 'which tmux'
+  return result and result:match '/tmux'
 end
 
 -- Get current tmux session
 function M.get_tmux_session()
-  local result = M.exec('tmux display-message -p "#{session_name}" 2>/dev/null')
+  local result = M.exec 'tmux display-message -p "#{session_name}" 2>/dev/null'
   if result and result ~= '' then
     return result:gsub('\n', '')
   end
@@ -130,10 +136,12 @@ end
 
 -- Get tmux version as number (e.g., 3.4) or 0 if unknown
 function M.tmux_version()
-  local result = M.exec('tmux -V 2>/dev/null')
-  if not result then return 0 end
+  local result = M.exec 'tmux -V 2>/dev/null'
+  if not result then
+    return 0
+  end
   -- Expected output: "tmux 3.4"
-  local ver = result:match('tmux%s+([0-9]+%.[0-9]+)')
+  local ver = result:match 'tmux%s+([0-9]+%.[0-9]+)'
   return tonumber(ver) or 0
 end
 
@@ -148,12 +156,12 @@ function M.write_json(path, data)
   if not success then
     return false, 'Failed to encode JSON: ' .. json
   end
-  
+
   local file = io.open(path, 'w')
-  if not file then 
+  if not file then
     return false, 'Failed to open file for writing: ' .. path
   end
-  
+
   -- Pretty print JSON
   local formatted = json:gsub('},{', '},\n    {'):gsub('\\{', '{\n  '):gsub('\\}', '\n}')
   file:write(formatted)
@@ -167,13 +175,14 @@ function M.read_json(path)
   if not content then
     return nil, 'Failed to read file: ' .. path
   end
-  
+
   local success, data = pcall(vim.fn.json_decode, content)
   if not success then
     return nil, 'Failed to decode JSON: ' .. data
   end
-  
+
   return data, nil
 end
 
-return M 
+return M
+

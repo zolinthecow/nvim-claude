@@ -381,22 +381,22 @@ end
 local function get_hunk_line_range(hunk)
   local start_line = hunk.new_start
   local end_line = hunk.new_start
-  
+
   -- Calculate the actual end line by counting non-deletion lines
   local line_offset = 0
   for _, line in ipairs(hunk.lines) do
-    if not line:match('^%-') then  -- Not a deletion
+    if not line:match '^%-' then -- Not a deletion
       line_offset = line_offset + 1
     end
   end
-  
+
   end_line = start_line + line_offset - 1
-  
+
   -- For pure deletions, they show above the line
   if hunk.new_length == 0 then
     end_line = start_line
   end
-  
+
   return start_line, end_line
 end
 
@@ -409,19 +409,19 @@ function M.next_hunk(bufnr)
 
   -- Get current cursor position
   local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-  
+
   -- Find the next hunk after cursor position
   local next_idx = nil
   local current_hunk_idx = nil
-  
+
   for i, hunk in ipairs(diff_data.hunks) do
     local hunk_start, hunk_end = get_hunk_line_range(hunk)
-    
+
     -- Check if cursor is inside this hunk
     if cursor_line >= hunk_start and cursor_line <= hunk_end then
       current_hunk_idx = i
     end
-    
+
     -- Find first hunk that starts after cursor
     if hunk_start > cursor_line then
       next_idx = i
@@ -449,21 +449,21 @@ function M.prev_hunk(bufnr)
 
   -- Get current cursor position
   local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
-  
+
   -- Find the previous hunk before cursor position
   local prev_idx = nil
   local current_hunk_idx = nil
-  
+
   -- First pass: identify if we're in a hunk and find previous hunks
   for i = #diff_data.hunks, 1, -1 do
     local hunk = diff_data.hunks[i]
     local hunk_start, hunk_end = get_hunk_line_range(hunk)
-    
+
     -- Check if cursor is inside this hunk
     if cursor_line >= hunk_start and cursor_line <= hunk_end then
       current_hunk_idx = i
     end
-    
+
     -- Find last hunk that starts before cursor
     if hunk_start < cursor_line and not current_hunk_idx then
       prev_idx = i
@@ -668,11 +668,11 @@ function M.accept_current_hunk(bufnr)
   local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
   local baseline_content, git_err = utils.exec(baseline_cmd)
   -- Check for git error messages that indicate file doesn't exist in stash
-  if git_err or not baseline_content or baseline_content:match('^fatal:') or baseline_content:match('^error:') then
+  if git_err or not baseline_content or baseline_content:match '^fatal:' or baseline_content:match '^error:' then
     baseline_content = '' -- Treat as new file
   else
     -- Ensure baseline content ends with a newline for proper diff/patch handling
-    if baseline_content ~= '' and not baseline_content:match('\n$') then
+    if baseline_content ~= '' and not baseline_content:match '\n$' then
       baseline_content = baseline_content .. '\n'
     end
   end
@@ -696,7 +696,7 @@ function M.accept_current_hunk(bufnr)
   -- Step 5: Recompute diff against updated baseline
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local current_content = table.concat(current_lines, '\n')
-  
+
   local new_diff_data = M.compute_diff(updated_baseline_content, current_content)
 
   -- Step 6: Update state based on remaining hunks
@@ -729,6 +729,48 @@ function M.accept_current_hunk(bufnr)
   end
 end
 
+-- Manually reject a hunk by removing its content from the buffer
+function M.manually_reject_hunk(bufnr, hunk)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local new_lines = {}
+
+  -- For a new file, the hunk represents all additions
+  -- We need to remove the lines that correspond to additions in this hunk
+  local current_line = 1
+  local hunk_start = hunk.new_start
+  local additions_count = 0
+
+  -- Count additions in this hunk
+  for _, line in ipairs(hunk.lines) do
+    if line:match '^%+' then
+      additions_count = additions_count + 1
+    end
+  end
+
+  -- Copy lines before the hunk
+  for i = 1, hunk_start - 1 do
+    if lines[i] then
+      table.insert(new_lines, lines[i])
+    end
+  end
+
+  -- Skip the lines that correspond to additions in this hunk
+  -- Copy lines after the hunk
+  for i = hunk_start + additions_count, #lines do
+    if lines[i] then
+      table.insert(new_lines, lines[i])
+    end
+  end
+
+  -- Update buffer
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, new_lines)
+
+  -- Save the file
+  vim.api.nvim_buf_call(bufnr, function()
+    vim.cmd 'write!'
+  end)
+end
+
 -- Reject current hunk
 function M.reject_current_hunk(bufnr)
   local diff_data = M.active_diffs[bufnr]
@@ -750,23 +792,74 @@ function M.reject_current_hunk(bufnr)
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  local persistence = require 'nvim-claude.inline-diff-persistence'
 
-  -- Generate patch for this hunk
-  local patch = M.generate_hunk_patch(hunk, relative_path)
-  local patch_file = vim.fn.tempname() .. '.patch'
-  utils.write_file(patch_file, patch)
+  -- Check if this is a new file
+  local stash_ref = persistence.get_baseline_ref()
+  if stash_ref then
+    local baseline_check = string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, stash_ref, relative_path)
+    local baseline_result = utils.exec(baseline_check)
 
-  -- Apply reverse patch to the working directory
-  local apply_cmd = string.format('cd "%s" && git apply --reverse --verbose "%s" 2>&1', git_root, patch_file)
-  local result, err = utils.exec(apply_cmd)
+    if baseline_result and (baseline_result:match '^fatal:' or baseline_result:match 'does not exist') then
+      -- This is a new file - manually remove the hunk content
+      M.manually_reject_hunk(bufnr, hunk)
+      -- Reload the buffer to ensure it's updated
+      vim.api.nvim_buf_call(bufnr, function()
+        vim.cmd 'checktime'
+      end)
 
-  if err or (result and result:match 'error:') then
-    vim.notify('Failed to reject hunk: ' .. (err or result), vim.log.levels.ERROR)
-    vim.fn.delete(patch_file)
-    return
+      -- Check if file is now empty
+      local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      local is_empty = #current_lines == 0 or (#current_lines == 1 and current_lines[1] == '')
+
+      if is_empty then
+        -- File is empty after rejecting - prompt to delete
+        local filename = vim.fn.fnamemodify(relative_path, ':t')
+        -- Small delay to let any pending messages clear
+        vim.cmd 'redraw'
+        local delete_choice = vim.fn.confirm(filename, '&Delete\n&Keep', 1)
+        if delete_choice == 1 then
+          vim.cmd('bdelete! ' .. bufnr)
+          os.remove(file_path)
+          vim.notify('Deleted file: ' .. relative_path, vim.log.levels.INFO)
+
+          -- Remove from tracking
+          local hooks = require 'nvim-claude.hooks'
+          if hooks.claude_edited_files[relative_path] then
+            hooks.claude_edited_files[relative_path] = nil
+            persistence.save_state {
+              stash_ref = persistence.current_stash_ref,
+              claude_edited_files = hooks.claude_edited_files,
+            }
+          end
+        end
+      end
+      return -- Don't continue to duplicate check
+    else
+      -- Existing file - use git apply
+      -- Generate patch for this hunk
+      local patch = M.generate_hunk_patch(hunk, relative_path)
+      local patch_file = vim.fn.tempname() .. '.patch'
+      utils.write_file(patch_file, patch)
+
+      -- Apply reverse patch to the working directory
+      local apply_cmd = string.format('cd "%s" && git apply --reverse --verbose "%s" 2>&1', git_root, patch_file)
+      local result, err = utils.exec(apply_cmd)
+
+      if err or (result and result:match 'error:') then
+        vim.notify('Failed to reject hunk: ' .. (err or result), vim.log.levels.ERROR)
+        vim.fn.delete(patch_file)
+        return
+      end
+
+      vim.fn.delete(patch_file)
+
+      -- Reload the buffer
+      vim.api.nvim_buf_call(bufnr, function()
+        vim.cmd 'checktime'
+      end)
+    end
   end
-
-  vim.fn.delete(patch_file)
 
   -- Reload the buffer
   vim.api.nvim_buf_call(bufnr, function()
@@ -783,10 +876,17 @@ function M.reject_current_hunk(bufnr)
     vim.notify('No baseline stash reference found', vim.log.levels.ERROR)
     return
   end
-  local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
+  local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, stash_ref, relative_path)
   local new_baseline = utils.exec(baseline_cmd)
 
-  if new_baseline then
+  -- Check if this is a new file (doesn't exist in baseline)
+  local is_new_file = false
+  if new_baseline and (new_baseline:match '^fatal:' or new_baseline:match 'does not exist') then
+    is_new_file = true
+    new_baseline = '' -- Empty baseline for new files
+  end
+
+  if new_baseline ~= nil then
     -- Get current content
     local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     local current_content = table.concat(current_lines, '\n')
@@ -795,7 +895,22 @@ function M.reject_current_hunk(bufnr)
     local new_diff_data = M.compute_diff(new_baseline, current_content)
 
     if not new_diff_data or #new_diff_data.hunks == 0 then
-      vim.notify('All changes rejected for this file.', vim.log.levels.INFO)
+      -- All changes rejected
+      if is_new_file and #current_lines == 0 then
+        -- New file with all content rejected - prompt to delete
+        -- Use shorter prompt to avoid display issues
+        local filename = vim.fn.fnamemodify(relative_path, ':t')
+        local delete_choice = vim.fn.confirm('Delete ' .. filename .. '?', '&Yes\n&No', 1)
+        if delete_choice == 1 then
+          vim.cmd('bdelete! ' .. bufnr)
+          os.remove(file_path)
+          vim.notify('Deleted file: ' .. relative_path, vim.log.levels.INFO)
+        else
+          vim.notify('File kept empty.', vim.log.levels.INFO)
+        end
+      else
+        vim.notify('All changes rejected for this file.', vim.log.levels.INFO)
+      end
 
       -- Remove this file from Claude edited files tracking
       if hooks.claude_edited_files[relative_path] then
@@ -816,7 +931,10 @@ function M.reject_current_hunk(bufnr)
       -- Refresh visualization
       M.apply_diff_visualization(bufnr)
       M.jump_to_hunk(bufnr, 1)
-      vim.notify(string.format('%d hunks remaining', #new_diff_data.hunks), vim.log.levels.INFO)
+      -- Delay notification to avoid interfering with potential delete prompt
+      vim.defer_fn(function()
+        vim.notify(string.format('%d hunks remaining', #new_diff_data.hunks), vim.log.levels.INFO)
+      end, 100)
     end
   end
 end
@@ -1033,35 +1151,49 @@ function M.reject_all_hunks(bufnr)
     return
   end
 
-  local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
+  local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, stash_ref, relative_path)
   local baseline_content, err = utils.exec(baseline_cmd)
-  
-  if err or not baseline_content then
-    vim.notify('Failed to get baseline content: ' .. (err or 'unknown error'), vim.log.levels.ERROR)
-    return
-  end
 
-  -- If baseline is empty string, it means the file didn't exist in the baseline
-  if baseline_content == '' then
-    baseline_content = ''  -- Explicitly set to empty for new files
-  end
+  -- Check if file didn't exist in baseline (new file)
+  if baseline_content and (baseline_content:match '^fatal:' or baseline_content:match 'does not exist') then
+    -- This is a new file - delete it
+    -- Use shorter prompt to avoid display issues
+    local filename = vim.fn.fnamemodify(relative_path, ':t')
+    local delete_choice = vim.fn.confirm('Delete ' .. filename .. '?', '&Yes\n&No', 1)
+    if delete_choice == 1 then
+      -- Close the buffer first
+      vim.cmd('bdelete! ' .. bufnr)
+      -- Delete the file
+      os.remove(file_path)
+      vim.notify('Deleted file: ' .. relative_path, vim.log.levels.INFO)
+    else
+      vim.notify('File kept, but changes rejected', vim.log.levels.INFO)
+      return
+    end
+  else
+    -- Existing file - restore to baseline
+    if err or not baseline_content or baseline_content == '' then
+      vim.notify('Failed to get baseline content: ' .. (err or 'unknown error'), vim.log.levels.ERROR)
+      return
+    end
 
-  -- Set buffer content directly to baseline
-  local baseline_lines = vim.split(baseline_content, '\n', { plain = true })
-  -- Remove empty last line if present (vim.split adds it)
-  if baseline_lines[#baseline_lines] == '' then
-    table.remove(baseline_lines)
-  end
-  
-  -- Set buffer lines and mark as modified
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, baseline_lines)
-  
-  -- Write the buffer to disk
-  vim.api.nvim_buf_call(bufnr, function()
-    vim.cmd 'write!'
-  end)
+    -- Set buffer content directly to baseline
+    local baseline_lines = vim.split(baseline_content, '\n', { plain = true })
+    -- Remove empty last line if present (vim.split adds it)
+    if baseline_lines[#baseline_lines] == '' then
+      table.remove(baseline_lines)
+    end
 
-  vim.notify('Rejected all Claude changes', vim.log.levels.INFO)
+    -- Set buffer lines and mark as modified
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, baseline_lines)
+
+    -- Write the buffer to disk
+    vim.api.nvim_buf_call(bufnr, function()
+      vim.cmd 'write!'
+    end)
+
+    vim.notify('Rejected all Claude changes', vim.log.levels.INFO)
+  end
 
   -- Close inline diff
   M.close_inline_diff(bufnr)
@@ -1109,7 +1241,6 @@ function M.close_inline_diff(bufnr, keep_baseline)
 
   -- Clean up state
   M.active_diffs[bufnr] = nil
-
 
   -- Check if all diffs are closed
   local has_active_diffs = false
@@ -1208,8 +1339,28 @@ function M.next_diff_file()
   end
 
   local next_file = files_with_diffs[next_idx]
-  vim.cmd('edit ' .. vim.fn.fnameescape(next_file))
-  vim.notify(string.format('Diff file %d/%d: %s', next_idx, #files_with_diffs, vim.fn.fnamemodify(next_file, ':t')), vim.log.levels.INFO)
+  
+  -- Check if file exists
+  if vim.fn.filereadable(next_file) == 0 then
+    -- File is deleted, use special handler
+    local persistence = require 'nvim-claude.inline-diff-persistence'
+    local baseline_ref = persistence.get_baseline_ref()
+    
+    if baseline_ref then
+      -- For deleted files, we need to use defer_fn to ensure the highlighting works
+      vim.defer_fn(function()
+        local hooks = require 'nvim-claude.hooks'
+        hooks.show_deleted_file_diff(next_file, git_root, baseline_ref)
+        vim.notify(string.format('[DELETED] Diff file %d/%d: %s', next_idx, #files_with_diffs, vim.fn.fnamemodify(next_file, ':t')), vim.log.levels.INFO)
+      end, 1)
+    else
+      vim.notify('No baseline found for deleted file', vim.log.levels.ERROR)
+    end
+  else
+    -- File exists, open normally
+    vim.cmd('edit ' .. vim.fn.fnameescape(next_file))
+    vim.notify(string.format('Diff file %d/%d: %s', next_idx, #files_with_diffs, vim.fn.fnamemodify(next_file, ':t')), vim.log.levels.INFO)
+  end
 end
 
 -- Navigate to previous file with diff
@@ -1251,8 +1402,28 @@ function M.prev_diff_file()
   end
 
   local prev_file = files_with_diffs[prev_idx]
-  vim.cmd('edit ' .. vim.fn.fnameescape(prev_file))
-  vim.notify(string.format('Diff file %d/%d: %s', prev_idx, #files_with_diffs, vim.fn.fnamemodify(prev_file, ':t')), vim.log.levels.INFO)
+  
+  -- Check if file exists
+  if vim.fn.filereadable(prev_file) == 0 then
+    -- File is deleted, use special handler
+    local persistence = require 'nvim-claude.inline-diff-persistence'
+    local baseline_ref = persistence.get_baseline_ref()
+    
+    if baseline_ref then
+      -- For deleted files, we need to use defer_fn to ensure the highlighting works
+      vim.defer_fn(function()
+        local hooks = require 'nvim-claude.hooks'
+        hooks.show_deleted_file_diff(prev_file, git_root, baseline_ref)
+        vim.notify(string.format('[DELETED] Diff file %d/%d: %s', prev_idx, #files_with_diffs, vim.fn.fnamemodify(prev_file, ':t')), vim.log.levels.INFO)
+      end, 1)
+    else
+      vim.notify('No baseline found for deleted file', vim.log.levels.ERROR)
+    end
+  else
+    -- File exists, open normally
+    vim.cmd('edit ' .. vim.fn.fnameescape(prev_file))
+    vim.notify(string.format('Diff file %d/%d: %s', prev_idx, #files_with_diffs, vim.fn.fnamemodify(prev_file, ':t')), vim.log.levels.INFO)
+  end
 end
 
 -- Manual refresh function
@@ -1271,7 +1442,7 @@ function M.refresh_inline_diff(bufnr)
     local git_root = utils.get_project_root()
     local file_path = vim.api.nvim_buf_get_name(bufnr)
     local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-    
+
     if hooks.claude_edited_files[relative_path] then
       -- This is a corrupted state - Claude-tracked file with no baseline
       vim.notify('No baseline found for Claude-tracked file', vim.log.levels.WARN)
@@ -1290,9 +1461,9 @@ function M.refresh_inline_diff(bufnr)
   -- Get baseline content
   local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, stash_ref, relative_path)
   local baseline_content, git_err = utils.exec(baseline_cmd)
-  
+
   -- Check for git error messages that indicate file doesn't exist in stash
-  if git_err or not baseline_content or baseline_content:match('^fatal:') or baseline_content:match('^error:') then
+  if git_err or not baseline_content or baseline_content:match '^fatal:' or baseline_content:match '^error:' then
     baseline_content = '' -- New file
   end
 
@@ -1348,10 +1519,10 @@ function M.list_diff_files()
 
   for relative_path, _ in pairs(hooks.claude_edited_files) do
     local full_path = git_root .. '/' .. relative_path
-    
+
     -- Check if file exists on disk
     local file_exists = vim.fn.filereadable(full_path) == 1
-    
+
     -- Check if we have an open buffer for this file
     local bufnr = vim.fn.bufnr(full_path)
     local diff_data = nil
@@ -1403,13 +1574,13 @@ function M.list_diff_files()
   }, function(choice, idx)
     if choice and idx then
       local selected_file = items[idx]
-      
+
       if selected_file.deleted then
         -- For deleted files, use the special handler
         local hooks = require 'nvim-claude.hooks'
         local persistence = require 'nvim-claude.inline-diff-persistence'
         local baseline_ref = persistence.get_baseline_ref()
-        
+
         if baseline_ref then
           hooks.show_deleted_file_diff(selected_file.path, git_root, baseline_ref)
         else
@@ -1420,18 +1591,18 @@ function M.list_diff_files()
         if vim.fn.filereadable(selected_file.path) == 0 then
           -- File was deleted outside of Claude, untrack it
           vim.notify('File no longer exists: ' .. selected_file.relative_path, vim.log.levels.WARN)
-          
+
           -- Untrack the file
           local hooks = require 'nvim-claude.hooks'
           hooks.claude_edited_files[selected_file.relative_path] = nil
-          
+
           -- Save the updated state
           local persistence = require 'nvim-claude.inline-diff-persistence'
-          persistence.save_state({
+          persistence.save_state {
             stash_ref = persistence.get_baseline_ref(),
-            claude_edited_files = hooks.claude_edited_files
-          })
-          
+            claude_edited_files = hooks.claude_edited_files,
+          }
+
           vim.notify('File has been untracked', vim.log.levels.INFO)
         else
           -- File exists, open it normally

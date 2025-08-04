@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2025-08-04
+
 ### Added
+- **Global state storage system** - All plugin state now stored globally instead of project directories
+  - State files moved from `.nvim-claude/` to `~/.local/share/nvim/nvim-claude/`
+  - Project identification using filesystem paths for proper isolation
+  - Automatic migration from local to global storage on first load
+  - `:ClaudeListProjects` command to view all projects with state
+  - `:ClaudeCleanupProjects` command to remove state for deleted projects
 - Checkpoint system that automatically saves codebase state before each Claude message
   - Time-travel feature to browse and restore any previous checkpoint
   - Preview mode for safely exploring checkpoints without committing
@@ -18,15 +26,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Missing `log` function in `hook-common.sh`
 - File deletion tracking for rm commands (completed from work-in-progress)
 - Cursor-relative hunk navigation - `]h` and `[h` now navigate relative to cursor position instead of stored state
+- `:ClaudeKillAll` command to terminate all background agents
+- **Python-based RPC client** to replace `nvr` (neovim-remote) dependency
+  - New `nvim_rpc.py` script using `pynvim` library for Neovim communication
+  - Wrapper script `nvim-rpc.sh` to manage Python virtual environment
+  - `:ClaudeInstallRPC` command to install the RPC client separately
+  - Automatic project-specific Neovim server discovery
+- Separate installation scripts for RPC and MCP components
+  - `scripts/install-rpc.sh` for Python RPC client with pynvim
+  - MCP server installation remains in `mcp-server/install.sh`
+  - Each component uses its own Python virtual environment
 
 ### Changed
+- **Breaking**: Plugin state no longer stored in project directories
+  - `.nvim-claude/` directories are no longer created in projects
+  - Server files now stored in system temp directory (`/tmp` or `$XDG_RUNTIME_DIR`)
+  - Logs stored globally at `~/.local/share/nvim/nvim-claude/logs/`
+- Background agents now start in their working directory instead of main project
+- Agent instructions stored in `CLAUDE.local.md` instead of initial prompt
+- Agent registry is now project-specific instead of global
+- Branch selection UI starts in normal mode instead of insert mode
 - Checkpoint creation now uses temporary git index to avoid polluting staging area
 - Optimized checkpoint listing from O(n) to O(1) - uses single git command instead of multiple
 - All hooks (pre/post tool use, bash, user prompt) now use base64 encoding to avoid shell escaping issues
+- MCP server updated to find Neovim server in new temp directory location
+- **Breaking**: Removed `nvr` (neovim-remote) dependency
+  - All hook scripts now use `nvim-rpc.sh` instead of `nvr-proxy.sh`
+  - Updated pre-hook, post-hook, user-prompt-hook, stop-hook, and bash-hook wrappers
+  - Git pre-commit hook updated to use new RPC client
+- Fixed Python version detection in install scripts
+  - Removed `bc` dependency for version comparison
+  - Now uses pure bash arithmetic for version checks
+- Updated documentation to reflect RPC client changes
+  - README.md now lists Python 3.8+ as requirement instead of nvr
+  - CLAUDE.md updated with new debugging commands and examples
 
 ### Fixed
 - Accept hunk functionality now properly handles files without trailing newlines
 - Hook string escaping issues with apostrophes and special characters
+- Background agents properly stash untracked files with `-u` flag
+- Stash application in agents uses SHA references for cross-worktree compatibility
+- Server file writing delay issue causing hook communication failures
+- Hardcoded paths in `user-prompt-hook-wrapper.sh` and `stop-hook-validator.sh`
+  - Now dynamically finds files in current project directory
+  - No longer has user-specific paths hardcoded
+- LSP diagnostics stale data issues
+  - Fixed path construction bug in `get_session_diagnostic_counts`
+  - Now stores full paths instead of relative paths in `session_edited_files`
+  - Added `_refresh_buffer_diagnostics` helper to clear stale diagnostics
+- Navigation with deleted files (`]f` and `[f` commands)
+  - Now properly checks file existence before opening
+  - Uses special deleted file handler for non-existent files
+  - Added `vim.defer_fn` for proper highlighting
+- ClaudeChat (`<leader>cc`) command not showing tmux pane
+  - Added explicit `tmux select-pane` command after pane creation
+  - Ensures new pane is focused and visible to user
+- Rejecting new files created by Claude now properly deletes them instead of leaving empty files
 
 ## [0.0.4] - 2025-07-26
 

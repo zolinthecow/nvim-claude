@@ -33,7 +33,7 @@ The inline diff system uses git commits as immutable baselines for tracking chan
 - **Baseline Creation**: When Claude first edits files, `hooks.pre_tool_use_hook()` creates a baseline commit
 - **File Tracking**: `hooks.claude_edited_files` tracks which files Claude has modified (relative paths)
 - **Diff Display**: When opening a tracked file, computes diff between baseline commit version and working directory
-- **State Persistence**: `inline-diff-persistence.lua` saves state to project-local `.nvim-claude/inline-diff-state.json`
+- **State Persistence**: `inline-diff-persistence.lua` saves state globally via `project-state.lua`
 - **Baseline Storage**: Commits are stored in git ref `refs/nvim-claude/baseline`
 
 Key functions flow:
@@ -50,6 +50,7 @@ init.lua (entry point)
 │   ├── inline-diff-persistence.lua (state management)
 │   ├── inline-diff.lua (diff visualization)
 │   └── inline-diff-debug.lua (debug utilities)
+├── project-state.lua (global state storage)
 ├── tmux.lua (chat interface)
 ├── commands.lua (user commands)
 ├── mappings.lua (keybindings)
@@ -71,16 +72,17 @@ The plugin maintains several types of state:
 - **Baseline Reference**: `persistence.get_baseline_ref()` - SHA of the baseline commit
 - **Tracked Files**: `hooks.claude_edited_files` - Map of relative paths  
 - **Active Diffs**: `inline-diff.active_diffs[bufnr]` - Current diff data per buffer
-- **Persistence Locations**:
-  - Project-local: `.nvim-claude/inline-diff-state.json` (primary)
-  - Global fallback: `~/.local/share/nvim/nvim-claude-inline-diff-state.json`
-- **Agent Registry**: `.nvim-claude/agent-registry.json` (project-specific)
+- **Persistence Locations** (all stored globally):
+  - Inline diff state: `~/.local/share/nvim/nvim-claude/projects/<path-hash>/inline-diff-state.json`
+  - Agent registry: `~/.local/share/nvim/nvim-claude/projects/<path-hash>/agent-registry.json`
+  - Debug logs: `~/.local/share/nvim/nvim-claude/logs/<path-hash>-debug.log`
+  - Server file: `/tmp/nvim-claude-<path-hash>-server` (or `$XDG_RUNTIME_DIR`)
 - **Checkpoint Data**: Stored as git commits with refs `refs/nvim-claude/checkpoints/*`
 
 State cleanup happens when:
 - All hunks in a file are accepted/rejected → File removed from tracking
 - All tracked files processed → Baseline cleared, persistence deleted
-- Project migration → Old global state migrated to project-local on first load
+- Project deleted → Use `:ClaudeCleanupProjects` to remove orphaned state
 
 #### 4. Hook System Integration
 The plugin integrates with Claude Code's hook system via `.claude/settings.local.json`:
@@ -112,7 +114,7 @@ The plugin integrates with Claude Code's hook system via `.claude/settings.local
 }
 ```
 
-Hooks use wrapper scripts that handle base64 encoding and call `nvr` (neovim-remote) to communicate with the running Neovim instance.
+Hooks use wrapper scripts that handle base64 encoding and call `nvim-rpc.sh` (Python-based RPC client using pynvim) to communicate with the running Neovim instance.
 
 ### Key Implementation Details
 
@@ -146,7 +148,7 @@ Hooks use wrapper scripts that handle base64 encoding and call `nvr` (neovim-rem
 4. Update README.md with new command/keymap
 
 #### Debugging State Issues
-1. Check persistence file: `cat .nvim-claude/inline-diff-state.json | jq`
+1. Check persistence file: `cat ~/.local/share/nvim/nvim-claude/projects/<path-hash>/inline-diff-state.json | jq`
 2. Check baseline commit exists: `git show refs/nvim-claude/baseline`
 3. Verify tracked files: `:lua vim.inspect(require('nvim-claude.hooks').claude_edited_files)`
 4. Check baseline ref: `:lua print(require('nvim-claude.inline-diff-persistence').get_baseline_ref())`
@@ -215,7 +217,7 @@ This is a Neovim plugin that integrates with Claude Code (the CLI tool). It trac
 #### 3. Common Gotchas
 - **New Files**: Files that don't exist in the baseline commit will cause git errors. Always check for `fatal:` or `error:` in git command outputs.
 - **Path Handling**: Always use `vim.pesc()` when escaping paths for pattern matching.
-- **Persistence**: The plugin uses project-local (`.nvim-claude/`) persistence with global fallback.
+- **Persistence**: The plugin uses global storage in `~/.local/share/nvim/nvim-claude/`.
 - **Error Handling**: `utils.exec()` returns output even on error - check both return values and content for error messages.
 - **Baseline vs Checkpoints**: Baselines track Claude's edits; checkpoints save user work states.
 
@@ -244,7 +246,7 @@ This is a Neovim plugin that integrates with Claude Code (the CLI tool). It trac
 :lua print(require('nvim-claude.inline-diff-persistence').get_baseline_ref())
 
 " View persistence state
-:!cat .nvim-claude/inline-diff-state.json | jq
+:!cat ~/.local/share/nvim/nvim-claude/projects/*/inline-diff-state.json | jq
 ```
 
 #### 7. Common Tasks
@@ -307,21 +309,21 @@ tail -50 ~/.local/share/nvim/nvim-claude-hooks.log
 tail -100 ~/.local/share/nvim/nvim-claude-hooks.log | grep -A5 -B5 "filename"
 ```
 
-#### 2. Test nvr Commands Manually
+#### 2. Test nvim-rpc Commands Manually
 Before debugging complex hook flows, test individual components:
 
 ```bash
-# Test basic nvr connectivity
-./scripts/nvr-proxy.sh --remote-expr "1+1"
+# Test basic nvim-rpc connectivity
+./scripts/nvim-rpc.sh --remote-expr "1+1"
 
 # Test luaeval syntax
-./scripts/nvr-proxy.sh --remote-expr 'luaeval("1+1")'
+./scripts/nvim-rpc.sh --remote-expr 'luaeval("1+1")'
 
 # Test requiring a module
-./scripts/nvr-proxy.sh --remote-expr 'luaeval("require(\"nvim-claude.hooks\")")'
+./scripts/nvim-rpc.sh --remote-expr 'luaeval("require(\"nvim-claude.hooks\")")'
 
 # Test specific functions (with TARGET_FILE for correct project)
-TARGET_FILE="/path/to/file" ./scripts/nvr-proxy.sh --remote-expr 'luaeval("require(\"nvim-claude.hooks\").some_function()")'
+TARGET_FILE="/path/to/file" ./scripts/nvim-rpc.sh --remote-expr 'luaeval("require(\"nvim-claude.hooks\").some_function()")'
 ```
 
 #### 3. Debug Hook Command Construction
@@ -332,7 +334,7 @@ If hooks are failing, manually construct and test the exact command:
 ABS_PATH="/path/to/file"
 ABS_PATH_ESCAPED=$(echo "$ABS_PATH" | sed "s/\\\\/\\\\\\\\/g" | sed "s/'/\\\\'/g")
 echo "Escaped path: $ABS_PATH_ESCAPED"
-TARGET_FILE="$ABS_PATH" ./scripts/nvr-proxy.sh --remote-expr "luaeval(\"require('nvim-claude.hooks').track_deleted_file('$ABS_PATH_ESCAPED')\")"
+TARGET_FILE="$ABS_PATH" ./scripts/nvim-rpc.sh --remote-expr "luaeval(\"require('nvim-claude.hooks').track_deleted_file('$ABS_PATH_ESCAPED')\")"
 ```
 
 #### 4. Check Module Loading
@@ -340,10 +342,10 @@ If functions appear to not exist:
 
 ```bash
 # Force reload module and test
-./scripts/nvr-proxy.sh -c "lua package.loaded['nvim-claude.hooks'] = nil; require('nvim-claude.hooks')"
+./scripts/nvim-rpc.sh -c "lua package.loaded['nvim-claude.hooks'] = nil; require('nvim-claude.hooks')"
 
 # Check if function exists
-./scripts/nvr-proxy.sh --remote-expr "luaeval(\"type(require('nvim-claude.hooks').function_name)\")"
+./scripts/nvim-rpc.sh --remote-expr "luaeval(\"type(require('nvim-claude.hooks').function_name)\")"
 ```
 
 #### 5. Trace Execution Flow
@@ -351,14 +353,14 @@ When debugging complex issues like deletion tracking:
 
 1. **Verify hook is called**: Check logs for "Hook called at"
 2. **Check command parsing**: Look for "Detected rm command" or similar
-3. **Verify nvr execution**: Look for "Calling nvr-proxy with:"
+3. **Verify nvim-rpc execution**: Look for "Calling nvim-rpc with:"
 4. **Check return values**: Look for exit codes and output
 5. **Verify state changes**: Check `claude_edited_files` and baseline refs
 
 ```bash
 # Check current state
-./scripts/nvr-proxy.sh --remote-expr "luaeval(\"vim.inspect(require('nvim-claude.hooks').claude_edited_files)\")"
-./scripts/nvr-proxy.sh --remote-expr "luaeval(\"require('nvim-claude.inline-diff-persistence').get_baseline_ref()\")"
+./scripts/nvim-rpc.sh --remote-expr "luaeval(\"vim.inspect(require('nvim-claude.hooks').claude_edited_files)\")"
+./scripts/nvim-rpc.sh --remote-expr "luaeval(\"require('nvim-claude.inline-diff-persistence').get_baseline_ref()\")"
 ```
 
 #### 6. Common Hook Issues and Solutions
@@ -402,8 +404,9 @@ tail -20 ~/.local/share/nvim/nvim-claude-hooks.log
 - Always use single quotes instead of double quotes.
 
 ### Important Hints for Claude Code
-- Hooks use wrapper scripts that handle base64 encoding before calling nvr
+- Hooks use wrapper scripts that handle base64 encoding before calling nvim-rpc
 - The wrapper scripts are located in the `scripts/` directory of the plugin
 - Base64 encoding is used to safely pass file paths and other data through shell commands
+- The nvim-rpc.sh script uses Python with pynvim library for RPC communication (no nvr dependency)
 
 ```

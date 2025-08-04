@@ -61,25 +61,50 @@ def get_nvim_server() -> str:
     """Get the current Neovim server address.
 
     Search order:
-    1. Project-local .nvim-claude/nvim-server (relative to cwd).
-    2. Same but via absolute cwd path.
-    3. Global path under ~/.local/share/nvim/nvim-claude/nvim-server.
-    4. NVIM_SERVER environment variable.
-    5. /tmp/nvimsocket (common default).
+    1. NVIM environment variable (if running inside Neovim terminal).
+    2. Temp directory server file based on project root hash.
+    3. Project-local .nvim-claude/nvim-server (deprecated).
+    4. Global path under ~/.local/share/nvim/nvim-claude/nvim-server (deprecated).
+    5. NVIM_SERVER environment variable.
+    6. /tmp/nvimsocket (common default).
     """
-    # Project-specific location (relative) - check this FIRST
+    # If set in NVIM environment (running in Neovim terminal), use that
+    if "NVIM" in os.environ:
+        return os.environ["NVIM"]
+
+    # Try to find server file in temp directory based on project root
+    cwd = os.getcwd()
+    import subprocess
+    try:
+        # Try to get git root
+        result = subprocess.run(['git', 'rev-parse', '--show-toplevel'], 
+                                capture_output=True, text=True, cwd=cwd)
+        if result.returncode == 0:
+            project_root = result.stdout.strip()
+            # Generate the same hash as Neovim to find the server file
+            import hashlib
+            key_hash = hashlib.sha256(project_root.encode()).hexdigest()
+            temp_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
+            server_file = f"{temp_dir}/nvim-claude-{key_hash[:8]}-server"
+            if os.path.exists(server_file):
+                with open(server_file, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+    except:
+        pass
+
+    # Project-specific location (relative) - deprecated but check for compatibility
     rel_project_path = os.path.join(".nvim-claude", "nvim-server")
     if os.path.exists(rel_project_path):
         with open(rel_project_path, "r", encoding="utf-8") as f:
             return f.read().strip()
 
-    # Project-specific via cwd absolute path
+    # Project-specific via cwd absolute path - deprecated
     cwd_plugin_path = os.path.join(os.getcwd(), ".nvim-claude", "nvim-server")
     if os.path.exists(cwd_plugin_path):
         with open(cwd_plugin_path, "r", encoding="utf-8") as f:
             return f.read().strip()
 
-    # Global location
+    # Global location - deprecated
     global_path = os.path.expanduser("~/.local/share/nvim/nvim-claude/nvim-server")
     if os.path.exists(global_path):
         with open(global_path, "r", encoding="utf-8") as f:

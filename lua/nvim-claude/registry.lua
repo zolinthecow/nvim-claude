@@ -20,49 +20,38 @@ function M.setup(config)
   end
 end
 
--- Get registry path for current project
+-- Get registry path for current project (DEPRECATED - kept for compatibility)
 function M.get_registry_path()
-  local project_root = utils.get_project_root()
-  if not project_root then
-    return nil
-  end
-  
-  local data_dir = project_root .. '/.nvim-claude'
-  utils.ensure_dir(data_dir)
-  
-  return data_dir .. '/agent-registry.json'
+  -- This function is deprecated but kept for backward compatibility
+  return nil
 end
 
 -- Load registry from disk
 function M.load()
-  M.registry_path = M.get_registry_path()
-  if not M.registry_path then
+  local project_root = utils.get_project_root()
+  if not project_root then
     M.agents = {}
     return
   end
   
-  local content = utils.read_file(M.registry_path)
-  if content then
-    local ok, data = pcall(vim.json.decode, content)
-    if ok and type(data) == 'table' then
-      M.agents = data
-      M.validate_agents()
-    else
-      M.agents = {}
-    end
-  else
-    -- No registry file yet for this project
-    M.agents = {}
-  end
+  -- Load from global storage
+  local project_state = require('nvim-claude.project-state')
+  M.agents = project_state.get_agent_registry(project_root) or {}
+  
+  -- Validate loaded agents
+  M.validate_agents()
 end
 
 -- Save registry to disk
 function M.save()
-  M.registry_path = M.registry_path or M.get_registry_path()
-  if not M.registry_path then return false end
+  local project_root = utils.get_project_root()
+  if not project_root then
+    return false
+  end
   
-  local content = vim.json.encode(M.agents)
-  return utils.write_file(M.registry_path, content)
+  -- Save to global storage
+  local project_state = require('nvim-claude.project-state')
+  return project_state.save_agent_registry(project_root, M.agents)
 end
 
 -- Validate agents (remove stale entries)

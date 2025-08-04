@@ -19,15 +19,16 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 - Tmux (for chat interface and background agents)
 - Git (for diff management and worktrees)
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) - Required dependency
-- [neovim-remote](https://github.com/mhinz/neovim-remote) - Install with `pip install neovim-remote` or `pipx install neovim-remote`
+- Python 3.10+ - For MCP server and RPC communication (automatically set up by `:ClaudeInstallMCP`)
 
 ### Optional but Recommended
 - [diffview.nvim](https://github.com/sindrets/diffview.nvim) - For reviewing agent changes
 - [which-key.nvim](https://github.com/folke/which-key.nvim) - For keybinding hints
 
 ### Notes
-- The plugin creates a `.nvim-claude/` directory in your project root for storing state
-- Neovim's server address is automatically saved to `.nvim-claude/nvim-server`
+- The plugin stores state globally in `~/.local/share/nvim/nvim-claude/projects/`
+- Project state is keyed by absolute path (no `.nvim-claude/` folders in your projects)
+- Old local state (`.nvim-claude/`) is automatically migrated on first load
 - On macOS, Claude Code CLI can be installed from the Claude desktop app
 - The plugin uses git worktrees for agent isolation, so Git 2.5+ is recommended
 
@@ -50,7 +51,11 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 }
 ```
 
-**Important**: After installation, run `:ClaudeInstallMCP` to install the MCP server dependencies. If you encounter "MCP install script not found", see the Troubleshooting section below.
+**Important**: After installation, run these commands:
+1. `:ClaudeInstallRPC` - Install the Python RPC client for hook communication
+2. `:ClaudeInstallMCP` - Install the MCP server for LSP diagnostics (optional)
+
+If you encounter installation issues, see the Troubleshooting section below.
 
 ### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
 
@@ -182,7 +187,8 @@ All commands below can be accessed via Ex commands. Those with keybindings are n
 ### Setup & Configuration
 - `:ClaudeInstallHooks` - Install Claude Code hooks for this project
 - `:ClaudeUninstallHooks` - Remove Claude Code hooks
-- `:ClaudeInstallMCP` - Install MCP server dependencies
+- `:ClaudeInstallRPC` - Install Python RPC client for hook communication (required)
+- `:ClaudeInstallMCP` - Install MCP server dependencies (optional, for LSP diagnostics)
 - `:ClaudeShowMCPCommand` - Show the command to add MCP server to Claude Code
 
 ### Debugging Commands
@@ -193,6 +199,10 @@ All commands below can be accessed via Ex commands. Those with keybindings are n
 - `:ClaudeDebugInlineDiff` - Debug inline diff state
 - `:ClaudeViewLog` - View debug log file
 - `:ClaudeClearLog` - Clear debug log file
+
+### Project Management
+- `:ClaudeListProjects` - List all projects tracked by nvim-claude
+- `:ClaudeCleanupProjects [days]` - Clean up projects older than N days (default: 30)
 
 ## Usage Examples
 
@@ -246,7 +256,7 @@ If you get "MCP install script not found" when running `:ClaudeInstallMCP`:
 The plugin includes comprehensive debug logging for diagnosing issues:
 - **View logs**: `:ClaudeViewLog` - Opens the debug log file
 - **Clear logs**: `:ClaudeClearLog` - Clears the debug log
-- **Log location**: `.nvim-claude/debug.log` (project-specific) or `~/.local/share/nvim/nvim-claude-debug.log` (global)
+- **Log location**: `~/.local/share/nvim/nvim-claude/logs/<project-hash>-debug.log`
 - **Debug installation**: `:ClaudeDebugInstall` - Shows plugin paths and installation status
 
 See [debugging.md](debugging.md) for detailed debugging information.

@@ -3,12 +3,17 @@ local M = {}
 
 local utils = require('nvim-claude.utils')
 
--- Get log file path (in project's .nvim-claude directory)
+-- Get log file path (in global storage)
 function M.get_log_file()
   local project_root = utils.get_project_root()
   if project_root then
-    -- Project-specific log
-    return project_root .. '/.nvim-claude/debug.log'
+    -- Use project-specific log in global storage
+    local project_state = require('nvim-claude.project-state')
+    local project_key = project_state.get_project_key(project_root)
+    local key_hash = vim.fn.sha256(project_key)
+    local log_dir = vim.fn.stdpath('data') .. '/nvim-claude/logs'
+    utils.ensure_dir(log_dir)
+    return log_dir .. '/' .. key_hash:sub(1, 8) .. '-debug.log'
   else
     -- Fallback to home directory
     return vim.fn.expand('~/.local/share/nvim/nvim-claude-debug.log')

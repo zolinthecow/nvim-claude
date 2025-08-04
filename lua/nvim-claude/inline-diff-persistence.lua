@@ -62,27 +62,17 @@ function M.clear_baseline_ref()
   end
 end
 
--- Get project-specific nvim-claude directory
+-- Get project-specific nvim-claude directory (DEPRECATED - kept for compatibility)
 function M.get_nvim_claude_dir(file_path)
-  local project_root
-  if file_path then
-    project_root = utils.get_project_root_for_file(file_path)
-  else
-    project_root = utils.get_project_root()
-  end
-
-  if not project_root then
-    -- Fallback to global data directory if no project root
-    return vim.fn.stdpath 'data' .. '/nvim-claude'
-  end
-  return project_root .. '/.nvim-claude'
+  -- This function is deprecated but kept for backward compatibility
+  -- New code should use project-state module
+  return vim.fn.stdpath 'data' .. '/nvim-claude'
 end
 
--- Get project-specific state file location
+-- Get project-specific state file location (DEPRECATED - kept for compatibility)
 function M.get_state_file()
-  local nvim_claude_dir = M.get_nvim_claude_dir()
-  utils.ensure_dir(nvim_claude_dir)
-  return nvim_claude_dir .. '/inline-diff-state.json'
+  -- This function is deprecated but kept for backward compatibility
+  return vim.fn.stdpath 'data' .. '/nvim-claude/inline-diff-state.json'
 end
 
 -- Save current diff state
@@ -126,20 +116,25 @@ function M.save_state(diff_data)
 
   -- Note: We no longer persist hunks/content - diffs are computed fresh from git baseline
 
-  -- Save to file
-  local state_file = M.get_state_file()
-  local success, err = utils.write_json(state_file, state)
-  if not success then
-    logger.error('save_state', 'Failed to save state file', {
-      file = state_file,
-      error = err,
-    })
-    vim.notify('Failed to save inline diff state: ' .. err, vim.log.levels.ERROR)
+  -- Get project root for global storage
+  local project_root = utils.get_project_root()
+  if not project_root then
+    logger.error('save_state', 'No project root found')
     return false
   end
 
-  logger.info('save_state', 'Successfully saved state', {
-    file = state_file,
+  -- Save using global project state
+  local project_state = require 'nvim-claude.project-state'
+  local success = project_state.save_inline_diff_state(project_root, state)
+  
+  if not success then
+    logger.error('save_state', 'Failed to save state to global storage')
+    vim.notify('Failed to save inline diff state', vim.log.levels.ERROR)
+    return false
+  end
+
+  logger.info('save_state', 'Successfully saved state to global storage', {
+    project = project_root,
     has_stash_ref = state.stash_ref ~= nil,
     tracked_files_count = vim.tbl_count(state.claude_edited_files),
   })
@@ -149,14 +144,18 @@ end
 
 -- Load saved diff state
 function M.load_state()
-  local state_file = M.get_state_file()
-  if not utils.file_exists(state_file) then
+  local project_root = utils.get_project_root()
+  if not project_root then
     return nil
   end
 
-  local state, err = utils.read_json(state_file)
+  -- Try to migrate old local state first
+  local project_state = require 'nvim-claude.project-state'
+  project_state.migrate_local_state(project_root)
+
+  -- Load from global storage
+  local state = project_state.get_inline_diff_state(project_root)
   if not state then
-    vim.notify('Failed to load inline diff state: ' .. err, vim.log.levels.ERROR)
     return nil
   end
 
@@ -289,10 +288,14 @@ end
 
 -- Clear saved state
 function M.clear_state()
-  local state_file = M.get_state_file()
-  if utils.file_exists(state_file) then
-    os.remove(state_file)
+  local project_root = utils.get_project_root()
+  if not project_root then
+    return
   end
+  
+  -- Clear from global storage
+  local project_state = require 'nvim-claude.project-state'
+  project_state.save_inline_diff_state(project_root, nil)
   
   -- Also clear the git ref
   M.clear_baseline_ref()

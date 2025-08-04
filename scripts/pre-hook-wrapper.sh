@@ -2,8 +2,12 @@
 # Pre-hook wrapper for nvim-claude
 # This script is called by Claude Code before file editing tools
 
+LOG_FILE="$HOME/.local/share/nvim/nvim-claude-hooks.log"
+echo "[$(date)] Pre-hook wrapper called" >> "$LOG_FILE"
+
 # Read the JSON input from stdin
 JSON_INPUT=$(cat)
+echo "[$(date)] JSON input: $JSON_INPUT" >> "$LOG_FILE"
 
 # Extract file_path from tool_input.file_path
 FILE_PATH=$(echo "$JSON_INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null || echo "")
@@ -16,10 +20,10 @@ if [ -n "$FILE_PATH" ]; then
     # Base64 encode the file path to avoid escaping issues
     FILE_PATH_B64=$(echo -n "$FILE_PATH" | base64)
     # Execute the pre-hook with base64 encoded file path
-    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').pre_tool_use_hook_b64('$FILE_PATH_B64')\")"
+    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').pre_tool_use_hook_b64('$FILE_PATH_B64')\")"
 else
-    "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr 'luaeval("require(\"nvim-claude.hooks\").pre_tool_use_hook_b64()")'
+    "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr 'luaeval("require(\"nvim-claude.hooks\").pre_tool_use_hook_b64()")'
 fi
 
-# Return the exit code from nvr
+# Return the exit code from nvim-rpc
 exit $?

@@ -51,10 +51,10 @@ if [[ "$COMMAND" =~ ^rm[[:space:]] ]]; then
                     # Base64 encode the path to avoid escaping issues
                     ABS_PATH_B64=$(echo -n "$ABS_PATH" | base64)
                     
-                    # Send notification to Neovim using nvr-proxy
-                    echo "[bash-hook-wrapper] Calling nvr-proxy with base64 encoded path" >> "$LOG_FILE"
-                    TARGET_FILE="$ABS_PATH" "$SCRIPT_DIR/nvr-proxy.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').track_deleted_file_b64('$ABS_PATH_B64')\")" 2>&1 | tee -a "$LOG_FILE"
-                    echo "[bash-hook-wrapper] nvr-proxy exit code: $?" >> "$LOG_FILE"
+                    # Send notification to Neovim using nvim-rpc
+                    echo "[bash-hook-wrapper] Calling nvim-rpc with base64 encoded path" >> "$LOG_FILE"
+                    TARGET_FILE="$ABS_PATH" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').track_deleted_file_b64('$ABS_PATH_B64')\")" 2>&1 | tee -a "$LOG_FILE"
+                    echo "[bash-hook-wrapper] nvim-rpc exit code: $?" >> "$LOG_FILE"
                 else
                     echo "[bash-hook-wrapper] File doesn't exist: $ABS_PATH" >> "$LOG_FILE"
                 fi

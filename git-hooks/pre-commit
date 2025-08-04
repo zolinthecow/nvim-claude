@@ -6,8 +6,8 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Check if we're in a Neovim instance with Claude diffs
 if [ -f ".nvim-claude/inline-diff-state.json" ]; then
-    # Use nvr-proxy to accept all changes
-    "$HOOK_DIR/nvr-proxy.sh" --remote-expr 'luaeval("require(\"nvim-claude.inline-diff\").accept_all_files()")' 2>/dev/null
+    # Use nvim-rpc to accept all changes
+    "$HOOK_DIR/scripts/nvim-rpc.sh" --remote-expr 'luaeval("require(\"nvim-claude.inline-diff\").accept_all_files()")' 2>/dev/null
 fi
 
 # Continue with normal commit

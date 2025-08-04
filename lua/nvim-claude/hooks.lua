@@ -335,8 +335,8 @@ function M.post_tool_use_hook(file_path)
   M.claude_edited_files[relative_path] = true
   logger.info('post_tool_use_hook', 'Marked file as Claude-edited: ' .. relative_path)
 
-  -- Also track for session (Stop hook)
-  M.session_edited_files[relative_path] = true
+  -- Also track for session (Stop hook) - use full path for easier lookup
+  M.session_edited_files[file_path] = true
 
   -- Check if we have a baseline before saving
   if not persistence.get_baseline_ref() then
@@ -438,7 +438,7 @@ function M.track_deleted_file(file_path)
     if not err and baseline_content and not baseline_content:match('^fatal:') then
       -- File exists in baseline, track it as edited
       M.claude_edited_files[relative_path] = true
-      M.session_edited_files[relative_path] = true
+      M.session_edited_files[file_path] = true  -- Use full path for session tracking
       
       -- Save to persistence
       persistence.save_state {
@@ -919,10 +919,7 @@ function M.install_hooks()
       table.insert(entries_to_add, '.claude/settings.local.json')
     end
 
-    -- Check for .nvim-claude/
-    if not gitignore_content:match '%.nvim%-claude/' then
-      table.insert(entries_to_add, '.nvim-claude/')
-    end
+    -- No longer need .nvim-claude/ entry since we use global storage
 
     -- Add entries if needed
     if #entries_to_add > 0 then
@@ -1359,7 +1356,8 @@ function M.get_session_diagnostic_counts()
   logger.info('get_session_diagnostic_counts', 'Checking files', vim.tbl_keys(files_to_check))
 
   for file_path, _ in pairs(files_to_check) do
-    local full_path = vim.fn.getcwd() .. '/' .. file_path
+    -- file_path is already the full absolute path
+    local full_path = file_path
     local bufnr = vim.fn.bufnr(full_path)
 
     -- If buffer doesn't exist, create it temporarily to get diagnostics

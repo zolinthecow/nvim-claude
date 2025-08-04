@@ -1,5 +1,74 @@
 local M = {}
 
+-- Helper function to properly refresh buffer and wait for LSP updates
+function M._refresh_buffer_diagnostics(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+  
+  -- Get current modification time of the file
+  local file_path = vim.api.nvim_buf_get_name(bufnr)
+  local old_mtime = vim.fn.getftime(file_path)
+  
+  -- Force buffer reload from disk
+  vim.api.nvim_buf_call(bufnr, function()
+    -- Clear existing diagnostics first to avoid stale data
+    vim.diagnostic.reset(nil, bufnr)
+    
+    -- Reload the buffer from disk
+    vim.cmd('silent! checktime')
+    
+    -- If file was modified externally, reload it
+    if vim.fn.getftime(file_path) ~= old_mtime then
+      vim.cmd('silent! edit!')
+    end
+  end)
+  
+  -- Wait for LSP clients to be ready
+  local clients = vim.lsp.get_active_clients({ bufnr = bufnr })
+  if #clients > 0 then
+    -- Request fresh diagnostics from all LSP clients
+    for _, client in ipairs(clients) do
+      if client.supports_method('textDocument/diagnostic') then
+        -- Request diagnostics refresh
+        client.request('textDocument/diagnostic', {
+          textDocument = vim.lsp.util.make_text_document_params(bufnr),
+        }, nil, bufnr)
+      end
+    end
+    
+    -- Wait for diagnostics to be updated (with timeout)
+    local max_wait = 500 -- milliseconds
+    local waited = 0
+    local interval = 50
+    
+    -- Store initial diagnostic version to detect changes
+    local initial_version = vim.b[bufnr]._diagnostic_version or 0
+    
+    while waited < max_wait do
+      vim.wait(interval)
+      waited = waited + interval
+      
+      -- Check if diagnostics have been updated
+      local current_version = vim.b[bufnr]._diagnostic_version or 0
+      if current_version > initial_version then
+        -- Diagnostics updated, wait a bit more for completeness
+        vim.wait(50)
+        break
+      end
+      
+      -- Also break if we have any diagnostics (even if version didn't change)
+      if #vim.diagnostic.get(bufnr) > 0 then
+        vim.wait(50)
+        break
+      end
+    end
+  else
+    -- No LSP clients, just wait a bit for potential attachment
+    vim.wait(100)
+  end
+end
+
 function M.get_diagnostics(file_paths)
   local diagnostics = {}
   
@@ -17,12 +86,8 @@ function M.get_diagnostics(file_paths)
       if vim.api.nvim_buf_is_loaded(buf) then
         local name = vim.api.nvim_buf_get_name(buf)
         if name ~= '' then
-          -- Refresh buffer from disk before getting diagnostics
-          vim.api.nvim_buf_call(buf, function()
-            vim.cmd 'checktime'
-          end)
-          -- Give LSP a moment to process any changes
-          vim.wait(100)
+          -- Force reload from disk and wait for LSP to update
+          M._refresh_buffer_diagnostics(buf)
           
           local diags = vim.diagnostic.get(buf)
           if #diags > 0 then
@@ -62,12 +127,8 @@ function M.get_diagnostics(file_paths)
         -- Give LSP additional time to actually compute diagnostics
         vim.wait(300)
       else
-        -- Buffer exists, refresh it from disk
-        vim.api.nvim_buf_call(bufnr, function()
-          vim.cmd 'checktime'
-        end)
-        -- Give LSP a moment to process any changes
-        vim.wait(100)
+        -- Buffer exists, force reload and wait for LSP update
+        M._refresh_buffer_diagnostics(bufnr)
       end
       
       if bufnr ~= -1 then
@@ -108,12 +169,8 @@ function M.get_diagnostic_context(file_path, line)
     -- Give LSP additional time to actually compute diagnostics
     vim.wait(300)
   else
-    -- Buffer exists, refresh it from disk
-    vim.api.nvim_buf_call(bufnr, function()
-      vim.cmd 'checktime'
-    end)
-    -- Give LSP a moment to process any changes
-    vim.wait(100)
+    -- Buffer exists, force reload and wait for LSP update
+    M._refresh_buffer_diagnostics(bufnr)
   end
   
   if bufnr == -1 then
@@ -157,12 +214,8 @@ function M.get_diagnostic_summary()
     if vim.api.nvim_buf_is_loaded(buf) then
       local name = vim.api.nvim_buf_get_name(buf)
       if name ~= '' then
-        -- Refresh buffer from disk before getting diagnostics
-        vim.api.nvim_buf_call(buf, function()
-          vim.cmd 'checktime'
-        end)
-        -- Give LSP a moment to process any changes
-        vim.wait(100)
+        -- Force reload from disk and wait for LSP to update
+        M._refresh_buffer_diagnostics(buf)
         
         local diags = vim.diagnostic.get(buf)
         local file_errors = 0

@@ -237,6 +237,46 @@ function M.setup(claude_module)
     require('nvim-claude').show_mcp_setup_command()
   end, { desc = 'Show MCP server setup command' })
   
+  -- ClaudeListProjects - list all tracked projects
+  vim.api.nvim_create_user_command('ClaudeListProjects', function()
+    local project_state = require('nvim-claude.project-state')
+    local projects = project_state.list_projects()
+    
+    if #projects == 0 then
+      vim.notify('No tracked projects found', vim.log.levels.INFO)
+      return
+    end
+    
+    vim.notify('=== Tracked Projects ===', vim.log.levels.INFO)
+    for _, proj in ipairs(projects) do
+      local status = proj.exists and '✓' or '✗'
+      local features = {}
+      if proj.has_inline_diff then table.insert(features, 'diffs') end
+      if proj.has_agents then table.insert(features, 'agents') end
+      local feature_str = #features > 0 and ' [' .. table.concat(features, ', ') .. ']' or ''
+      
+      vim.notify(string.format('%s %s - %s%s', 
+        status, 
+        os.date('%Y-%m-%d', proj.last_accessed),
+        proj.path,
+        feature_str
+      ), vim.log.levels.INFO)
+    end
+  end, { desc = 'List all tracked projects' })
+  
+  -- ClaudeCleanupProjects - clean up old project states
+  vim.api.nvim_create_user_command('ClaudeCleanupProjects', function(opts)
+    local days = tonumber(opts.args) or 30
+    local project_state = require('nvim-claude.project-state')
+    local removed = project_state.cleanup_old_projects(days)
+    
+    vim.notify(string.format('Cleaned up %d old project state%s (older than %d days)', 
+      removed, removed ~= 1 and 's' or '', days), vim.log.levels.INFO)
+  end, {
+    desc = 'Clean up old project states',
+    nargs = '?',
+  })
+  
   -- ClaudeDebugInstall command to help diagnose installation issues
   vim.api.nvim_create_user_command('ClaudeDebugInstall', function()
     local nvim_claude = require('nvim-claude')
@@ -319,6 +359,48 @@ function M.setup(claude_module)
       end,
     })
   end, { desc = 'Install Claude MCP server dependencies' })
+  
+  -- ClaudeInstallRPC command
+  vim.api.nvim_create_user_command('ClaudeInstallRPC', function()
+    -- Get plugin directory using shared function from init.lua
+    local plugin_dir = require('nvim-claude').get_plugin_dir()
+    if not plugin_dir then
+      vim.notify('nvim-claude: Could not find plugin directory. Please report this issue.', vim.log.levels.ERROR)
+      return
+    end
+    
+    local install_script = plugin_dir .. 'scripts/install-rpc.sh'
+    
+    -- Check if install script exists
+    if vim.fn.filereadable(install_script) == 0 then
+      vim.notify('nvim-claude: RPC install script not found at: ' .. install_script, vim.log.levels.ERROR)
+      return
+    end
+    
+    local function on_exit(job_id, code, event)
+      if code == 0 then
+        vim.notify('✅ RPC client installed successfully!', vim.log.levels.INFO)
+        vim.notify('Hooks will now use the Python RPC client', vim.log.levels.INFO)
+      else
+        vim.notify('❌ RPC installation failed. Check :messages for details', vim.log.levels.ERROR)
+      end
+    end
+    
+    vim.notify('Installing RPC client dependencies...', vim.log.levels.INFO)
+    vim.fn.jobstart({'bash', install_script}, {
+      on_exit = on_exit,
+      on_stdout = function(_, data)
+        for _, line in ipairs(data) do
+          if line ~= '' then print(line) end
+        end
+      end,
+      on_stderr = function(_, data)
+        for _, line in ipairs(data) do
+          if line ~= '' then vim.notify(line, vim.log.levels.WARN) end
+        end
+      end,
+    })
+  end, { desc = 'Install nvim-claude RPC client (pynvim)' })
   
   -- ClaudeSendWithDiagnostics command (visual mode)
   vim.api.nvim_create_user_command('ClaudeSendWithDiagnostics', function(args)

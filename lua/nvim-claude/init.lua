@@ -300,6 +300,17 @@ function M.setup(user_config)
   M.git.setup(M.config.agents)
   M.registry.setup(M.config.agents)
   M.hooks.setup()
+  
+  -- Migrate old local state if needed (deferred to not slow startup)
+  vim.defer_fn(function()
+    local project_root = M.utils.get_project_root()
+    if project_root then
+      local project_state = require('nvim-claude.project-state')
+      if project_state.migrate_local_state(project_root) then
+        vim.notify('nvim-claude: Migrated local state to global storage', vim.log.levels.INFO)
+      end
+    end
+  end, 1000)
   M.diff_review.setup()
   M.settings_updater.setup()
   

@@ -2,39 +2,48 @@
 # Stop hook validator for nvim-claude
 # Checks for lint errors in edited files and blocks completion if found
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Read JSON input from stdin
 INPUT=$(cat)
 
-# Find the Neovim server address
-# First try project-specific location
-if [ -f ".nvim-claude/nvim-server" ]; then
-    SERVER_ADDR=$(cat .nvim-claude/nvim-server | tr -d '\n')
-elif [ -f "$HOME/.local/share/nvim/nvim-claude/nvim-server" ]; then
-    # Fallback to global location
-    SERVER_ADDR=$(cat "$HOME/.local/share/nvim/nvim-claude/nvim-server" | tr -d '\n')
-else
-    # If no server address found, allow completion
-    echo '{"continue": true}'
-    exit 0
+# Get the current working directory from the JSON input
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
+if [ -z "$CWD" ]; then
+    CWD=$(pwd)
 fi
 
-# Get diagnostic counts from Neovim using the correct server
-# Use v:lua to call Lua function
-LUA_EXPR='v:lua.require("nvim-claude.hooks").get_session_diagnostic_counts()'
-DIAGNOSTIC_JSON=$(nvr --servername "$SERVER_ADDR" --remote-expr "$LUA_EXPR" 2>&1)
+# Find any file in the current project to use as TARGET_FILE
+# This helps nvr-proxy find the correct Neovim instance for this project
+if [ -d "$CWD" ]; then
+    TARGET_FILE=$(find "$CWD" -type f -name "*.md" -o -name "*.txt" -o -name "*.lua" -o -name "*.js" 2>/dev/null | head -1)
+    if [ -z "$TARGET_FILE" ]; then
+        TARGET_FILE=$(find "$CWD" -type f 2>/dev/null | head -1)
+    fi
+fi
 
-# Debug: Log what we got from nvr
-echo "DEBUG: nvr returned: $DIAGNOSTIC_JSON" >> /tmp/stop-hook-debug.log
+# If still no file found, use the CWD itself
+if [ -z "$TARGET_FILE" ]; then
+    TARGET_FILE="$CWD"
+fi
 
-# Check if nvr command succeeded or returned empty
+# Get diagnostic counts from Neovim using nvim-rpc
+# This will find the correct server for this project
+DIAGNOSTIC_JSON=$(TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.hooks").get_session_diagnostic_counts()' 2>&1)
+
+# Debug: Log what we got from nvim-rpc
+echo "DEBUG: nvim-rpc returned: $DIAGNOSTIC_JSON" >> /tmp/stop-hook-debug.log
+
+# Check if nvim-rpc command succeeded or returned empty
 if [ $? -ne 0 ] || [ -z "$DIAGNOSTIC_JSON" ]; then
-    # If nvr fails, allow completion to avoid blocking Claude
+    # If nvim-rpc fails, allow completion to avoid blocking Claude
     echo '{"continue": true}'
     exit 0
 fi
 
-# Parse diagnostic counts - handle potential nvr output quirks
-# nvr might return the JSON with extra characters, so we extract just the JSON part
+# Parse diagnostic counts - handle potential output quirks
+# nvim-rpc might return the JSON with extra characters, so we extract just the JSON part
 CLEAN_JSON=$(echo "$DIAGNOSTIC_JSON" | grep -o '{.*}' | head -1)
 if [ -z "$CLEAN_JSON" ]; then
     # No valid JSON found, allow completion
