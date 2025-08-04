@@ -74,6 +74,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed path construction bug in `get_session_diagnostic_counts`
   - Now stores full paths instead of relative paths in `session_edited_files`
   - Added `_refresh_buffer_diagnostics` helper to clear stale diagnostics
+- **MCP diagnostics reliability** - Diagnostics no longer return stale or empty results
+  - Added `_await_lsp_diagnostics` function that waits for LSP servers to finish analysis
+  - Tracks which LSP clients are attached to each buffer
+  - Uses `DiagnosticChanged` autocmd to detect when each LSP has reported
+  - Waits up to 3 seconds for all expected LSPs to publish diagnostics
+  - Returns as soon as all LSPs report (no unnecessary waiting)
+  - Falls back to partial results if timeout is reached
+  - All MCP diagnostic tools now use this waiting mechanism
 - Navigation with deleted files (`]f` and `[f` commands)
   - Now properly checks file existence before opening
   - Uses special deleted file handler for non-existent files

@@ -1,5 +1,137 @@
 local M = {}
 
+-- Helper function to wait for LSP diagnostics from all attached clients
+function M._await_lsp_diagnostics(files_to_check, timeout_ms)
+  timeout_ms = timeout_ms or 3000
+  
+  -- Build tracking structure for all files
+  local pending_files = {}
+  for _, file_info in ipairs(files_to_check) do
+    local file_path = file_info.path
+    local bufnr = file_info.bufnr
+    
+    -- Get LSP clients attached to this buffer
+    local clients = vim.lsp.get_active_clients({ bufnr = bufnr })
+    local expected_sources = {}
+    for _, client in ipairs(clients) do
+      table.insert(expected_sources, client.name)
+    end
+    
+    -- Only track if there are LSP clients
+    if #expected_sources > 0 then
+      pending_files[file_path] = {
+        bufnr = bufnr,
+        expected_sources = expected_sources,
+        received_sources = {},
+        initial_diagnostics = vim.diagnostic.get(bufnr)
+      }
+    end
+  end
+  
+  -- If no files have LSP clients, return immediately
+  if vim.tbl_isempty(pending_files) then
+    return true
+  end
+  
+  -- Set up autocmd to track diagnostic changes
+  local diagnostic_received = false
+  local autocmd_id = vim.api.nvim_create_autocmd('DiagnosticChanged', {
+    callback = function(args)
+      local bufnr = args.buf
+      local file_path = vim.api.nvim_buf_get_name(bufnr)
+      
+      if pending_files[file_path] then
+        -- Mark that we received diagnostics for this buffer
+        diagnostic_received = true
+        
+        -- Get all diagnostics for this buffer
+        local diagnostics = args.data.diagnostics or {}
+        
+        -- Track which sources have reported
+        local sources_seen = {}
+        for _, diagnostic in ipairs(diagnostics) do
+          if diagnostic.source then
+            sources_seen[diagnostic.source] = true
+          end
+        end
+        
+        -- Update received sources for this file
+        pending_files[file_path].received_sources = sources_seen
+      end
+    end
+  })
+  
+  -- Trigger refresh for all files
+  for file_path, info in pairs(pending_files) do
+    local bufnr = info.bufnr
+    
+    -- Force LSP to re-analyze by triggering a change event
+    vim.api.nvim_buf_call(bufnr, function()
+      -- Make a minimal change to trigger LSP re-analysis
+      -- This is more reliable than sending empty contentChanges
+      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      if #lines > 0 then
+        -- Touch the buffer by setting the same content
+        -- This increments the version and triggers LSP analysis
+        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+      end
+    end)
+  end
+  
+  -- Wait for all LSPs to report or timeout
+  local function all_lsps_reported()
+    -- First check if we've received any diagnostic changes at all
+    if not diagnostic_received then
+      return false
+    end
+    
+    for file_path, info in pairs(pending_files) do
+      -- For each expected source, check if it has reported
+      for _, expected_source in ipairs(info.expected_sources) do
+        if not info.received_sources[expected_source] then
+          -- This LSP hasn't reported yet
+          -- However, if enough time has passed and we have some diagnostics, consider it done
+          return false
+        end
+      end
+    end
+    return true
+  end
+  
+  -- Also accept partial results after a shorter timeout
+  local function has_some_diagnostics()
+    if not diagnostic_received then
+      return false
+    end
+    
+    -- Check if at least one LSP per file has reported
+    for file_path, info in pairs(pending_files) do
+      local has_any = false
+      for source, _ in pairs(info.received_sources) do
+        has_any = true
+        break
+      end
+      if not has_any then
+        return false
+      end
+    end
+    return true
+  end
+  
+  -- Wait for diagnostics with fallback strategy
+  local success = vim.wait(timeout_ms, all_lsps_reported, 50)
+  
+  -- If not all LSPs reported but we have some diagnostics, that's okay
+  if not success then
+    success = has_some_diagnostics()
+  end
+  
+  -- Clean up autocmd
+  vim.api.nvim_del_autocmd(autocmd_id)
+  
+  return success
+end
+
 -- Helper function to properly refresh buffer and wait for LSP updates
 function M._refresh_buffer_diagnostics(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -80,24 +212,25 @@ function M.get_diagnostics(file_paths)
     file_paths = {}
   end
   
+  -- Collect files to check
+  local files_to_check = {}
+  local temp_buffers = {} -- Track buffers we created
+  
   if not file_paths or #file_paths == 0 then
-    -- Get all diagnostics
+    -- Get all loaded buffers
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_loaded(buf) then
         local name = vim.api.nvim_buf_get_name(buf)
         if name ~= '' then
-          -- Force reload from disk and wait for LSP to update
-          M._refresh_buffer_diagnostics(buf)
-          
-          local diags = vim.diagnostic.get(buf)
-          if #diags > 0 then
-            diagnostics[vim.fn.fnamemodify(name, ':~:.')] = M._format_diagnostics(diags)
-          end
+          table.insert(files_to_check, {
+            path = name,
+            bufnr = buf
+          })
         end
       end
     end
   else
-    -- Get diagnostics for specific files
+    -- Get specific files
     for _, file_path in ipairs(file_paths) do
       -- Try exact path first
       local bufnr = vim.fn.bufnr(file_path)
@@ -109,40 +242,56 @@ function M.get_diagnostics(file_paths)
         bufnr = vim.fn.bufnr(full_path)
       end
       
-      -- If buffer doesn't exist, create it temporarily to get diagnostics
-      local temp_buffer = false
+      -- If buffer doesn't exist, create it temporarily
       if bufnr == -1 then
-        -- Create buffer and load file
-        bufnr = vim.fn.bufadd(full_path)
-        vim.fn.bufload(bufnr)
-        temp_buffer = true
-        -- Trigger LSP attach by detecting filetype
-        vim.api.nvim_buf_call(bufnr, function()
-          vim.cmd 'filetype detect'
-        end)
-        -- Wait for LSP to attach and process the file
-        vim.wait(1000, function()
-          return #vim.lsp.get_active_clients({ bufnr = bufnr }) > 0
-        end, 50)
-        -- Give LSP additional time to actually compute diagnostics
-        vim.wait(300)
-      else
-        -- Buffer exists, force reload and wait for LSP update
-        M._refresh_buffer_diagnostics(bufnr)
+        -- Check if file exists
+        if vim.fn.filereadable(full_path) == 1 then
+          -- Create buffer and load file
+          bufnr = vim.fn.bufadd(full_path)
+          vim.fn.bufload(bufnr)
+          temp_buffers[bufnr] = true
+          
+          -- Trigger LSP attach by detecting filetype
+          vim.api.nvim_buf_call(bufnr, function()
+            vim.cmd 'filetype detect'
+          end)
+          
+          -- Wait for LSP to attach
+          vim.wait(500, function()
+            return #vim.lsp.get_active_clients({ bufnr = bufnr }) > 0
+          end, 50)
+        end
       end
       
-      if bufnr ~= -1 then
-        local diags = vim.diagnostic.get(bufnr)
-        if #diags > 0 then
-          local display_path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':~:.')
-          diagnostics[display_path] = M._format_diagnostics(diags)
-        end
-        
-        -- Clean up temporary buffer if we created it
-        if temp_buffer then
-          vim.api.nvim_buf_delete(bufnr, { force = true })
-        end
+      if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+        table.insert(files_to_check, {
+          path = vim.api.nvim_buf_get_name(bufnr),
+          bufnr = bufnr
+        })
       end
+    end
+  end
+  
+  -- Wait for LSP diagnostics from all files
+  if #files_to_check > 0 then
+    M._await_lsp_diagnostics(files_to_check, 3000)
+  end
+  
+  -- Collect diagnostics after waiting
+  for _, file_info in ipairs(files_to_check) do
+    local bufnr = file_info.bufnr
+    local diags = vim.diagnostic.get(bufnr)
+    
+    if #diags > 0 then
+      local display_path = vim.fn.fnamemodify(file_info.path, ':~:.')
+      diagnostics[display_path] = M._format_diagnostics(diags)
+    end
+  end
+  
+  -- Clean up temporary buffers
+  for bufnr, _ in pairs(temp_buffers) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      vim.api.nvim_buf_delete(bufnr, { force = true })
     end
   end
   
@@ -155,26 +304,32 @@ function M.get_diagnostic_context(file_path, line)
   
   -- If buffer doesn't exist, create it temporarily
   if bufnr == -1 then
+    if vim.fn.filereadable(file_path) == 0 then
+      return vim.json.encode({error = 'File not found'})
+    end
+    
     bufnr = vim.fn.bufadd(file_path)
     vim.fn.bufload(bufnr)
     temp_buffer = true
+    
     -- Trigger LSP attach by detecting filetype
     vim.api.nvim_buf_call(bufnr, function()
       vim.cmd 'filetype detect'
     end)
-    -- Wait for LSP to attach and process the file
-    vim.wait(1000, function()
+    
+    -- Wait for LSP to attach
+    vim.wait(500, function()
       return #vim.lsp.get_active_clients({ bufnr = bufnr }) > 0
     end, 50)
-    -- Give LSP additional time to actually compute diagnostics
-    vim.wait(300)
-  else
-    -- Buffer exists, force reload and wait for LSP update
-    M._refresh_buffer_diagnostics(bufnr)
   end
   
-  if bufnr == -1 then
-    return vim.json.encode({error = 'File not found'})
+  -- Wait for LSP diagnostics
+  if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+    local files_to_check = {{
+      path = vim.api.nvim_buf_get_name(bufnr),
+      bufnr = bufnr
+    }}
+    M._await_lsp_diagnostics(files_to_check, 2000) -- Shorter timeout for single file
   end
   
   -- Get diagnostics for the specific line
@@ -196,7 +351,7 @@ function M.get_diagnostic_context(file_path, line)
   })
   
   -- Clean up temporary buffer if we created it
-  if temp_buffer then
+  if temp_buffer and vim.api.nvim_buf_is_valid(bufnr) then
     vim.api.nvim_buf_delete(bufnr, { force = true })
   end
   
@@ -210,35 +365,48 @@ function M.get_diagnostic_summary()
     files_with_issues = {},
   }
   
+  -- Collect all loaded buffers
+  local files_to_check = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(buf) then
       local name = vim.api.nvim_buf_get_name(buf)
       if name ~= '' then
-        -- Force reload from disk and wait for LSP to update
-        M._refresh_buffer_diagnostics(buf)
-        
-        local diags = vim.diagnostic.get(buf)
-        local file_errors = 0
-        local file_warnings = 0
-        
-        for _, d in ipairs(diags) do
-          if d.severity == vim.diagnostic.severity.ERROR then
-            file_errors = file_errors + 1
-            summary.total_errors = summary.total_errors + 1
-          elseif d.severity == vim.diagnostic.severity.WARN then
-            file_warnings = file_warnings + 1
-            summary.total_warnings = summary.total_warnings + 1
-          end
-        end
-        
-        if file_errors > 0 or file_warnings > 0 then
-          table.insert(summary.files_with_issues, {
-            file = vim.fn.fnamemodify(name, ':~:.'),
-            errors = file_errors,
-            warnings = file_warnings,
-          })
-        end
+        table.insert(files_to_check, {
+          path = name,
+          bufnr = buf
+        })
       end
+    end
+  end
+  
+  -- Wait for LSP diagnostics from all files
+  if #files_to_check > 0 then
+    M._await_lsp_diagnostics(files_to_check, 3000)
+  end
+  
+  -- Collect diagnostics after waiting
+  for _, file_info in ipairs(files_to_check) do
+    local bufnr = file_info.bufnr
+    local diags = vim.diagnostic.get(bufnr)
+    local file_errors = 0
+    local file_warnings = 0
+    
+    for _, d in ipairs(diags) do
+      if d.severity == vim.diagnostic.severity.ERROR then
+        file_errors = file_errors + 1
+        summary.total_errors = summary.total_errors + 1
+      elseif d.severity == vim.diagnostic.severity.WARN then
+        file_warnings = file_warnings + 1
+        summary.total_warnings = summary.total_warnings + 1
+      end
+    end
+    
+    if file_errors > 0 or file_warnings > 0 then
+      table.insert(summary.files_with_issues, {
+        file = vim.fn.fnamemodify(file_info.path, ':~:.'),
+        errors = file_errors,
+        warnings = file_warnings,
+      })
     end
   end
   
