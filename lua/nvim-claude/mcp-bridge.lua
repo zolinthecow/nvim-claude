@@ -11,7 +11,7 @@ function M._await_lsp_diagnostics(files_to_check, timeout_ms)
     local bufnr = file_info.bufnr
     
     -- Get LSP clients attached to this buffer
-    local clients = vim.lsp.get_active_clients({ bufnr = bufnr })
+    local clients = vim.lsp.get_clients({ bufnr = bufnr })
     local expected_sources = {}
     for _, client in ipairs(clients) do
       table.insert(expected_sources, client.name)
@@ -157,7 +157,7 @@ function M._refresh_buffer_diagnostics(bufnr)
   end)
   
   -- Wait for LSP clients to be ready
-  local clients = vim.lsp.get_active_clients({ bufnr = bufnr })
+  local clients = vim.lsp.get_clients({ bufnr = bufnr })
   if #clients > 0 then
     -- Request fresh diagnostics from all LSP clients
     for _, client in ipairs(clients) do
@@ -258,7 +258,7 @@ function M.get_diagnostics(file_paths)
           
           -- Wait for LSP to attach
           vim.wait(500, function()
-            return #vim.lsp.get_active_clients({ bufnr = bufnr }) > 0
+            return #vim.lsp.get_clients({ bufnr = bufnr }) > 0
           end, 50)
         end
       end
@@ -319,7 +319,7 @@ function M.get_diagnostic_context(file_path, line)
     
     -- Wait for LSP to attach
     vim.wait(500, function()
-      return #vim.lsp.get_active_clients({ bufnr = bufnr }) > 0
+      return #vim.lsp.get_clients({ bufnr = bufnr }) > 0
     end, 50)
   end
   

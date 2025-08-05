@@ -1355,6 +1355,8 @@ The file `mission.log` contains additional details about this agent's creation a
     -- Split right side 40% and open Claude
     local pane_claude = claude.tmux.split_window(window_id, 'h', 40)
     if pane_claude then
+      -- First cd to the agent directory, then start Claude
+      claude.tmux.send_to_pane(pane_claude, 'cd ' .. agent_dir)
       claude.tmux.send_to_pane(pane_claude, 'claude --dangerously-skip-permissions')
       
       -- Send the task as the initial prompt
