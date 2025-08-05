@@ -233,7 +233,10 @@ function M.format_agent(agent)
   end
   
   -- Clean up task to single line
-  local task_line = agent.task:match('[^\n]*') or agent.task
+  local task_line = agent.task:match('[^\n]*') or ''
+  if task_line == '' then
+    task_line = agent.task:gsub('\n', ' ')
+  end
   local task_preview = task_line:sub(1, 50) .. (task_line:len() > 50 and '...' or '')
   
   return string.format(

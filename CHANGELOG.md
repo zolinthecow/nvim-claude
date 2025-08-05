@@ -7,10 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `:ClaudeRebuildRegistry` command to rebuild agent registry from existing directories
+  - Discovers agent directories created before registry system was implemented
+  - Automatically detects git worktrees and tmux windows
+  - Useful for migrating old agents to the new registry system
+
 ### Fixed
 - Background agents now properly start Claude in the agent work directory
   - Added `cd` command before launching Claude to ensure correct working directory
   - Fixed issue where Claude would start in the main project instead of agent directory
+- Fixed error in `<leader>cl` (list agents) when agent tasks contain newlines
+  - Properly sanitize multi-line task descriptions to single line for display
+  - Prevents "replacement string contains newlines" error
 
 ## [0.1.0] - 2025-08-04
 

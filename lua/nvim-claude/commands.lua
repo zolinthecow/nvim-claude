@@ -92,6 +92,13 @@ function M.setup(claude_module)
     desc = 'List all Claude agents'
   })
   
+  -- ClaudeRebuildRegistry command
+  vim.api.nvim_create_user_command('ClaudeRebuildRegistry', function()
+    M.rebuild_agent_registry()
+  end, {
+    desc = 'Rebuild agent registry from existing directories'
+  })
+  
   -- ClaudeKill command
   vim.api.nvim_create_user_command('ClaudeKill', function(opts)
     M.kill_agent(opts.args)
@@ -2102,6 +2109,82 @@ function M.show_agent_selection(action)
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Esc>', ':close<CR>', { silent = true })
 end
 
+
+-- Rebuild agent registry from existing directories
+function M.rebuild_agent_registry()
+  local utils = require('nvim-claude.utils')
+  local registry = require('nvim-claude.registry')
+  local git = require('nvim-claude.git')
+  local config = require('nvim-claude.config')
+  
+  local project_root = utils.get_project_root()
+  local work_dir = project_root .. '/' .. config.agents.work_dir
+  
+  if not utils.file_exists(work_dir) then
+    vim.notify('No agent work directory found', vim.log.levels.INFO)
+    return
+  end
+  
+  -- Get all agent directories
+  local agent_dirs = vim.fn.glob(work_dir .. '/agent-*', false, true)
+  local rebuilt = 0
+  
+  for _, dir in ipairs(agent_dirs) do
+    if vim.fn.isdirectory(dir) == 1 then
+      -- Extract agent name from directory
+      local dir_name = vim.fn.fnamemodify(dir, ':t')
+      
+      -- Check if it's a git worktree
+      local is_worktree = git.is_worktree(dir)
+      
+      if is_worktree then
+        -- Try to get window ID from tmux
+        local window_name = 'agent-' .. dir_name:sub(7, 10) -- First 4 chars after 'agent-'
+        local window_id = nil
+        
+        -- Try to find the tmux window
+        local tmux_windows = utils.exec("tmux list-windows -F '#{window_id} #{window_name}'")
+        if tmux_windows then
+          for line in tmux_windows:gmatch('[^\n]+') do
+            local id, name = line:match('(@%d+) (.+)')
+            if id and name and name == window_name then
+              window_id = id
+              break
+            end
+          end
+        end
+        
+        -- Extract task from directory name (after timestamp)
+        local task = dir_name:match('agent%-[%d%-]+%-(.+)') or 'Unknown task'
+        task = task:gsub('%-', ' ')
+        
+        -- Register the agent
+        local id = utils.timestamp() .. '-' .. math.random(1000, 9999)
+        registry.agents[id] = {
+          id = id,
+          task = task,
+          work_dir = dir,
+          window_id = window_id,
+          window_name = window_name,
+          start_time = vim.fn.getftime(dir), -- Use directory creation time
+          status = window_id and registry.check_window_exists(window_id) and 'active' or 'unknown',
+          progress = 'Rebuilt from directory',
+          last_update = os.time(),
+          fork_info = { type = 'unknown', branch = git.default_branch() }
+        }
+        
+        rebuilt = rebuilt + 1
+      end
+    end
+  end
+  
+  if rebuilt > 0 then
+    registry.save()
+    vim.notify(string.format('Rebuilt registry with %d agents', rebuilt), vim.log.levels.INFO)
+  else
+    vim.notify('No agent worktrees found to rebuild', vim.log.levels.INFO)
+  end
+end
 
 -- Review agent changes with diffview
 function M.diff_agent(agent_id)
