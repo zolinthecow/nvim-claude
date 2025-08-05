@@ -12,6 +12,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Discovers agent directories created before registry system was implemented
   - Automatically detects git worktrees and tmux windows
   - Useful for migrating old agents to the new registry system
+- Agent setup instructions stage in creation workflow
+  - New UI stage between fork options and agent creation
+  - Automatically detects common setup patterns:
+    - Copies `.env` files from main project (`cp ../../.env .`)
+    - Detects package managers (npm/yarn/pnpm) and suggests install commands
+    - Detects build scripts and suggests build commands
+    - Supports Python, Ruby, Go, and other language-specific setups
+  - Remembers successful setup commands for future agents in same project
+  - Setup instructions are prominently displayed in agent-instructions.md
+- Commit guidelines in agent instructions
+  - Clear instructions for creating cherry-pickable commits
+  - Reminds agents to exclude metadata files (agent-instructions.md, CLAUDE.md, mission.log, etc.)
+  - Encourages single, focused commits with proper commit messages
+
+### Changed
+- Agent instructions now use `agent-instructions.md` instead of deprecated `CLAUDE.local.md`
+  - Follows new Claude Code memory system with `@import` directives
+  - Creates/updates `CLAUDE.md` with `@import agent-instructions.md`
+  - Cleaner separation of agent-specific and project-wide instructions
+- Task formatting improvements
+  - Agent prompts now properly formatted with `# Task`, `# Goals`, `# Notes` sections
+  - Sections with only `- ` are treated as empty and omitted
+  - Better parsing of multi-line mission descriptions
+- UI text improvements
+  - Fork options screen now says "Press <Tab> to configure setup instructions"
+  - Setup screen says "Press <Tab> to start agent" for clarity
 
 ### Fixed
 - Background agents now properly start Claude in the agent work directory
@@ -20,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed error in `<leader>cl` (list agents) when agent tasks contain newlines
   - Properly sanitize multi-line task descriptions to single line for display
   - Prevents "replacement string contains newlines" error
+- Fixed task formatting to properly exclude empty Goals and Notes sections
+  - Mission extraction now preserves section headers (`## Task:`, `## Goals:`, `## Notes:`)
+  - Empty sections containing only `-` are correctly omitted from agent prompt
+  - Agent receives clean, properly formatted task without empty sections
 
 ## [0.1.0] - 2025-08-04
 
@@ -57,7 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Server files now stored in system temp directory (`/tmp` or `$XDG_RUNTIME_DIR`)
   - Logs stored globally at `~/.local/share/nvim/nvim-claude/logs/`
 - Background agents now start in their working directory instead of main project
-- Agent instructions stored in `CLAUDE.local.md` instead of initial prompt
+- Agent instructions stored in `agent-instructions.md` with import in `CLAUDE.md`
 - Agent registry is now project-specific instead of global
 - Branch selection UI starts in normal mode instead of insert mode
 - Checkpoint creation now uses temporary git index to avoid polluting staging area
