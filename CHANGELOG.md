@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.1] - 2025-08-05
+
 ### Added
 - `:ClaudeRebuildRegistry` command to rebuild agent registry from existing directories
   - Discovers agent directories created before registry system was implemented
