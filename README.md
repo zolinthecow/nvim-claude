@@ -7,7 +7,8 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 - **Tmux Integration**: Chat with Claude in a dedicated tmux pane
 - **Inline Diff Review**: Review and accept/reject Claude's code changes with inline diffs
 - **Background Agents**: Create isolated worktrees for complex tasks
-- **Git Integration**: Automatic stash creation and diff tracking
+- **Chat History Checkpoints**: View and rollback the codebase to any point in Claude chat history
+- **LSP Integration**: Give Claude the ability to view LSP diagnostics
 - **Smart Selection**: Send buffer content, visual selections, or git hunks to Claude
 - **Persistent State**: Diff state persists across Neovim sessions
 
@@ -27,8 +28,7 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 
 ### Notes
 - The plugin stores state globally in `~/.local/share/nvim/nvim-claude/projects/`
-- Project state is keyed by absolute path (no `.nvim-claude/` folders in your projects)
-- Old local state (`.nvim-claude/`) is automatically migrated on first load
+- Project state is keyed by absolute path 
 - On macOS, Claude Code CLI can be installed from the Claude desktop app
 - The plugin uses git worktrees for agent isolation, so Git 2.5+ is recommended
 
@@ -226,6 +226,13 @@ All commands below can be accessed via Ex commands. Those with keybindings are n
 4. Review changes: `<leader>cad` to see agent's diff
 5. Switch to worktree: `<leader>caw` to work directly
 6. Kill when done: `<leader>cak`
+
+### Chat History Workflow
+1. Make a request to Claude that involves code changes
+2. Browse a list of messages with `<leader>cp`
+3. View the state of the codebase at that point by selecting it
+4. Rollback to that point with `<leader>cpa`
+5. Or go back to the original state with `<leader>cpr`
 
 ## Claude Code Hooks
 
