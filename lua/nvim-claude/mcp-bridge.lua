@@ -4,11 +4,23 @@ local M = {}
 function M._await_lsp_diagnostics(files_to_check, timeout_ms)
   timeout_ms = timeout_ms or 3000
   
+  -- Track which buffers had inline diffs before we start
+  local inline_diff = require('nvim-claude.inline-diff')
+  local buffers_with_diffs = {}
+  
   -- Build tracking structure for all files
   local pending_files = {}
   for _, file_info in ipairs(files_to_check) do
     local file_path = file_info.path
     local bufnr = file_info.bufnr
+    
+    -- Store inline diff state if present
+    if inline_diff.active_diffs[bufnr] then
+      buffers_with_diffs[bufnr] = {
+        current_hunk = inline_diff.active_diffs[bufnr].current_hunk,
+        file_path = file_path
+      }
+    end
     
     -- Get LSP clients attached to this buffer
     local clients = vim.lsp.get_clients({ bufnr = bufnr })
@@ -129,6 +141,35 @@ function M._await_lsp_diagnostics(files_to_check, timeout_ms)
   -- Clean up autocmd
   vim.api.nvim_del_autocmd(autocmd_id)
   
+  -- Restore inline diffs for any buffers that had them
+  if not vim.tbl_isempty(buffers_with_diffs) then
+    vim.defer_fn(function()
+      local hooks = require('nvim-claude.hooks')
+      local utils = require('nvim-claude.utils')
+      local persistence = require('nvim-claude.inline-diff-persistence')
+      local git_root = utils.get_project_root()
+      
+      if git_root and persistence.get_baseline_ref() then
+        for bufnr, diff_info in pairs(buffers_with_diffs) do
+          if vim.api.nvim_buf_is_valid(bufnr) then
+            local file_path = diff_info.file_path
+            local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+            
+            -- Re-show the inline diff if file is still tracked
+            if hooks.claude_edited_files[relative_path] then
+              hooks.show_inline_diff_for_file(bufnr, relative_path, git_root, persistence.get_baseline_ref(), true)
+              
+              -- Restore hunk position
+              if inline_diff.active_diffs[bufnr] then
+                inline_diff.active_diffs[bufnr].current_hunk = diff_info.current_hunk
+              end
+            end
+          end
+        end
+      end
+    end, 100)
+  end
+  
   return success
 end
 
@@ -141,6 +182,18 @@ function M._refresh_buffer_diagnostics(bufnr)
   -- Get current modification time of the file
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local old_mtime = vim.fn.getftime(file_path)
+  
+  -- Check if buffer has active inline diff and store its state
+  local inline_diff = require('nvim-claude.inline-diff')
+  local had_inline_diff = inline_diff.active_diffs[bufnr] ~= nil
+  local diff_state = nil
+  if had_inline_diff then
+    -- Store current hunk position
+    diff_state = {
+      current_hunk = inline_diff.active_diffs[bufnr].current_hunk,
+      cursor_pos = vim.api.nvim_win_get_cursor(0)
+    }
+  end
   
   -- Force buffer reload from disk
   vim.api.nvim_buf_call(bufnr, function()
@@ -155,6 +208,32 @@ function M._refresh_buffer_diagnostics(bufnr)
       vim.cmd('silent! edit!')
     end
   end)
+  
+  -- Restore inline diff if it was active
+  if had_inline_diff then
+    vim.defer_fn(function()
+      local hooks = require('nvim-claude.hooks')
+      local utils = require('nvim-claude.utils')
+      local persistence = require('nvim-claude.inline-diff-persistence')
+      
+      -- Get git root and relative path
+      local git_root = utils.get_project_root()
+      if git_root then
+        local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+        
+        -- Re-show the inline diff
+        if hooks.claude_edited_files[relative_path] and persistence.get_baseline_ref() then
+          hooks.show_inline_diff_for_file(bufnr, relative_path, git_root, persistence.get_baseline_ref(), true)
+          
+          -- Restore cursor and hunk position
+          if diff_state and inline_diff.active_diffs[bufnr] then
+            inline_diff.active_diffs[bufnr].current_hunk = diff_state.current_hunk
+            vim.api.nvim_win_set_cursor(0, diff_state.cursor_pos)
+          end
+        end
+      end
+    end, 50)
+  end
   
   -- Wait for LSP clients to be ready
   local clients = vim.lsp.get_clients({ bufnr = bufnr })

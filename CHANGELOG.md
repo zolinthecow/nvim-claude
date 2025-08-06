@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Navigate from fork options back to mission input
   - Navigate from setup instructions back to fork options
   - All three UI screens now show navigation hints including Shift-Tab
+- Fixed MCP diagnostic tools closing inline diff views
+  - MCP bridge now properly restores inline diffs after refreshing buffers
+  - Stores diff state (current hunk, cursor position) before refresh
+  - Restores inline diff view automatically after LSP diagnostics update
+  - Ensures fresh diagnostics while preserving the diff review experience
 
 ## [0.1.0] - 2025-08-04
 
