@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - UI text improvements
   - Fork options screen now says "Press <Tab> to configure setup instructions"
   - Setup screen says "Press <Tab> to start agent" for clarity
+- Branch selection UI now uses consistent navigation style
+  - Arrow indicator moves up/down with j/k or arrow keys
+  - Press Tab or Enter to select the highlighted branch
+  - Maintains number key shortcuts for quick selection
+  - Uses same telescope-like styling as other UI screens
+- Agent setup UI divider lines now stretch full window width
+  - Dividers dynamically adjust to window size instead of fixed length
+  - Provides cleaner visual separation in the setup instructions panel
 
 ### Fixed
 - Background agents now properly start Claude in the agent work directory
@@ -52,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mission extraction now preserves section headers (`## Task:`, `## Goals:`, `## Notes:`)
   - Empty sections containing only `-` are correctly omitted from agent prompt
   - Agent receives clean, properly formatted task without empty sections
+- Added Shift-Tab navigation in agent creation flow
+  - Users can now press Shift-Tab to go back to previous screens
+  - Navigate from fork options back to mission input
+  - Navigate from setup instructions back to fork options
+  - All three UI screens now show navigation hints including Shift-Tab
 
 ## [0.1.0] - 2025-08-04
 

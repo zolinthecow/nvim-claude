@@ -779,7 +779,7 @@ function M.show_mission_input_ui()
     row = math.floor((vim.o.lines - height) / 2),
     style = 'minimal',
     border = 'rounded',
-    title = ' Agent Mission (Step 1/2) ',
+    title = ' Agent Mission (Step 1/3) ',
     title_pos = 'center',
   })
 
@@ -900,7 +900,7 @@ function M.show_fork_options_ui(state)
     table.insert(lines, '')
   end
 
-  table.insert(lines, 'Press <Tab> to configure setup instructions, q to cancel')
+  table.insert(lines, 'Press <Tab> to configure setup instructions, <S-Tab> to go back, q to cancel')
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(buf, 'modifiable', false)
@@ -917,7 +917,7 @@ function M.show_fork_options_ui(state)
     row = math.floor((vim.o.lines - height) / 2),
     style = 'minimal',
     border = 'rounded',
-    title = ' Fork Options (Step 2/2) ',
+    title = ' Fork Options (Step 2/3) ',
     title_pos = 'center',
   })
 
@@ -1034,8 +1034,18 @@ function M.show_fork_options_ui(state)
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Down>', '', { callback = move_down, silent = true })
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Up>', '', { callback = move_up, silent = true })
 
+  -- Go back to mission editor
+  local function go_back()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+    -- Re-show mission UI with the current mission
+    M.show_mission_input_ui()
+  end
+  
   -- Action keys
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Tab>', '', { callback = create_agent, silent = true })
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<S-Tab>', '', { callback = go_back, silent = true })
   vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '', { callback = close_window, silent = true })
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Esc>', '', { callback = close_window, silent = true })
 end
@@ -1074,27 +1084,36 @@ function M.show_branch_selection(callback)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_option(buf, 'buftype', 'nofile')
   vim.api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
-  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
 
-  -- Create display lines
-  local lines = { 'Select branch to fork from:', '' }
-  local branch_map = {}
+  -- State for current selection
+  local state = {
+    selected = 1
+  }
 
-  for i, branch in ipairs(unique_branches) do
-    table.insert(lines, string.format(' %d. %s', i, branch))
-    branch_map[i] = branch
+  -- Function to update display
+  local function update_display()
+    local lines = { 'Select branch to fork from:', '' }
+    
+    for i, branch in ipairs(unique_branches) do
+      local icon = i == state.selected and '▶' or ' '
+      table.insert(lines, string.format('%s %s', icon, branch))
+    end
+
+    table.insert(lines, '')
+    table.insert(lines, 'Press <Tab> to select, <Esc> to cancel')
+    table.insert(lines, 'Use j/k or arrow keys to navigate')
+
+    vim.api.nvim_buf_set_option(buf, 'modifiable', true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.api.nvim_buf_set_option(buf, 'modifiable', false)
   end
 
-  table.insert(lines, '')
-  table.insert(lines, 'Press number to select, q to cancel')
-
-  vim.api.nvim_buf_set_option(buf, 'modifiable', true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(buf, 'modifiable', false)
+  -- Initial display
+  update_display()
 
   -- Create window
   local width = math.min(80, vim.o.columns - 10)
-  local height = math.min(#lines + 2, vim.o.lines - 6)
+  local height = math.min(#unique_branches + 6, vim.o.lines - 6)
 
   local win = vim.api.nvim_open_win(buf, true, {
     relative = 'editor',
@@ -1108,85 +1127,81 @@ function M.show_branch_selection(callback)
     title_pos = 'center',
   })
 
+  -- Set telescope-like highlights
+  vim.api.nvim_win_set_option(win, 'winhl', 'Normal:TelescopeNormal,FloatBorder:TelescopeBorder,FloatTitle:TelescopeTitle')
+
   -- Ensure we start in normal mode
   vim.cmd 'stopinsert'
-  vim.api.nvim_win_set_option(win, 'cursorline', true)
 
-  -- Force normal mode immediately and after delays
-  vim.schedule(function()
-    if vim.api.nvim_win_is_valid(win) then
-      vim.cmd 'stopinsert'
-      vim.api.nvim_set_current_win(win)
-      -- Set initial cursor position
-      vim.api.nvim_win_set_cursor(win, { 3, 0 })
-    end
-  end)
+  -- Function to move selection
+  local function move_selection(delta)
+    state.selected = math.max(1, math.min(#unique_branches, state.selected + delta))
+    update_display()
+  end
 
-  -- Additional insurance after a small delay
-  vim.defer_fn(function()
-    if vim.api.nvim_win_is_valid(win) then
-      vim.cmd 'stopinsert'
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
-    end
-  end, 50)
-
-  -- Create autocommand to prevent entering insert mode
-  local augroup = vim.api.nvim_create_augroup('ClaudeBranchSelect', { clear = true })
-  vim.api.nvim_create_autocmd('InsertEnter', {
-    group = augroup,
-    buffer = buf,
-    callback = function()
-      vim.cmd 'stopinsert'
-    end,
-  })
-
-  -- Clean up autocommand when window closes
-  vim.api.nvim_create_autocmd('BufWipeout', {
-    group = augroup,
-    buffer = buf,
-    callback = function()
-      vim.api.nvim_del_augroup_by_id(augroup)
-    end,
-  })
+  -- Function to select current branch
+  local function select_current()
+    local branch = unique_branches[state.selected]
+    vim.api.nvim_win_close(win, true)
+    callback(branch)
+  end
 
   -- Function to close window
   local function close_window()
     if vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
     end
+    callback(nil)
   end
 
-  -- Set up number key mappings
+  -- Set up keymaps
+  -- Navigation
+  vim.api.nvim_buf_set_keymap(buf, 'n', 'j', '', {
+    callback = function() move_selection(1) end,
+    silent = true,
+  })
+  vim.api.nvim_buf_set_keymap(buf, 'n', 'k', '', {
+    callback = function() move_selection(-1) end,
+    silent = true,
+  })
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<Down>', '', {
+    callback = function() move_selection(1) end,
+    silent = true,
+  })
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<Up>', '', {
+    callback = function() move_selection(-1) end,
+    silent = true,
+  })
+
+  -- Selection
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<Tab>', '', {
+    callback = select_current,
+    silent = true,
+  })
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<CR>', '', {
+    callback = select_current,
+    silent = true,
+  })
+
+  -- Number key mappings for quick selection
   for i = 1, math.min(9, #unique_branches) do
     vim.api.nvim_buf_set_keymap(buf, 'n', tostring(i), '', {
       callback = function()
-        local branch = branch_map[i]
-        close_window()
-        callback(branch)
+        state.selected = i
+        update_display()
+        select_current()
       end,
       silent = true,
     })
   end
 
-  -- Navigation for more than 9 branches
-  if #unique_branches > 9 then
-    -- TODO: Add j/k navigation with Enter to select
-  end
-
-  -- Cancel keys
-  vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '', {
-    callback = function()
-      close_window()
-      callback(nil)
-    end,
+  -- Cancel
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<Esc>', '', {
+    callback = close_window,
     silent = true,
   })
-
-  vim.api.nvim_buf_set_keymap(buf, 'n', '<Esc>', '', {
-    callback = function()
-      close_window()
-      callback(nil)
-    end,
+  vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '', {
+    callback = close_window,
     silent = true,
   })
 end
@@ -1343,6 +1358,13 @@ function M.show_setup_instructions_ui(state, callback)
   vim.api.nvim_buf_set_option(buf, 'bufhidden', 'wipe')
   vim.api.nvim_buf_set_option(buf, 'filetype', 'bash')
 
+  -- Create window first to get width
+  local width = math.min(80, vim.o.columns - 10)
+  local height = math.min(25, vim.o.lines - 6)
+
+  -- Create divider based on window width
+  local divider = string.rep('━', width)
+
   -- Get setup commands
   local project_root = claude.utils.get_project_root()
   local commands = state.setup_commands
@@ -1357,9 +1379,9 @@ function M.show_setup_instructions_ui(state, callback)
 
   -- Build content
   local lines = {
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    divider,
     ' Agent Setup Instructions',
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    divider,
     '',
     'The agent will need to set up the worktree environment.',
     'Edit the commands below as needed:',
@@ -1376,21 +1398,11 @@ function M.show_setup_instructions_ui(state, callback)
   table.insert(lines, '# Additional setup')
   table.insert(lines, '# (add any other setup commands here)')
   table.insert(lines, '')
-  table.insert(
-    lines,
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  )
-  table.insert(lines, 'Press <Tab> to start agent · <Esc> to cancel')
-  table.insert(
-    lines,
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  )
+  table.insert(lines, divider)
+  table.insert(lines, 'Press <Tab> to start agent · <S-Tab> to go back · <Esc> to cancel')
+  table.insert(lines, divider)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-
-  -- Create window
-  local width = math.min(80, vim.o.columns - 10)
-  local height = math.min(25, vim.o.lines - 6)
 
   local win = vim.api.nvim_open_win(buf, true, {
     relative = 'editor',
@@ -1413,13 +1425,13 @@ function M.show_setup_instructions_ui(state, callback)
     local extracted = {}
     local in_commands = false
 
-    for _, line in ipairs(all_lines) do
-      if line:match '^━━━' then
+    for i, line in ipairs(all_lines) do
+      if line:match '^━+$' then  -- Match any number of ━ characters
         if in_commands then
           break
-        elseif line:match 'Agent Setup Instructions' then
-          in_commands = true
         end
+      elseif line:match 'Agent Setup Instructions' then
+        in_commands = true
       elseif in_commands and line ~= '' and not line:match '^The agent will' and not line:match '^Edit the commands' then
         table.insert(extracted, line)
       end
@@ -1446,6 +1458,13 @@ function M.show_setup_instructions_ui(state, callback)
   local function cancel()
     vim.api.nvim_win_close(win, true)
   end
+  
+  -- Go back to fork options
+  local function go_back()
+    vim.api.nvim_win_close(win, true)
+    -- Re-show fork options with the current state
+    M.show_fork_options_ui(state)
+  end
 
   -- Set up keymaps
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Tab>', '', {
@@ -1454,6 +1473,14 @@ function M.show_setup_instructions_ui(state, callback)
   })
   vim.api.nvim_buf_set_keymap(buf, 'i', '<Tab>', '', {
     callback = continue,
+    silent = true,
+  })
+  vim.api.nvim_buf_set_keymap(buf, 'n', '<S-Tab>', '', {
+    callback = go_back,
+    silent = true,
+  })
+  vim.api.nvim_buf_set_keymap(buf, 'i', '<S-Tab>', '', {
+    callback = go_back,
     silent = true,
   })
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Esc>', '', {
