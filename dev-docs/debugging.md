@@ -2,21 +2,17 @@
 
 ## Debug Logging
 
-nvim-claude includes a file-based logging system to help diagnose issues, particularly with the inline diff functionality.
+nvim-claude includes a comprehensive file-based logging system to help diagnose issues with inline diffs, hooks, agents, and other functionality.
 
 ### Log File Location
 
-The debug log is stored in one of two locations:
+Debug logs are stored globally per project:
 
-1. **Project-specific log** (when in a git repository):
-   ```
-   <project_root>/.nvim-claude/debug.log
-   ```
+```
+~/.local/share/nvim/nvim-claude/logs/<project-hash>-debug.log
+```
 
-2. **Global fallback log** (when not in a git repository):
-   ```
-   ~/.local/share/nvim/nvim-claude-debug.log
-   ```
+Where `<project-hash>` is a hash of the project's absolute path.
 
 ### Viewing Logs
 
@@ -36,22 +32,34 @@ Use the following commands to work with logs:
 
 ### What Gets Logged
 
-The logging system tracks key operations related to inline diffs:
+The logging system tracks key operations:
 
 1. **Hook Operations**:
    - Pre-tool-use hook calls (baseline creation)
    - Post-tool-use hook calls (file tracking)
-   - Git operations (stash creation, errors)
+   - User prompt submit hooks (checkpoint creation)
+   - Bash command hooks
 
 2. **State Management**:
    - State saving/loading operations
-   - Missing stash_ref warnings
+   - Missing baseline references
    - Corrupted state detection
+   - Global state migration
 
 3. **Git Operations**:
-   - Stash creation attempts
+   - Baseline commit creation
+   - Checkpoint commit creation
    - Git command results and errors
    - Working directory context
+
+4. **Agent Operations**:
+   - Agent creation and management
+   - Worktree operations
+   - Registry updates
+
+5. **MCP Server**:
+   - LSP diagnostic queries
+   - Server communication
 
 ### Log Format
 
@@ -73,16 +81,16 @@ Example:
 
 ### Debugging Common Issues
 
-#### Issue: Tracked files with no baseline stash
+#### Issue: Tracked files with no baseline
 
-If you see files tracked in `inline-diff-state.json` but no `stash_ref`:
+If you see files tracked in `inline-diff-state.json` but no baseline reference:
 
 1. Check the log for errors during stash creation:
    ```vim
    :ClaudeViewLog
    ```
    Look for entries like:
-   - `[ERROR] [create_stash] Git returned error message`
+   - `[ERROR] [create_baseline] Git returned error message`
    - `[ERROR] [post_tool_use_hook] No baseline ref when saving state!`
 
 2. Common causes:
@@ -105,7 +113,7 @@ If you see files tracked in `inline-diff-state.json` but no `stash_ref`:
 2. Review the log for hook execution:
    - Look for `pre_tool_use_hook` entries
    - Check for `post_tool_use_hook` entries
-   - Verify stash creation succeeded
+   - Verify baseline commit creation succeeded
 
 ### Log Rotation
 
@@ -125,8 +133,9 @@ It does not contain:
 ### Reporting Issues
 
 When reporting bugs, please include:
-1. Relevant portions of the debug log
-2. The contents of `.nvim-claude/inline-diff-state.json`
+1. Relevant portions of the debug log (run `:ClaudeViewLog`)
+2. Debug information (run `:ClaudeDebugInlineDiff`)
 3. Steps to reproduce the issue
+4. Your Neovim version and OS
 
 You can sanitize paths and project names if needed for privacy.

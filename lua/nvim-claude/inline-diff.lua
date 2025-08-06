@@ -1487,8 +1487,6 @@ function M.refresh_inline_diff(bufnr)
 
   -- Restore cursor position
   vim.api.nvim_win_set_cursor(0, cursor_pos)
-
-  vim.notify('Diff refreshed', vim.log.levels.INFO)
 end
 
 -- Set up auto-refresh on save

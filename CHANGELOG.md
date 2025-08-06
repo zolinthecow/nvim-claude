@@ -70,6 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Stores diff state (current hunk, cursor position) before refresh
   - Restores inline diff view automatically after LSP diagnostics update
   - Ensures fresh diagnostics while preserving the diff review experience
+- Removed debug "Diff refreshed" notification when editing files with inline diffs
 
 ## [0.1.0] - 2025-08-04
 

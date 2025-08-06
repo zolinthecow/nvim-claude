@@ -1,16 +1,18 @@
 # nvim-claude
 
-A Neovim plugin for seamless integration with Claude AI, featuring tmux-based chat workflow, inline diff reviews, per-file baseline management, and background agent management. ✨
+A powerful Neovim plugin for seamless integration with Claude AI. Chat with Claude directly in tmux, review code changes with inline diffs, and deploy background agents for complex tasks - all without leaving your editor. ✨
 
 ## Features
 
 - **Tmux Integration**: Chat with Claude in a dedicated tmux pane
 - **Inline Diff Review**: Review and accept/reject Claude's code changes with inline diffs
-- **Background Agents**: Create isolated worktrees for complex tasks
-- **Chat History Checkpoints**: View and rollback the codebase to any point in Claude chat history
-- **LSP Integration**: Give Claude the ability to view LSP diagnostics
+- **Background Agents**: Create isolated worktrees for complex tasks with guided setup
+- **Checkpoint System**: Automatically save and restore codebase state at any point in chat history
+- **LSP Integration**: Give Claude real-time access to LSP diagnostics via MCP
 - **Smart Selection**: Send buffer content, visual selections, or git hunks to Claude
-- **Persistent State**: Diff state persists across Neovim sessions
+- **Global State Storage**: All plugin state stored globally, not in project directories
+- **File Deletion Tracking**: Track when Claude deletes files, with ability to restore them
+- **Agent Setup Wizard**: Interactive UI for configuring agent environments with auto-detected setup commands
 
 ## Requirements
 
@@ -51,9 +53,12 @@ A Neovim plugin for seamless integration with Claude AI, featuring tmux-based ch
 }
 ```
 
-**Important**: After installation, run these commands:
-1. `:ClaudeInstallRPC` - Install the Python RPC client for hook communication
-2. `:ClaudeInstallMCP` - Install the MCP server for LSP diagnostics (optional)
+After installation:
+1. **Automatic Setup**: The plugin automatically installs required components on first use
+2. **Claude Code Hooks**: Run `:ClaudeInstallHooks` in your project to enable automatic diff tracking
+3. **Manual Installation** (if needed):
+   - `:ClaudeInstallRPC` - Install the Python RPC client for hook communication
+   - `:ClaudeInstallMCP` - Install the MCP server for LSP diagnostics
 
 If you encounter installation issues, see the Troubleshooting section below.
 
@@ -76,32 +81,26 @@ use {
 
 ## Configuration
 
+Configure nvim-claude during setup:
+
 ```lua
 require('nvim-claude').setup({
   tmux = {
     split_direction = 'h',      -- 'h' for horizontal, 'v' for vertical
     split_size = 40,            -- Percentage of window
-    session_prefix = 'claude-', -- Tmux session prefix
     pane_title = 'claude-chat', -- Pane title
-  },
-  agents = {
-    work_dir = '.agent-work',   -- Directory for agent worktrees
-    use_worktrees = true,       -- Use git worktrees for agents
-    auto_gitignore = true,      -- Auto-add work_dir to .gitignore
-    max_agents = 5,             -- Maximum concurrent agents
-    cleanup_days = 7,           -- Days before cleanup
-  },
-  ui = {
-    float_diff = true,          -- Use floating windows for diffs
-    telescope_preview = true,   -- Preview in telescope
-    status_line = true,         -- Show status in statusline
   },
   mappings = {
     prefix = '<leader>c',       -- Main prefix for commands
-    quick_prefix = '<C-c>',     -- Quick access prefix
+  },
+  mcp = {
+    auto_install = true,        -- Automatically install MCP server on first use
+    install_path = vim.fn.stdpath('data') .. '/nvim-claude/mcp-env',
   },
 })
 ```
+
+Default values are shown above. All configuration options are optional.
 
 ## Default Mappings
 
@@ -165,6 +164,7 @@ All commands below can be accessed via Ex commands. Those with keybindings are n
 - `:ClaudeSwitch [id]` - Switch to agent worktree
 - `:ClaudeDiffAgent [id]` - Review agent changes with diffview
 - `:ClaudeCleanOrphans` - Clean orphaned worktrees
+- `:ClaudeRebuildRegistry` - Rebuild agent registry from existing directories
 
 ### Checkpoint Commands
 - `:ClaudeCheckpoints` - Browse checkpoints (mapped to `<leader>cp`)
@@ -220,19 +220,35 @@ All commands below can be accessed via Ex commands. Those with keybindings are n
 6. Navigate between files with diffs using `]f` / `[f`
 
 ### Background Agent Workflow
-1. Create an agent: `:ClaudeAgent implement new feature X`
-2. The agent works in an isolated git worktree
-3. Check progress: `<leader>cas` to see all agents
-4. Review changes: `<leader>cad` to see agent's diff
-5. Switch to worktree: `<leader>caw` to work directly
-6. Kill when done: `<leader>cak`
+1. Create an agent: `<leader>cb` or `:ClaudeBg`
+2. **Interactive Setup**: 
+   - Enter your mission with Task/Goals/Notes sections
+   - Choose fork options (current branch, main branch, stash changes, etc.)
+   - Configure setup instructions (auto-detects .env files, package managers, build scripts)
+3. The agent works in an isolated git worktree with its own Claude instance
+4. Monitor progress: `<leader>cl` to see all agents and their status
+5. Review changes: `:ClaudeDiffAgent [id]` to see the agent's changes with diffview
+6. **Complete the work**: When the agent finishes, it will automatically create a single commit with all changes
+7. **Cherry-pick the commit**:
+   - Switch to your main branch
+   - Find the commit hash from the agent's response
+   - Run: `git cherry-pick <commit-hash>`
+8. Kill the agent: `<leader>ck` or `:ClaudeKill [id]`
 
-### Chat History Workflow
-1. Make a request to Claude that involves code changes
-2. Browse a list of messages with `<leader>cp`
-3. View the state of the codebase at that point by selecting it
-4. Rollback to that point with `<leader>cpa`
-5. Or go back to the original state with `<leader>cpr`
+**Why Cherry-pick?**: This workflow keeps your main branch history clean. The agent can make multiple exploratory commits, but you only cherry-pick the final, polished commit. This also makes it easy to:
+- Review all changes in one commit
+- Modify the commit message if needed
+- Resolve any conflicts during cherry-pick
+- Maintain a linear history
+
+**Agent Instructions**: Each agent automatically receives guidelines for creating cherry-pickable commits, excluding metadata files (agent-instructions.md, CLAUDE.md, etc.) from commits.
+
+### Checkpoint Workflow
+1. Checkpoints are automatically created before each Claude message
+2. Browse checkpoints with `<leader>cp` or `:ClaudeCheckpoints`
+3. View the state of the codebase at any checkpoint by selecting it
+4. Accept and merge a checkpoint with `<leader>cpa`
+5. Return to the original state with `<leader>cpr`
 
 ## Claude Code Hooks
 
@@ -243,6 +259,28 @@ The plugin can automatically create baselines and track changes when Claude edit
 ```
 
 This creates a `.claude/settings.local.json` file in your project that integrates with Claude Code's hook system. This file is developer-specific and should not be committed to version control.
+
+## MCP Server Integration
+
+The plugin includes an MCP (Model Context Protocol) server that gives Claude access to LSP diagnostics:
+
+1. **Install the MCP server**:
+   ```vim
+   :ClaudeInstallMCP
+   ```
+
+2. **Get the configuration command**:
+   ```vim
+   :ClaudeShowMCPCommand
+   ```
+
+3. **Add to Claude Code config**: Copy the command output and add it to your Claude Code settings
+
+Once configured, Claude can use these tools:
+- `get_diagnostics` - Get diagnostics for specific files or all open buffers
+- `get_diagnostic_context` - Get code context around specific diagnostics
+- `get_diagnostic_summary` - Get a summary of all diagnostics
+- `get_session_diagnostics` - Get diagnostics only for files edited in the current session
 
 ## Troubleshooting
 
@@ -266,7 +304,7 @@ The plugin includes comprehensive debug logging for diagnosing issues:
 - **Log location**: `~/.local/share/nvim/nvim-claude/logs/<project-hash>-debug.log`
 - **Debug installation**: `:ClaudeDebugInstall` - Shows plugin paths and installation status
 
-See [debugging.md](debugging.md) for detailed debugging information.
+See [debugging.md](dev-docs/debugging.md) for detailed debugging information.
 
 ### Tmux Issues
 - Ensure tmux is installed and you're running Neovim inside a tmux session
