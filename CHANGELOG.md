@@ -71,6 +71,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Restores inline diff view automatically after LSP diagnostics update
   - Ensures fresh diagnostics while preserving the diff review experience
 - Removed debug "Diff refreshed" notification when editing files with inline diffs
+- Fixed stop hook not detecting LSP errors reliably
+  - Now uses the same robust diagnostic refresh mechanism as MCP tools
+  - Properly waits for all LSP servers to analyze files
+  - Refreshes existing buffers to ensure fresh diagnostics
+- Refactored LSP diagnostic utilities into shared module
+  - Created `lsp-utils.lua` to avoid code duplication
+  - Both MCP bridge and stop hook now use the same robust implementation
+- Fixed E37 "No write since last change" error when loading files after LSP diagnostics
+  - Buffer modification tracking now properly handles diagnostic refreshes
+  - Avoids marking buffers as modified when only triggering LSP analysis
+- Improved file tracking to automatically untrack files that match baseline
+  - If Claude edits a file then reverts all changes, the file is removed from tracking
+  - Prevents confusion when files show as "Claude-edited" but have no actual changes
+  - Helps handle interrupted messages where Claude may have reverted its own edits
 
 ## [0.1.0] - 2025-08-04
 

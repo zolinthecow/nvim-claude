@@ -18,7 +18,29 @@ function M.show_inline_diff(bufnr, old_content, new_content, opts)
   local diff_data = M.compute_diff(old_content, new_content)
 
   if not diff_data or #diff_data.hunks == 0 then
-    vim.notify('No changes to display', vim.log.levels.INFO)
+    -- No differences from baseline - untrack this file
+    local hooks = require('nvim-claude.hooks')
+    local utils = require('nvim-claude.utils')
+    local git_root = utils.get_project_root()
+    
+    if git_root then
+      local file_path = vim.api.nvim_buf_get_name(bufnr)
+      local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+      
+      -- Remove from tracking
+      if hooks.claude_edited_files[relative_path] then
+        hooks.claude_edited_files[relative_path] = nil
+        
+        -- Save the updated state
+        local persistence = require('nvim-claude.inline-diff-persistence')
+        persistence.save_state({
+          claude_edited_files = hooks.claude_edited_files,
+        })
+        
+        vim.notify('File matches baseline - removed from tracking', vim.log.levels.INFO)
+      end
+    end
+    
     return
   end
 
