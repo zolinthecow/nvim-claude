@@ -1042,7 +1042,7 @@ function M.show_fork_options_ui(state)
     -- Re-show mission UI with the current mission
     M.show_mission_input_ui()
   end
-  
+
   -- Action keys
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Tab>', '', { callback = create_agent, silent = true })
   vim.api.nvim_buf_set_keymap(buf, 'n', '<S-Tab>', '', { callback = go_back, silent = true })
@@ -1087,13 +1087,13 @@ function M.show_branch_selection(callback)
 
   -- State for current selection
   local state = {
-    selected = 1
+    selected = 1,
   }
 
   -- Function to update display
   local function update_display()
     local lines = { 'Select branch to fork from:', '' }
-    
+
     for i, branch in ipairs(unique_branches) do
       local icon = i == state.selected and '▶' or ' '
       table.insert(lines, string.format('%s %s', icon, branch))
@@ -1157,19 +1157,27 @@ function M.show_branch_selection(callback)
   -- Set up keymaps
   -- Navigation
   vim.api.nvim_buf_set_keymap(buf, 'n', 'j', '', {
-    callback = function() move_selection(1) end,
+    callback = function()
+      move_selection(1)
+    end,
     silent = true,
   })
   vim.api.nvim_buf_set_keymap(buf, 'n', 'k', '', {
-    callback = function() move_selection(-1) end,
+    callback = function()
+      move_selection(-1)
+    end,
     silent = true,
   })
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Down>', '', {
-    callback = function() move_selection(1) end,
+    callback = function()
+      move_selection(1)
+    end,
     silent = true,
   })
   vim.api.nvim_buf_set_keymap(buf, 'n', '<Up>', '', {
-    callback = function() move_selection(-1) end,
+    callback = function()
+      move_selection(-1)
+    end,
     silent = true,
   })
 
@@ -1209,12 +1217,12 @@ end
 -- Format task string into sections
 function M.format_task_sections(task_string)
   local formatted = {}
-  
+
   -- Extract each section using more precise patterns
-  local task_match = task_string:match('## Task:%s*\n(.-)\n%s*## Goals:')
-  local goals_match = task_string:match('## Goals:%s*\n(.-)\n%s*## Notes:')
-  local notes_match = task_string:match('## Notes:%s*\n(.*)$')
-  
+  local task_match = task_string:match '## Task:%s*\n(.-)\n%s*## Goals:'
+  local goals_match = task_string:match '## Goals:%s*\n(.-)\n%s*## Notes:'
+  local notes_match = task_string:match '## Notes:%s*\n(.*)$'
+
   -- Process Task section
   if task_match then
     local cleaned = task_match:gsub('^%s*', ''):gsub('%s*$', '')
@@ -1223,29 +1231,33 @@ function M.format_task_sections(task_string)
       table.insert(formatted, cleaned)
     end
   end
-  
+
   -- Process Goals section
   if goals_match then
     local cleaned = goals_match:gsub('^%s*', ''):gsub('%s*$', '')
     -- Skip if it's just a dash with optional whitespace
-    if cleaned ~= '' and cleaned ~= '-' and not cleaned:match('^%-%s*$') then
-      if #formatted > 0 then table.insert(formatted, '') end
+    if cleaned ~= '' and cleaned ~= '-' and not cleaned:match '^%-%s*$' then
+      if #formatted > 0 then
+        table.insert(formatted, '')
+      end
       table.insert(formatted, '# Goals')
       table.insert(formatted, cleaned)
     end
   end
-  
+
   -- Process Notes section
   if notes_match then
     local cleaned = notes_match:gsub('^%s*', ''):gsub('%s*$', '')
     -- Skip if it's just a dash with optional whitespace
-    if cleaned ~= '' and cleaned ~= '-' and not cleaned:match('^%-%s*$') then
-      if #formatted > 0 then table.insert(formatted, '') end
+    if cleaned ~= '' and cleaned ~= '-' and not cleaned:match '^%-%s*$' then
+      if #formatted > 0 then
+        table.insert(formatted, '')
+      end
       table.insert(formatted, '# Notes')
       table.insert(formatted, cleaned)
     end
   end
-  
+
   -- If no sections found, treat entire string as task
   if #formatted == 0 then
     local cleaned = task_string:gsub('^%s+', ''):gsub('%s+$', '')
@@ -1254,7 +1266,7 @@ function M.format_task_sections(task_string)
       table.insert(formatted, cleaned)
     end
   end
-  
+
   return table.concat(formatted, '\n')
 end
 
@@ -1426,7 +1438,7 @@ function M.show_setup_instructions_ui(state, callback)
     local in_commands = false
 
     for i, line in ipairs(all_lines) do
-      if line:match '^━+$' then  -- Match any number of ━ characters
+      if line:match '^━+$' then -- Match any number of ━ characters
         if in_commands then
           break
         end
@@ -1458,7 +1470,7 @@ function M.show_setup_instructions_ui(state, callback)
   local function cancel()
     vim.api.nvim_win_close(win, true)
   end
-  
+
   -- Go back to fork options
   local function go_back()
     vim.api.nvim_win_close(win, true)
@@ -1659,6 +1671,7 @@ echo 'Found 3 areas that need refactoring' >> progress.txt
 3. **Stay in this directory** - All work should be done in this agent workspace
 4. **Complete the task** - Work until the task is fully completed or you encounter a blocking issue
 5. **Commit your changes** - Once your task is completed follow the commit guidelines to commit your changes. The user will use this commit to cherry-pick onto their working branch
+6. **Notify the user** - Notify the user that you have created the commit and tell them how they can cherry-pick it onto the base branch.
 
 ## Commit Guidelines
 
@@ -1676,6 +1689,8 @@ When your task is complete, please create a single, clean commit containing ONLY
    git commit -m "feat: implement [specific feature description]"
    ```
 4. Verify your commit contains only relevant changes: `git show --stat`
+
+5. Notify the user that the commit has been created. Tell them the commit ID and give them a simple command that they can use to cherry-pick it onto the base branch.
 
 Remember: The goal is a clean commit that can be cherry-picked to the main branch.
 

@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Clear instructions for creating cherry-pickable commits
   - Reminds agents to exclude metadata files (agent-instructions.md, CLAUDE.md, mission.log, etc.)
   - Encourages single, focused commits with proper commit messages
+  - Notifies user about the single commit to be cherry-picked
 
 ### Changed
 - Agent instructions now use `agent-instructions.md` instead of deprecated `CLAUDE.local.md`
