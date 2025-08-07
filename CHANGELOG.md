@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - If Claude edits a file then reverts all changes, the file is removed from tracking
   - Prevents confusion when files show as "Claude-edited" but have no actual changes
   - Helps handle interrupted messages where Claude may have reverted its own edits
+- Fixed buffer sync issues when rejecting hunks
+  - Rejecting hunks now properly syncs buffer with file on disk
+  - Uses `edit!` to force reload after git operations
+  - Buffer correctly shows as unmodified after reject operations
+- Fixed "Press enter to continue" prompt when saving files with inline diffs
+  - Diff refresh on save now preserves cursor position silently
+  - No more "Hunk X/Y" notifications interrupting normal save flow
+  - `:w` now works seamlessly without prompts
 
 ## [0.1.0] - 2025-08-04
 

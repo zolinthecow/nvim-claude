@@ -348,7 +348,7 @@ function M.setup_inline_keymaps(bufnr)
 end
 
 -- Jump to specific hunk
-function M.jump_to_hunk(bufnr, hunk_idx)
+function M.jump_to_hunk(bufnr, hunk_idx, silent)
   local diff_data = M.active_diffs[bufnr]
   if not diff_data or not diff_data.hunks[hunk_idx] then
     return
@@ -395,8 +395,10 @@ function M.jump_to_hunk(bufnr, hunk_idx)
     vim.api.nvim_win_set_cursor(win, { jump_line, 0 })
   end
 
-  -- Update status
-  vim.notify(string.format('Hunk %d/%d', hunk_idx, #diff_data.hunks), vim.log.levels.INFO)
+  -- Update status (only if not silent)
+  if not silent then
+    vim.notify(string.format('Hunk %d/%d', hunk_idx, #diff_data.hunks), vim.log.levels.INFO)
+  end
 end
 
 -- Helper function to get the line range of a hunk in the buffer
@@ -825,10 +827,7 @@ function M.reject_current_hunk(bufnr)
     if baseline_result and (baseline_result:match '^fatal:' or baseline_result:match 'does not exist') then
       -- This is a new file - manually remove the hunk content
       M.manually_reject_hunk(bufnr, hunk)
-      -- Reload the buffer to ensure it's updated
-      vim.api.nvim_buf_call(bufnr, function()
-        vim.cmd 'checktime'
-      end)
+      -- manually_reject_hunk already saves the file, no need to reload
 
       -- Check if file is now empty
       local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -876,17 +875,13 @@ function M.reject_current_hunk(bufnr)
 
       vim.fn.delete(patch_file)
 
-      -- Reload the buffer
+      -- Force reload the buffer from disk
       vim.api.nvim_buf_call(bufnr, function()
-        vim.cmd 'checktime'
+        -- Force reload to ensure buffer matches the file after git apply
+        vim.cmd 'edit!'
       end)
     end
   end
-
-  -- Reload the buffer
-  vim.api.nvim_buf_call(bufnr, function()
-    vim.cmd 'checktime'
-  end)
 
   -- Recalculate diff against unchanged baseline
   local hooks = require 'nvim-claude.hooks'
@@ -1496,8 +1491,8 @@ function M.refresh_inline_diff(bufnr)
   -- Preserve current hunk position
   local current_hunk = M.active_diffs[bufnr] and M.active_diffs[bufnr].current_hunk or 1
 
-  -- Recompute and show diff
-  M.show_inline_diff(bufnr, baseline_content, current_content)
+  -- Recompute and show diff (preserve cursor to avoid notifications)
+  M.show_inline_diff(bufnr, baseline_content, current_content, { preserve_cursor = true })
 
   -- Restore hunk position if possible
   if M.active_diffs[bufnr] and M.active_diffs[bufnr].hunks then
