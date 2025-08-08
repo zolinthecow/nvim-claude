@@ -71,8 +71,33 @@ echo '✅ MCP server installed successfully!'
 echo "   Using Python: $PYTHON_CMD ($PYTHON_VERSION)"
 echo "   MCP environment: $MCP_VENV_PATH"
 echo ''
-echo 'To add to Claude Code, run this in your project directory:'
-echo "  claude mcp add nvim-lsp -s local $MCP_VENV_PATH/bin/python $SCRIPT_DIR/nvim-lsp-server.py"
+
+# Try to automatically add to Claude Code if CLI is available
+# The PROJECT_ROOT env var is set by Neovim when calling this script
+if [[ -n "$PROJECT_ROOT" ]]; then
+    echo "📂 Project root: $PROJECT_ROOT"
+    cd "$PROJECT_ROOT"
+fi
+
+if command -v claude &> /dev/null; then
+    echo '🔌 Attempting to register with Claude Code for this project...'
+    if claude mcp add nvim-lsp -s local "$MCP_VENV_PATH/bin/python" "$SCRIPT_DIR/nvim-lsp-server.py" 2>/dev/null; then
+        echo '✨ Successfully added nvim-lsp server to Claude Code!'
+        echo "   Registered for project: ${PROJECT_ROOT:-$(pwd)}"
+        echo '   The server is configured for this project only (-s local).'
+        echo '   Restart Claude Code in this directory to use LSP diagnostics.'
+    else
+        echo '⚠️  Could not automatically add to Claude Code.'
+        echo '   Run this command manually in your project root directory:'
+        echo "   cd ${PROJECT_ROOT:-$(pwd)}"
+        echo "   claude mcp add nvim-lsp -s local $MCP_VENV_PATH/bin/python $SCRIPT_DIR/nvim-lsp-server.py"
+    fi
+else
+    echo 'To add to Claude Code, run these commands in your project root:'
+    echo "  cd ${PROJECT_ROOT:-$(pwd)}"
+    echo "  claude mcp add nvim-lsp -s local $MCP_VENV_PATH/bin/python $SCRIPT_DIR/nvim-lsp-server.py"
+    echo ''
+    echo 'Note: The -s local flag makes it available only in this specific project.'
+fi
 echo ''
-echo 'Note: Use -s local to make it available only in the current project.'
 echo 'The MCP server will automatically connect to the Neovim instance for that project.'

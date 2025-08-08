@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Eliminates all UI freezing when Claude accesses diagnostics
   - Requires reinstalling MCP server with `:ClaudeInstallMCP` for pynvim dependency
 
+### Added
+- Automatic MCP server registration during installation
+  - Install script now attempts to run `claude mcp add` automatically
+  - Properly registers from project root for correct project isolation
+  - Each project gets its own MCP server registration with `-s local` flag
+  - Claude Code only has LSP access when opened in the specific project directory
+
 ### Fixed
 - Fixed `<leader>IR` (reject all files) writing error messages to new files
   - Now properly detects and deletes new files that don't exist in baseline
