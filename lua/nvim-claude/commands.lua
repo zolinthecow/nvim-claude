@@ -1347,18 +1347,15 @@ end
 -- Load setup history for a project
 function M.load_setup_history(project_root)
   local project_state = require 'nvim-claude.project-state'
-  local state = project_state.get_project_state(project_root)
-  return state and state.agent_setup_history or nil
+  return project_state.get(project_root, 'agent_setup_history')
 end
 
 -- Save setup history for a project
 function M.save_setup_history(project_root, commands)
   local project_state = require 'nvim-claude.project-state'
-  project_state.save_project_state(project_root, {
-    agent_setup_history = {
-      last_used = os.date '!%Y-%m-%dT%H:%M:%SZ',
-      setup_commands = commands,
-    },
+  project_state.set(project_root, 'agent_setup_history', {
+    last_used = os.date '!%Y-%m-%dT%H:%M:%SZ',
+    setup_commands = commands,
   })
 end
 

@@ -36,7 +36,7 @@ function M.load()
   
   -- Load from global storage
   local project_state = require('nvim-claude.project-state')
-  M.agents = project_state.get_agent_registry(project_root) or {}
+  M.agents = project_state.get(project_root, 'agent_registry') or {}
   
   -- Validate loaded agents
   M.validate_agents()
@@ -51,7 +51,7 @@ function M.save()
   
   -- Save to global storage
   local project_state = require('nvim-claude.project-state')
-  return project_state.save_agent_registry(project_root, M.agents)
+  return project_state.set(project_root, 'agent_registry', M.agents)
 end
 
 -- Validate agents (remove stale entries)

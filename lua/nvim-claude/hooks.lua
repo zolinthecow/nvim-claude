@@ -30,6 +30,8 @@ function M.setup()
   -- Setup persistence layer on startup
   vim.defer_fn(function()
     M.setup_persistence()
+    -- Load session files from previous sessions
+    M.load_session_files()
   end, 500)
 
   -- Set up autocmd for opening files
@@ -309,6 +311,71 @@ end
 -- Session tracking for Stop hook
 M.session_edited_files = {}
 
+-- Save session edited files to disk
+function M.save_session_files()
+  local utils = require 'nvim-claude.utils'
+  local project_state = require 'nvim-claude.project-state'
+  
+  local project_root = utils.get_project_root()
+  if not project_root then
+    logger.error('save_session_files', 'No project root found')
+    return false
+  end
+  
+  -- Get existing session files from disk
+  local existing_files = project_state.get(project_root, 'session_edited_files') or {}
+  
+  -- Convert existing list to a set for merging
+  local files_set = {}
+  for _, file in ipairs(existing_files) do
+    files_set[file] = true
+  end
+  
+  -- Merge with current in-memory session files
+  for file, _ in pairs(M.session_edited_files) do
+    files_set[file] = true
+  end
+  
+  -- Convert back to list for JSON serialization
+  local files_list = vim.tbl_keys(files_set)
+  
+  logger.info('save_session_files', 'Saving session files', {
+    count = #files_list,
+    project = project_root
+  })
+  
+  return project_state.set(project_root, 'session_edited_files', files_list)
+end
+
+-- Load session edited files from disk
+function M.load_session_files()
+  local utils = require 'nvim-claude.utils'
+  local project_state = require 'nvim-claude.project-state'
+  
+  local project_root = utils.get_project_root()
+  if not project_root then
+    logger.error('load_session_files', 'No project root found')
+    return false
+  end
+  
+  local files_list = project_state.get(project_root, 'session_edited_files') or {}
+  if files_list and #files_list > 0 then
+    -- Convert list back to table
+    M.session_edited_files = {}
+    for _, file in ipairs(files_list) do
+      M.session_edited_files[file] = true
+    end
+    
+    logger.info('load_session_files', 'Loaded session files', {
+      count = #files_list,
+      project = project_root
+    })
+    return true
+  end
+  
+  return false
+end
+
 -- Post-tool-use hook: Track Claude-edited file and refresh if currently open
 function M.post_tool_use_hook(file_path)
   if not file_path then
@@ -337,6 +404,7 @@ function M.post_tool_use_hook(file_path)
 
   -- Also track for session (Stop hook) - use full path for easier lookup
   M.session_edited_files[file_path] = true
+  M.save_session_files() -- Persist immediately
 
   -- Check if we have a baseline before saving
   if not persistence.get_baseline_ref() then
@@ -439,6 +507,7 @@ function M.track_deleted_file(file_path)
       -- File exists in baseline, track it as edited
       M.claude_edited_files[relative_path] = true
       M.session_edited_files[file_path] = true  -- Use full path for session tracking
+      M.save_session_files() -- Persist immediately
       
       -- Save to persistence
       persistence.save_state {
@@ -1395,6 +1464,7 @@ end
 function M.reset_session_tracking()
   logger.info('reset_session_tracking', 'Clearing session edited files')
   M.session_edited_files = {}
+  M.save_session_files() -- Clear persistence
 end
 
 return M

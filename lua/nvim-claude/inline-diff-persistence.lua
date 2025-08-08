@@ -125,7 +125,7 @@ function M.save_state(diff_data)
 
   -- Save using global project state
   local project_state = require 'nvim-claude.project-state'
-  local success = project_state.save_inline_diff_state(project_root, state)
+  local success = project_state.set(project_root, 'inline_diff_state', state)
   
   if not success then
     logger.error('save_state', 'Failed to save state to global storage')
@@ -154,7 +154,7 @@ function M.load_state()
   project_state.migrate_local_state(project_root)
 
   -- Load from global storage
-  local state = project_state.get_inline_diff_state(project_root)
+  local state = project_state.get(project_root, 'inline_diff_state')
   if not state then
     return nil
   end
@@ -295,7 +295,7 @@ function M.clear_state()
   
   -- Clear from global storage
   local project_state = require 'nvim-claude.project-state'
-  project_state.save_inline_diff_state(project_root, nil)
+  project_state.set(project_root, 'inline_diff_state', nil)
   
   -- Also clear the git ref
   M.clear_baseline_ref()
