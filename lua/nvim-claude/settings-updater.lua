@@ -3,6 +3,11 @@ local utils = require 'nvim-claude.utils'
 
 -- Update Claude settings with current Neovim server address
 function M.update_claude_settings()
+  -- Skip if running in headless mode (MCP server)
+  if vim.g.headless_mode then
+    return
+  end
+  
   local project_root = utils.get_project_root()
   if not project_root then
     return

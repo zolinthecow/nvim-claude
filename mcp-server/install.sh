@@ -54,17 +54,17 @@ MCP_VENV_PATH="$HOME/.local/share/nvim/nvim-claude/mcp-env"
 echo '📦 Creating MCP Python virtual environment...'
 "$PYTHON_CMD" -m venv "$MCP_VENV_PATH"
 
-# Install MCP (try fastmcp first, fallback to mcp)
-echo '📥 Installing MCP package...'
+# Install dependencies from requirements.txt
+echo '📥 Installing MCP server dependencies...'
 "$MCP_VENV_PATH/bin/pip" install --quiet --upgrade pip
 
-if "$MCP_VENV_PATH/bin/pip" install --quiet fastmcp; then
-    echo 'fastmcp' > "$SCRIPT_DIR/requirements.txt"
-    echo '✨ Using FastMCP (recommended)'
+if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
+    "$MCP_VENV_PATH/bin/pip" install --quiet -r "$SCRIPT_DIR/requirements.txt"
+    echo '✨ Installed all dependencies from requirements.txt'
 else
-    echo '⚠️  FastMCP not available, using standard mcp package'
-    "$MCP_VENV_PATH/bin/pip" install --quiet mcp
-    echo 'mcp' > "$SCRIPT_DIR/requirements.txt"
+    # Fallback if requirements.txt doesn't exist
+    echo '⚠️  requirements.txt not found, installing minimal dependencies'
+    "$MCP_VENV_PATH/bin/pip" install --quiet fastmcp pynvim
 fi
 
 echo '✅ MCP server installed successfully!'

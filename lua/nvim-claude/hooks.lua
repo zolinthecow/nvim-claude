@@ -1342,9 +1342,6 @@ end
 
 -- Get diagnostic counts for session edited files (for Stop hook)
 function M.get_session_diagnostic_counts()
-  local counts = { errors = 0, warnings = 0 }
-  local lsp_utils = require('nvim-claude.lsp-utils')
-
   -- Only check files edited in the current session
   local files_to_check = M.session_edited_files
   
@@ -1356,79 +1353,38 @@ function M.get_session_diagnostic_counts()
 
   logger.info('get_session_diagnostic_counts', 'Checking files', vim.tbl_keys(files_to_check))
 
-  -- Build list of files to check
-  local files_list = {}
-  local temp_buffers = {} -- Track buffers we create
+  -- Use the MCP bridge to get diagnostics via headless Neovim
+  -- This avoids UI freezing and buffer conflicts
+  local mcp_bridge = require('nvim-claude.mcp-bridge')
   
-  for file_path, _ in pairs(files_to_check) do
-    -- Check if file exists
-    if vim.fn.filereadable(file_path) == 0 then
-      -- File was deleted, remove from session tracking
-      M.session_edited_files[file_path] = nil
-      logger.info('get_session_diagnostic_counts', 'Removing deleted file from session tracking', { file = file_path })
-    else
-      local bufnr = vim.fn.bufnr(file_path)
-      
-      -- If buffer doesn't exist, create it temporarily
-      if bufnr == -1 then
-        -- Create buffer and load file
-        bufnr = vim.fn.bufadd(file_path)
-        vim.fn.bufload(bufnr)
-        temp_buffers[bufnr] = true
-        
-        -- Trigger LSP attach by detecting filetype
-        vim.api.nvim_buf_call(bufnr, function()
-          vim.cmd 'filetype detect'
-        end)
-        
-        -- Wait for LSP to attach
-        vim.wait(500, function()
-          return #vim.lsp.get_clients({ bufnr = bufnr }) > 0
-        end, 50)
-      else
-        -- Refresh existing buffer to ensure fresh diagnostics
-        lsp_utils.refresh_buffer_diagnostics(bufnr)
-      end
-      
-      if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-        table.insert(files_list, {
-          path = file_path,
-          bufnr = bufnr
-        })
-      end
-    end
+  -- Get session diagnostics through the headless instance
+  local result_json = mcp_bridge.get_session_diagnostics()
+  
+  -- Parse the result
+  local ok, result = pcall(vim.json.decode, result_json)
+  if not ok then
+    logger.error('get_session_diagnostic_counts', 'Failed to parse MCP diagnostics result', { error = result })
+    return '{"errors":0,"warnings":0}'
   end
-
-  -- Wait for LSP diagnostics from all files
-  if #files_list > 0 then
-    lsp_utils.await_lsp_diagnostics(files_list, 3000)
-  end
-
-  -- Collect diagnostics after waiting
-  for _, file_info in ipairs(files_list) do
-    local bufnr = file_info.bufnr
-    local diagnostics = vim.diagnostic.get(bufnr)
-
-    for _, diag in ipairs(diagnostics) do
-      if diag.severity == vim.diagnostic.severity.ERROR then
+  
+  -- Count errors and warnings from all files
+  local counts = { errors = 0, warnings = 0 }
+  
+  for _, file_diagnostics in pairs(result) do
+    for _, diag in ipairs(file_diagnostics) do
+      if diag.severity == 'ERROR' then
         counts.errors = counts.errors + 1
-      elseif diag.severity == vim.diagnostic.severity.WARN then
+      elseif diag.severity == 'WARN' then
         counts.warnings = counts.warnings + 1
       end
     end
   end
 
-  -- Clean up temporary buffers
-  for bufnr, _ in pairs(temp_buffers) do
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      vim.api.nvim_buf_delete(bufnr, { force = true })
-    end
-  end
-
   logger.info('get_session_diagnostic_counts', 'Diagnostic counts', counts)
+  
   -- Ensure we always return valid JSON string
-  local ok, json = pcall(vim.json.encode, counts)
-  if ok then
+  local json_ok, json = pcall(vim.json.encode, counts)
+  if json_ok then
     return json
   else
     return '{"errors":0,"warnings":0}'

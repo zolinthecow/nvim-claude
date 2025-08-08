@@ -3,7 +3,7 @@ local M = {}
 
 -- Helper function to wait for LSP diagnostics from all attached clients
 function M.await_lsp_diagnostics(files_to_check, timeout_ms)
-  timeout_ms = timeout_ms or 3000
+  timeout_ms = timeout_ms or 1500
   
   -- Track which buffers had inline diffs before we start
   local inline_diff = require('nvim-claude.inline-diff')

@@ -5,7 +5,14 @@ All notable changes to nvim-claude will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.2] - 2025-01-08
+
+### Changed
+- **BREAKING**: Complete rewrite of LSP diagnostics system to use headless Neovim
+  - MCP server now runs diagnostics in isolated headless Neovim instance
+  - Stop hook also uses headless approach for error checking
+  - Eliminates all UI freezing when Claude accesses diagnostics
+  - Requires reinstalling MCP server with `:ClaudeInstallMCP` for pynvim dependency
 
 ### Fixed
 - Fixed `<leader>IR` (reject all files) writing error messages to new files
@@ -15,6 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Session tracking now automatically removes deleted files
   - Stop hook and MCP tools no longer report errors for non-existent files
   - Prevents ghost diagnostics from appearing in Claude after file deletions
+- Fixed headless Neovim overwriting main instance's server file
+  - Headless instance now skips server file creation when `vim.g.headless_mode` is set
+  - Prevents hooks from connecting to wrong Neovim instance
+- Fixed LSP servers not attaching in headless instance
+  - Aligned buffer creation with master branch using `bufadd(full_path)`
+  - LSP servers now properly identify and attach to files
+
+### Technical Details
+- Headless Neovim loads user's full config including lazy.nvim and LSP servers
+- Uses subprocess isolation with pynvim for thread-safe communication
+- Temporary buffers created with actual file paths for proper LSP attachment
+- Stop hook diagnostic counts now delegated to MCP bridge
+- All diagnostic operations run outside main editor event loop
 
 ## [v0.1.1] - 2025-08-05
 

@@ -1,8 +1,10 @@
+---@diagnostic disable: undefined-global
 local M = {}
 local lsp_utils = require('nvim-claude.lsp-utils')
 
 function M.get_diagnostics(file_paths)
   local diagnostics = {}
+  
   
   -- Handle both JSON strings and Lua tables
   if type(file_paths) == 'string' then
@@ -17,14 +19,30 @@ function M.get_diagnostics(file_paths)
   local temp_buffers = {} -- Track buffers we created
   
   if not file_paths or #file_paths == 0 then
-    -- Get all loaded buffers
+    -- Get all loaded buffers but create temp copies
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_loaded(buf) then
         local name = vim.api.nvim_buf_get_name(buf)
-        if name ~= '' then
+        if name ~= '' and vim.fn.filereadable(name) == 1 then
+          -- Create a temporary buffer copy
+          local temp_bufnr = vim.fn.bufadd('')  -- Create unnamed buffer
+          
+          -- Copy content from original buffer
+          local content = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+          vim.api.nvim_buf_set_lines(temp_bufnr, 0, -1, false, content)
+          
+          -- Set buffer name for diagnostics (add unique suffix to avoid conflicts)
+          local unique_name = name .. '.mcp-temp-' .. temp_bufnr
+          vim.api.nvim_buf_set_name(temp_bufnr, unique_name)
+          
+          -- Copy filetype from original buffer
+          vim.bo[temp_bufnr].filetype = vim.bo[buf].filetype
+          
+          temp_buffers[temp_bufnr] = true
+          
           table.insert(files_to_check, {
             path = name,
-            bufnr = buf
+            bufnr = temp_bufnr
           })
         end
       end
@@ -32,60 +50,111 @@ function M.get_diagnostics(file_paths)
   else
     -- Get specific files
     for _, file_path in ipairs(file_paths) do
-      -- Try exact path first
-      local bufnr = vim.fn.bufnr(file_path)
-      local full_path = file_path
-      
-      -- If not found, try as relative path from cwd
-      if bufnr == -1 then
-        full_path = vim.fn.getcwd() .. '/' .. file_path
-        bufnr = vim.fn.bufnr(full_path)
-      end
-      
-      -- If buffer doesn't exist, create it temporarily
-      if bufnr == -1 then
+      if file_path then  -- Ensure file_path is not nil
+        -- Determine full path
+        local full_path = file_path
+        if not file_path:match('^/') then
+          -- Try as relative path from cwd
+          local potential_path = vim.fn.getcwd() .. '/' .. file_path
+          if vim.fn.filereadable(potential_path) == 1 then
+            full_path = potential_path
+          end
+        end
+        
         -- Check if file exists
         if vim.fn.filereadable(full_path) == 1 then
-          -- Create buffer and load file
-          bufnr = vim.fn.bufadd(full_path)
-          vim.fn.bufload(bufnr)
-          temp_buffers[bufnr] = true
-          
-          -- Trigger LSP attach by detecting filetype
-          vim.api.nvim_buf_call(bufnr, function()
-            vim.cmd 'filetype detect'
-          end)
-          
-          -- Wait for LSP to attach
-          vim.wait(500, function()
-            return #vim.lsp.get_clients({ bufnr = bufnr }) > 0
-          end, 50)
+        -- Create a buffer with the actual file path (like master branch)
+        local temp_bufnr = vim.fn.bufadd(full_path)
+        vim.fn.bufload(temp_bufnr)
+        
+        -- Debug: Log file content
+        local log_file = io.open('/tmp/nvim-claude-mcp-debug.log', 'a')
+        if log_file then
+          log_file:write(string.format('[%s] Processing file: %s\n', os.date('%Y-%m-%d %H:%M:%S'), full_path))
+          local lines = vim.api.nvim_buf_get_lines(temp_bufnr, 0, -1, false)
+          log_file:write(string.format('  Content lines: %d\n', #lines))
+          log_file:write(string.format('  First line: %s\n', lines[1] or 'empty'))
         end
-      end
-      
-      if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+        
+        -- Trigger LSP attach by detecting filetype (like master branch)
+        vim.api.nvim_buf_call(temp_bufnr, function()
+          vim.cmd 'filetype detect'
+          
+          -- Debug: Log filetype
+          local ft = vim.bo.filetype
+          if log_file then
+            log_file:write(string.format('  Filetype detected: %s\n', ft or 'none'))
+            
+            -- Check what LSP configs are available
+            local ok_lspconfig, lspconfig = pcall(require, 'lspconfig')
+            log_file:write(string.format('  lspconfig available: %s\n', tostring(ok_lspconfig)))
+            if ok_lspconfig then
+              log_file:write(string.format('  lua_ls available: %s\n', tostring(lspconfig.lua_ls ~= nil)))
+            end
+          end
+        end)
+        
+        temp_buffers[temp_bufnr] = true
+        
+        -- Wait briefly for LSP to attach
+        vim.wait(500, function()
+          return #vim.lsp.get_clients({ bufnr = temp_bufnr }) > 0
+        end, 50)
+        
+        -- Debug: Check attached LSP clients
+        local clients = vim.lsp.get_clients({ bufnr = temp_bufnr })
+        if log_file then
+          log_file:write(string.format('  LSP clients attached: %d\n', #clients))
+          for _, client in ipairs(clients) do
+            log_file:write(string.format('    - %s (id: %d)\n', client.name, client.id))
+          end
+          
+          -- Check all available LSP clients in the system
+          local all_clients = vim.lsp.get_clients()
+          log_file:write(string.format('  Total LSP clients in system: %d\n', #all_clients))
+          for _, client in ipairs(all_clients) do
+            log_file:write(string.format('    - %s (id: %d)\n', client.name, client.id))
+          end
+          
+          log_file:close()
+        end
+        
         table.insert(files_to_check, {
-          path = vim.api.nvim_buf_get_name(bufnr),
-          bufnr = bufnr
+          path = full_path,
+          bufnr = temp_bufnr
         })
       end
+      end  -- Close the if file_path then check
     end
   end
   
   -- Wait for LSP diagnostics from all files
   if #files_to_check > 0 then
-    lsp_utils.await_lsp_diagnostics(files_to_check, 3000)
+    lsp_utils.await_lsp_diagnostics(files_to_check, 1000)
   end
   
   -- Collect diagnostics after waiting
+  local log_file = io.open('/tmp/nvim-claude-mcp-debug.log', 'a')
+  if log_file then
+    log_file:write(string.format('[%s] Collecting diagnostics from %d files\n', os.date('%Y-%m-%d %H:%M:%S'), #files_to_check))
+  end
+  
   for _, file_info in ipairs(files_to_check) do
     local bufnr = file_info.bufnr
     local diags = vim.diagnostic.get(bufnr)
+    
+    if log_file then
+      log_file:write(string.format('  File: %s, Buffer: %d, Diagnostics: %d\n', file_info.path, bufnr, #diags))
+    end
     
     if #diags > 0 then
       local display_path = vim.fn.fnamemodify(file_info.path, ':~:.')
       diagnostics[display_path] = M._format_diagnostics(diags)
     end
+  end
+  
+  if log_file then
+    log_file:close()
   end
   
   -- Clean up temporary buffers
@@ -99,29 +168,48 @@ function M.get_diagnostics(file_paths)
 end
 
 function M.get_diagnostic_context(file_path, line)
-  local bufnr = vim.fn.bufnr(file_path)
-  local temp_buffer = false
+  -- Check if file exists
+  if vim.fn.filereadable(file_path) == 0 then
+    return vim.json.encode({error = 'File not found'})
+  end
   
-  -- If buffer doesn't exist, create it temporarily
-  if bufnr == -1 then
-    if vim.fn.filereadable(file_path) == 0 then
-      return vim.json.encode({error = 'File not found'})
-    end
-    
-    bufnr = vim.fn.bufadd(file_path)
-    vim.fn.bufload(bufnr)
-    temp_buffer = true
-    
-    -- Trigger LSP attach by detecting filetype
-    vim.api.nvim_buf_call(bufnr, function()
+  -- Always create a temporary buffer
+  local temp_bufnr = vim.fn.bufadd('')  -- Create unnamed buffer
+  local temp_buffer = true
+  
+  -- Check if there's an existing buffer to copy filetype from
+  local existing_bufnr = vim.fn.bufnr(file_path)
+  local filetype = ''
+  if existing_bufnr ~= -1 then
+    -- Copy content from existing buffer (might have unsaved changes)
+    local content = vim.api.nvim_buf_get_lines(existing_bufnr, 0, -1, false)
+    vim.api.nvim_buf_set_lines(temp_bufnr, 0, -1, false, content)
+    filetype = vim.bo[existing_bufnr].filetype
+  else
+    -- Read from file
+    local content = vim.fn.readfile(file_path)
+    vim.api.nvim_buf_set_lines(temp_bufnr, 0, -1, false, content)
+  end
+  
+  -- Set buffer name for diagnostics
+  local unique_name = file_path .. '.mcp-temp-' .. temp_bufnr
+  vim.api.nvim_buf_set_name(temp_bufnr, unique_name)
+  
+  -- Set filetype
+  if filetype ~= '' then
+    vim.bo[temp_bufnr].filetype = filetype
+  else
+    vim.api.nvim_buf_call(temp_bufnr, function()
       vim.cmd 'filetype detect'
     end)
-    
-    -- Wait for LSP to attach
-    vim.wait(500, function()
-      return #vim.lsp.get_clients({ bufnr = bufnr }) > 0
-    end, 50)
   end
+  
+  -- Wait for LSP to attach
+  vim.wait(500, function()
+    return #vim.lsp.get_clients({ bufnr = temp_bufnr }) > 0
+  end, 50)
+  
+  local bufnr = temp_bufnr
   
   -- Wait for LSP diagnostics
   if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
@@ -165,15 +253,30 @@ function M.get_diagnostic_summary()
     files_with_issues = {},
   }
   
-  -- Collect all loaded buffers
+  -- Collect all loaded buffers but use temp copies
   local files_to_check = {}
+  local temp_buffers = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(buf) then
       local name = vim.api.nvim_buf_get_name(buf)
-      if name ~= '' then
+      if name ~= '' and vim.fn.filereadable(name) == 1 then
+        -- Create a temporary buffer copy
+        local temp_bufnr = vim.fn.bufadd('')
+        
+        -- Copy content from original buffer
+        local content = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+        vim.api.nvim_buf_set_lines(temp_bufnr, 0, -1, false, content)
+        
+        -- Set buffer name and filetype (add unique suffix to avoid conflicts)
+        local unique_name = name .. '.mcp-temp-' .. temp_bufnr
+        vim.api.nvim_buf_set_name(temp_bufnr, unique_name)
+        vim.bo[temp_bufnr].filetype = vim.bo[buf].filetype
+        
+        temp_buffers[temp_bufnr] = true
+        
         table.insert(files_to_check, {
           path = name,
-          bufnr = buf
+          bufnr = temp_bufnr
         })
       end
     end
@@ -181,7 +284,7 @@ function M.get_diagnostic_summary()
   
   -- Wait for LSP diagnostics from all files
   if #files_to_check > 0 then
-    lsp_utils.await_lsp_diagnostics(files_to_check, 3000)
+    lsp_utils.await_lsp_diagnostics(files_to_check, 1000)
   end
   
   -- Collect diagnostics after waiting
@@ -207,6 +310,13 @@ function M.get_diagnostic_summary()
         errors = file_errors,
         warnings = file_warnings,
       })
+    end
+  end
+  
+  -- Clean up temporary buffers
+  for bufnr, _ in pairs(temp_buffers) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      vim.api.nvim_buf_delete(bufnr, { force = true })
     end
   end
   
@@ -244,6 +354,69 @@ function M._format_diagnostics(diags)
     })
   end
   return formatted
+end
+
+-- Async versions of the diagnostic functions that don't block the UI
+-- These write results to a named pipe instead of returning them
+
+function M.get_diagnostics_async(pipe_path, file_paths)
+  -- Run asynchronously to avoid blocking UI
+  vim.defer_fn(function()
+    local result = M.get_diagnostics(file_paths)
+    
+    -- Write result to pipe
+    local pipe = io.open(pipe_path, 'w')
+    if pipe then
+      pipe:write(result)
+      pipe:close()
+    else
+      -- If we can't open the pipe, write an error
+      local error_result = vim.json.encode({error = 'Failed to open pipe: ' .. pipe_path})
+      -- Try to create a temp file as fallback
+      local temp_file = pipe_path .. '.tmp'
+      local f = io.open(temp_file, 'w')
+      if f then
+        f:write(error_result)
+        f:close()
+      end
+    end
+  end, 0)
+end
+
+function M.get_diagnostic_context_async(pipe_path, file_path, line)
+  vim.defer_fn(function()
+    local result = M.get_diagnostic_context(file_path, line)
+    
+    local pipe = io.open(pipe_path, 'w')
+    if pipe then
+      pipe:write(result)
+      pipe:close()
+    end
+  end, 0)
+end
+
+function M.get_diagnostic_summary_async(pipe_path)
+  vim.defer_fn(function()
+    local result = M.get_diagnostic_summary()
+    
+    local pipe = io.open(pipe_path, 'w')
+    if pipe then
+      pipe:write(result)
+      pipe:close()
+    end
+  end, 0)
+end
+
+function M.get_session_diagnostics_async(pipe_path)
+  vim.defer_fn(function()
+    local result = M.get_session_diagnostics()
+    
+    local pipe = io.open(pipe_path, 'w')
+    if pipe then
+      pipe:write(result)
+      pipe:close()
+    end
+  end, 0)
 end
 
 return M

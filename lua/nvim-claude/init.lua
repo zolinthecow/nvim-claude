@@ -272,6 +272,13 @@ end
 function M.setup(user_config)
   M.config = merge_config(user_config)
   
+  -- If running in headless mode, only set up minimal functionality
+  if vim.g.headless_mode then
+    -- Only load the MCP bridge module for headless operation
+    M.mcp_bridge = require('nvim-claude.mcp-bridge')
+    return
+  end
+  
   -- Check plugin integrity early
   vim.defer_fn(function()
     local plugin_dir = M.get_plugin_dir()
