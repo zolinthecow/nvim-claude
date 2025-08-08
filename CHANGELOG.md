@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed `<leader>IR` (reject all files) writing error messages to new files
+  - Now properly detects and deletes new files that don't exist in baseline
+  - Matches behavior of individual file rejection (`<leader>iR`)
+
 ## [v0.1.1] - 2025-08-05
 
 ### Added

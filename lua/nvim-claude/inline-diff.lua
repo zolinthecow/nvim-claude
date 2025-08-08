@@ -1700,17 +1700,23 @@ function M.reject_all_files()
   for relative_path, _ in pairs(hooks.claude_edited_files) do
     local full_path = git_root .. '/' .. relative_path
 
-    -- Use git show to get the file content from baseline
-    local cmd = string.format("cd '%s' && git show %s:'%s' > '%s'", git_root, baseline_ref, relative_path, full_path)
-    local result, err = utils.exec(cmd)
+    -- First check if file exists in baseline
+    local check_cmd = string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, baseline_ref, relative_path)
+    local baseline_content, err = utils.exec(check_cmd)
 
-    if not err then
-      table.insert(restored_files, relative_path)
-    else
-      -- File might not exist in baseline (new file), so delete it
+    -- Check if file didn't exist in baseline (new file)
+    if baseline_content and (baseline_content:match '^fatal:' or baseline_content:match 'does not exist') then
+      -- This is a new file - delete it
       local delete_cmd = string.format('rm -f "%s"', full_path)
       utils.exec(delete_cmd)
       table.insert(restored_files, relative_path .. ' (deleted)')
+    elseif err or not baseline_content then
+      -- Actual error getting content
+      vim.notify('Failed to get baseline for: ' .. relative_path, vim.log.levels.ERROR)
+    else
+      -- File exists in baseline - restore it
+      utils.write_file(full_path, baseline_content)
+      table.insert(restored_files, relative_path)
     end
   end
 
