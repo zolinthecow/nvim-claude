@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `<leader>IR` (reject all files) writing error messages to new files
   - Now properly detects and deletes new files that don't exist in baseline
   - Matches behavior of individual file rejection (`<leader>iR`)
+- Fixed LSP diagnostics persisting for deleted files
+  - Session tracking now automatically removes deleted files
+  - Stop hook and MCP tools no longer report errors for non-existent files
+  - Prevents ghost diagnostics from appearing in Claude after file deletions
 
 ## [v0.1.1] - 2025-08-05
 

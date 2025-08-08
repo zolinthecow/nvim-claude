@@ -1361,12 +1361,16 @@ function M.get_session_diagnostic_counts()
   local temp_buffers = {} -- Track buffers we create
   
   for file_path, _ in pairs(files_to_check) do
-    local bufnr = vim.fn.bufnr(file_path)
-    
-    -- If buffer doesn't exist, create it temporarily
-    if bufnr == -1 then
-      -- Check if file exists
-      if vim.fn.filereadable(file_path) == 1 then
+    -- Check if file exists
+    if vim.fn.filereadable(file_path) == 0 then
+      -- File was deleted, remove from session tracking
+      M.session_edited_files[file_path] = nil
+      logger.info('get_session_diagnostic_counts', 'Removing deleted file from session tracking', { file = file_path })
+    else
+      local bufnr = vim.fn.bufnr(file_path)
+      
+      -- If buffer doesn't exist, create it temporarily
+      if bufnr == -1 then
         -- Create buffer and load file
         bufnr = vim.fn.bufadd(file_path)
         vim.fn.bufload(bufnr)
@@ -1381,17 +1385,17 @@ function M.get_session_diagnostic_counts()
         vim.wait(500, function()
           return #vim.lsp.get_clients({ bufnr = bufnr }) > 0
         end, 50)
+      else
+        -- Refresh existing buffer to ensure fresh diagnostics
+        lsp_utils.refresh_buffer_diagnostics(bufnr)
       end
-    else
-      -- Refresh existing buffer to ensure fresh diagnostics
-      lsp_utils.refresh_buffer_diagnostics(bufnr)
-    end
-    
-    if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-      table.insert(files_list, {
-        path = file_path,
-        bufnr = bufnr
-      })
+      
+      if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+        table.insert(files_list, {
+          path = file_path,
+          bufnr = bufnr
+        })
+      end
     end
   end
 

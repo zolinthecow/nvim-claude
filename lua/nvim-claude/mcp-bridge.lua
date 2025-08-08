@@ -217,9 +217,15 @@ function M.get_session_diagnostics()
   local hooks = require('nvim-claude.hooks')
   local session_files = {}
   
-  -- Get list of files edited in current session
+  -- Get list of files edited in current session, filtering out deleted files
   for file_path, _ in pairs(hooks.session_edited_files or {}) do
-    table.insert(session_files, file_path)
+    -- Only include files that still exist
+    if vim.fn.filereadable(file_path) == 1 then
+      table.insert(session_files, file_path)
+    else
+      -- File was deleted, remove from session tracking
+      hooks.session_edited_files[file_path] = nil
+    end
   end
   
   -- Use existing get_diagnostics function with session files
