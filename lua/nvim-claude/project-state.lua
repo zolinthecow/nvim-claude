@@ -94,9 +94,27 @@ function M.get(project_root, key)
 end
 
 function M.set(project_root, key, value)
-  return M.save_project_state(project_root, {
-    [key] = value
-  })
+  local project_key = M.get_project_key(project_root)
+  if not project_key then
+    logger.error('set', 'No project key available')
+    return false
+  end
+  
+  local all_states = M.load_all_states()
+  all_states[project_key] = all_states[project_key] or {}
+  
+  if value == nil then
+    -- Explicitly remove the key when value is nil
+    all_states[project_key][key] = nil
+  else
+    -- Set the value normally
+    all_states[project_key][key] = value
+  end
+  
+  -- Update last_accessed
+  all_states[project_key].last_accessed = os.time()
+  
+  return M.save_all_states(all_states)
 end
 
 

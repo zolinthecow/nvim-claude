@@ -5,6 +5,21 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Get project-specific debug log file
+get_debug_log_file() {
+    local project_path="$1"
+    if [ -n "$project_path" ]; then
+        # Use same hashing as logger.lua - project-specific folder structure
+        local key_hash=$(echo -n "$project_path" | shasum -a 256 | cut -d' ' -f1)
+        local short_hash=${key_hash:0:8}
+        local log_dir="$HOME/.local/share/nvim/nvim-claude/logs/$short_hash"
+        mkdir -p "$log_dir"
+        echo "$log_dir/stop-hook-debug.log"
+    else
+        echo "/tmp/stop-hook-debug.log"  # fallback
+    fi
+}
+
 # Read JSON input from stdin
 INPUT=$(cat)
 
@@ -17,12 +32,15 @@ fi
 # Change to the project directory to ensure correct project state loading
 cd "$CWD" 2>/dev/null || true
 
+# Get project-specific debug log file
+DEBUG_LOG=$(get_debug_log_file "$CWD")
+
 # Get the path to the MCP environment Python
 MCP_PYTHON="$HOME/.local/share/nvim/nvim-claude/mcp-env/bin/python"
 
 # Check if the MCP environment exists
 if [ ! -f "$MCP_PYTHON" ]; then
-    echo "# ERROR: MCP environment not found at $MCP_PYTHON" >> /tmp/stop-hook-debug.log
+    echo "# ERROR: MCP environment not found at $MCP_PYTHON" >> "$DEBUG_LOG"
     # Allow completion if MCP not installed
     echo '{"continue": true}'
     exit 0
@@ -40,10 +58,10 @@ if [ -f "$STATE_FILE" ]; then
     SESSION_FILES=$(cat "$STATE_FILE" | jq -r --arg cwd "$CWD" '.[$cwd].session_edited_files // [] | .[]' 2>/dev/null)
     
     # Debug: Log the files we found
-    echo "DEBUG: Found session files: $SESSION_FILES" >> /tmp/stop-hook-debug.log
+    echo "DEBUG: Found session files: $SESSION_FILES" >> "$DEBUG_LOG"
     
     if [ -z "$SESSION_FILES" ]; then
-        echo "# INFO: No session edited files found for project $CWD" >> /tmp/stop-hook-debug.log
+        echo "# INFO: No session edited files found for project $CWD" >> "$DEBUG_LOG"
         # No files edited, allow completion
         echo '{"continue": true}'
         exit 0
@@ -60,20 +78,20 @@ if [ -f "$STATE_FILE" ]; then
     
     # Call check-diagnostics.py with the session files
     if [ -n "$FILE_ARGS" ]; then
-        echo "DEBUG: Running command: $MCP_PYTHON $SCRIPT_DIR/check-diagnostics.py $FILE_ARGS" >> /tmp/stop-hook-debug.log
+        echo "DEBUG: Running command: $MCP_PYTHON $SCRIPT_DIR/check-diagnostics.py $FILE_ARGS" >> "$DEBUG_LOG"
         DIAGNOSTIC_JSON=$(eval "$MCP_PYTHON" "$SCRIPT_DIR/check-diagnostics.py" $FILE_ARGS 2>/dev/null)
     else
         DIAGNOSTIC_JSON='{"errors":0,"warnings":0}'
     fi
 else
-    echo "# INFO: No project state file found" >> /tmp/stop-hook-debug.log
+    echo "# INFO: No project state file found" >> "$DEBUG_LOG"
     # No state file, allow completion
     echo '{"continue": true}'
     exit 0
 fi
 
 # Debug: Log what we got from check-diagnostics.py
-echo "DEBUG: check-diagnostics.py returned: $DIAGNOSTIC_JSON" >> /tmp/stop-hook-debug.log
+echo "DEBUG: check-diagnostics.py returned: $DIAGNOSTIC_JSON" >> "$DEBUG_LOG"
 
 # Parse diagnostic counts
 ERROR_COUNT=$(echo "$DIAGNOSTIC_JSON" | jq -r '.errors // 0')
@@ -95,7 +113,7 @@ EOF
 else
     # No errors found, allow completion (warnings are okay)
     if [ "$WARNING_COUNT" -gt 0 ]; then
-        echo "# INFO: Found $WARNING_COUNT warnings but allowing completion" >> /tmp/stop-hook-debug.log
+        echo "# INFO: Found $WARNING_COUNT warnings but allowing completion" >> "$DEBUG_LOG"
     fi
     
     # Clear session files on successful validation

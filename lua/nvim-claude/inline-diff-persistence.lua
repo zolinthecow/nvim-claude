@@ -76,7 +76,7 @@ function M.get_state_file()
 end
 
 -- Save current diff state
-function M.save_state(diff_data)
+function M.save_state(diff_data, project_root)
   -- Structure:
   -- {
   --   version: 1,
@@ -116,8 +116,8 @@ function M.save_state(diff_data)
 
   -- Note: We no longer persist hunks/content - diffs are computed fresh from git baseline
 
-  -- Get project root for global storage
-  local project_root = utils.get_project_root()
+  -- Get project root for global storage - use provided one or detect from cwd
+  project_root = project_root or utils.get_project_root()
   if not project_root then
     logger.error('save_state', 'No project root found')
     return false

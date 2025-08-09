@@ -232,7 +232,7 @@ function M.update_baseline_for_file(relative_path, git_root)
 
   -- Use simpler approach with temporary index
   local temp_dir = '/tmp/nvim-claude-baseline-' .. os.time() .. '-' .. math.random(10000)
-  local success = pcall(function()
+  local success, err = pcall(function()
     -- Create temporary directory
     vim.fn.mkdir(temp_dir, 'p')
 
@@ -304,8 +304,14 @@ function M.update_baseline_for_file(relative_path, git_root)
   end
 
   if not success then
-    logger.error('update_baseline_for_file', 'Failed to update baseline')
+    logger.error('update_baseline_for_file', 'Failed to update baseline', {
+      file = relative_path,
+      error = tostring(err)
+    })
+    return false
   end
+  
+  return true
 end
 
 -- Session tracking for Stop hook

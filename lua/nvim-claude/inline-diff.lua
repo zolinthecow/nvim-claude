@@ -34,6 +34,7 @@ function M.show_inline_diff(bufnr, old_content, new_content, opts)
         -- Save the updated state
         local persistence = require('nvim-claude.inline-diff-persistence')
         persistence.save_state({
+          stash_ref = persistence.get_baseline_ref(),
           claude_edited_files = hooks.claude_edited_files,
         })
         
@@ -330,6 +331,14 @@ function M.setup_inline_keymaps(bufnr)
   vim.keymap.set('n', '<leader>iR', function()
     M.reject_all_hunks(bufnr)
   end, vim.tbl_extend('force', opts, { desc = 'Reject all Claude hunks in current file' }))
+
+  -- Accept/Reject all in ALL files (buffer-local override for global mappings)
+  vim.keymap.set('n', '<leader>IA', function()
+    M.accept_all_files()
+  end, vim.tbl_extend('force', opts, { desc = 'Accept ALL Claude hunks in ALL files' }))
+  vim.keymap.set('n', '<leader>IR', function()
+    M.reject_all_files()
+  end, vim.tbl_extend('force', opts, { desc = 'Reject ALL Claude hunks in ALL files' }))
 
   -- List files with diffs
   vim.keymap.set('n', '<leader>il', function()
@@ -1125,19 +1134,47 @@ function M.accept_all_hunks(bufnr)
     return
   end
 
-  -- Get current buffer content as the new baseline
-  local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local current_content = table.concat(current_lines, '\n')
-
-  -- Remove this file from Claude edited files tracking
   local utils = require 'nvim-claude.utils'
   local hooks = require 'nvim-claude.hooks'
+  local persistence = require 'nvim-claude.inline-diff-persistence'
+  
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
 
+  -- Get current buffer content as the new baseline
+  local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local current_content = table.concat(current_lines, '\n')
+
+  -- Update the baseline to include the accepted changes
+  local success = hooks.update_baseline_for_file(relative_path, git_root)
+  if not success then
+    vim.notify('Failed to update baseline for file: ' .. relative_path, vim.log.levels.ERROR)
+    return
+  end
+
+  -- Remove this file from Claude edited files tracking
   if hooks.claude_edited_files[relative_path] then
     hooks.claude_edited_files[relative_path] = nil
+    
+    -- Save state with updated tracking
+    persistence.save_state {
+      stash_ref = persistence.get_baseline_ref(),
+      claude_edited_files = hooks.claude_edited_files,
+    }
+  end
+
+  -- Check if there are any other tracked files
+  local has_other_files = false
+  for _, _ in pairs(hooks.claude_edited_files) do
+    has_other_files = true
+    break
+  end
+
+  -- If no other files are tracked, clear the baseline
+  if not has_other_files then
+    persistence.set_baseline_ref(nil)
+    persistence.clear_state()
   end
 
   vim.notify('Accepted all Claude changes', vim.log.levels.INFO)
@@ -1638,9 +1675,17 @@ end
 function M.accept_all_files()
   local hooks = require 'nvim-claude.hooks'
   local persistence = require 'nvim-claude.inline-diff-persistence'
+  local logger = require 'nvim-claude.logger'
+
+  logger.info('accept_all_files', 'Function called - accepting ALL files')
 
   -- Count tracked files for reporting
   local cleared_count = vim.tbl_count(hooks.claude_edited_files)
+  
+  logger.debug('accept_all_files', 'Current tracked files', {
+    count = cleared_count,
+    files = vim.tbl_keys(hooks.claude_edited_files)
+  })
 
   if cleared_count == 0 then
     vim.notify('No Claude edits to accept', vim.log.levels.INFO)

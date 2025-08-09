@@ -7,16 +7,53 @@ local utils = require('nvim-claude.utils')
 function M.get_log_file()
   local project_root = utils.get_project_root()
   if project_root then
-    -- Use project-specific log in global storage
+    -- Use project-specific folder structure
     local project_state = require('nvim-claude.project-state')
     local project_key = project_state.get_project_key(project_root)
     local key_hash = vim.fn.sha256(project_key)
-    local log_dir = vim.fn.stdpath('data') .. '/nvim-claude/logs'
+    local short_hash = key_hash:sub(1, 8)
+    local log_dir = vim.fn.stdpath('data') .. '/nvim-claude/logs/' .. short_hash
     utils.ensure_dir(log_dir)
-    return log_dir .. '/' .. key_hash:sub(1, 8) .. '-debug.log'
+    return log_dir .. '/debug.log'
   else
     -- Fallback to home directory
     return vim.fn.expand('~/.local/share/nvim/nvim-claude-debug.log')
+  end
+end
+
+-- Get stop-hook debug log file path for bash scripts
+function M.get_stop_hook_log_file()
+  local project_root = utils.get_project_root()
+  if project_root then
+    -- Use project-specific folder structure
+    local project_state = require('nvim-claude.project-state')
+    local project_key = project_state.get_project_key(project_root)
+    local key_hash = vim.fn.sha256(project_key)
+    local short_hash = key_hash:sub(1, 8)
+    local log_dir = vim.fn.stdpath('data') .. '/nvim-claude/logs/' .. short_hash
+    utils.ensure_dir(log_dir)
+    return log_dir .. '/stop-hook-debug.log'
+  else
+    -- Fallback to tmp directory
+    return '/tmp/stop-hook-debug.log'
+  end
+end
+
+-- Get MCP debug log file path
+function M.get_mcp_debug_log_file()
+  local project_root = utils.get_project_root()
+  if project_root then
+    -- Use project-specific folder structure
+    local project_state = require('nvim-claude.project-state')
+    local project_key = project_state.get_project_key(project_root)
+    local key_hash = vim.fn.sha256(project_key)
+    local short_hash = key_hash:sub(1, 8)
+    local log_dir = vim.fn.stdpath('data') .. '/nvim-claude/logs/' .. short_hash
+    utils.ensure_dir(log_dir)
+    return log_dir .. '/mcp-debug.log'
+  else
+    -- Fallback to tmp directory
+    return '/tmp/nvim-claude-mcp-debug.log'
   end
 end
 

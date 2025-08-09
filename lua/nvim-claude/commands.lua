@@ -2752,4 +2752,51 @@ function M.return_from_checkpoint()
   end
 end
 
+-- ClaudeDebugLogs command to show log file locations
+vim.api.nvim_create_user_command('ClaudeDebugLogs', function()
+  local logger = require 'nvim-claude.logger'
+  local utils = require 'nvim-claude.utils'
+  
+  local project_root = utils.get_project_root()
+  if not project_root then
+    vim.notify('Not in a project directory', vim.log.levels.WARN)
+    return
+  end
+
+  local debug_log = logger.get_log_file()
+  local stop_hook_log = logger.get_stop_hook_log_file()
+  
+  vim.notify('=== Debug Log Files ===', vim.log.levels.INFO)
+  vim.notify('Project: ' .. project_root, vim.log.levels.INFO)
+  vim.notify('Main debug log: ' .. debug_log, vim.log.levels.INFO)
+  vim.notify('Stop hook log: ' .. stop_hook_log, vim.log.levels.INFO)
+  
+  -- Check if files exist and show sizes
+  local debug_size = vim.fn.getfsize(debug_log)
+  local stop_size = vim.fn.getfsize(stop_hook_log)
+  
+  if debug_size > 0 then
+    vim.notify(string.format('Main log size: %.2f KB', debug_size / 1024), vim.log.levels.INFO)
+  else
+    vim.notify('Main log: empty or not found', vim.log.levels.INFO)
+  end
+  
+  if stop_size > 0 then
+    vim.notify(string.format('Stop hook log size: %.2f KB', stop_size / 1024), vim.log.levels.INFO)
+  else
+    vim.notify('Stop hook log: empty or not found', vim.log.levels.INFO)
+  end
+  
+  -- Offer to open the logs
+  local response = vim.fn.input('Open logs? (y/n): ')
+  if response:lower() == 'y' then
+    if debug_size > 0 then
+      vim.cmd('edit ' .. debug_log)
+    end
+    if stop_size > 0 then
+      vim.cmd('vsplit ' .. stop_hook_log)
+    end
+  end
+end, { desc = 'Show debug log file locations for current project' })
+
 return M

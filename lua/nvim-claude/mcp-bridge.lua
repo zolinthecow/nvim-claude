@@ -48,7 +48,11 @@ function M.get_diagnostics(file_paths)
       end
     end
   else
-    -- Get specific files
+    -- Get specific files - First pass: add all buffers
+    local logger = require('nvim-claude.logger')
+    local log_file_path = logger.get_mcp_debug_log_file()
+    local log_file = io.open(log_file_path, 'a')
+    
     for _, file_path in ipairs(file_paths) do
       if file_path then  -- Ensure file_path is not nil
         -- Determine full path
@@ -63,80 +67,106 @@ function M.get_diagnostics(file_paths)
         
         -- Check if file exists
         if vim.fn.filereadable(full_path) == 1 then
-        -- Create a buffer with the actual file path (like master branch)
-        local temp_bufnr = vim.fn.bufadd(full_path)
-        vim.fn.bufload(temp_bufnr)
-        
-        -- Debug: Log file content
-        local log_file = io.open('/tmp/nvim-claude-mcp-debug.log', 'a')
-        if log_file then
-          log_file:write(string.format('[%s] Processing file: %s\n', os.date('%Y-%m-%d %H:%M:%S'), full_path))
-          local lines = vim.api.nvim_buf_get_lines(temp_bufnr, 0, -1, false)
-          log_file:write(string.format('  Content lines: %d\n', #lines))
-          log_file:write(string.format('  First line: %s\n', lines[1] or 'empty'))
-        end
-        
-        -- Trigger LSP attach by detecting filetype (like master branch)
-        vim.api.nvim_buf_call(temp_bufnr, function()
-          vim.cmd 'filetype detect'
+          -- Add buffer without switching to it yet
+          local temp_bufnr = vim.fn.bufadd(full_path)
+          vim.fn.bufload(temp_bufnr)  -- Load content
           
-          -- Debug: Log filetype
-          local ft = vim.bo.filetype
           if log_file then
-            log_file:write(string.format('  Filetype detected: %s\n', ft or 'none'))
-            
-            -- Check what LSP configs are available
-            local ok_lspconfig, lspconfig = pcall(require, 'lspconfig')
-            log_file:write(string.format('  lspconfig available: %s\n', tostring(ok_lspconfig)))
-            if ok_lspconfig then
-              log_file:write(string.format('  lua_ls available: %s\n', tostring(lspconfig.lua_ls ~= nil)))
-            end
+            log_file:write(string.format('[%s] Processing file: %s\n', os.date('%Y-%m-%d %H:%M:%S'), full_path))
+            local lines = vim.api.nvim_buf_get_lines(temp_bufnr, 0, -1, false)
+            log_file:write(string.format('  Content lines: %d\n', #lines))
+            log_file:write(string.format('  First line: %s\n', lines[1] or 'empty'))
           end
-        end)
+          
+          temp_buffers[temp_bufnr] = true
+          
+          table.insert(files_to_check, {
+            path = full_path,
+            bufnr = temp_bufnr
+          })
+        end
+      end  -- Close the if file_path then check
+    end
+    
+    -- Second pass: trigger LSP for all buffers by visiting each once
+    local current_buf = vim.api.nvim_get_current_buf()
+    for _, file_info in ipairs(files_to_check) do
+      local temp_bufnr = file_info.bufnr
+      
+      -- Switch to buffer to trigger textDocument/didOpen
+      vim.cmd('buffer ' .. temp_bufnr)
+      
+      -- Trigger LSP attach by detecting filetype
+      vim.api.nvim_buf_call(temp_bufnr, function()
+        vim.cmd 'filetype detect'
         
-        temp_buffers[temp_bufnr] = true
-        
-        -- Wait briefly for LSP to attach
-        vim.wait(500, function()
-          return #vim.lsp.get_clients({ bufnr = temp_bufnr }) > 0
-        end, 50)
-        
-        -- Debug: Check attached LSP clients
-        local clients = vim.lsp.get_clients({ bufnr = temp_bufnr })
+        -- Debug: Log filetype
+        local ft = vim.bo.filetype
         if log_file then
-          log_file:write(string.format('  LSP clients attached: %d\n', #clients))
-          for _, client in ipairs(clients) do
-            log_file:write(string.format('    - %s (id: %d)\n', client.name, client.id))
-          end
-          
-          -- Check all available LSP clients in the system
-          local all_clients = vim.lsp.get_clients()
-          log_file:write(string.format('  Total LSP clients in system: %d\n', #all_clients))
-          for _, client in ipairs(all_clients) do
-            log_file:write(string.format('    - %s (id: %d)\n', client.name, client.id))
-          end
-          
-          log_file:close()
+          log_file:write(string.format('  Filetype detected for %s: %s\n', file_info.path, ft or 'none'))
         end
         
-        table.insert(files_to_check, {
-          path = full_path,
-          bufnr = temp_bufnr
-        })
+        -- Trigger diagnostic push events for all files
+        -- Many LSP servers use push model and only send diagnostics on these events
+        vim.api.nvim_exec_autocmds('InsertLeave', { buffer = temp_bufnr })
+        vim.api.nvim_exec_autocmds('TextChanged', { buffer = temp_bufnr })
+      end)
+    end
+    
+    -- Wait for LSP to attach to all buffers
+    for _, file_info in ipairs(files_to_check) do
+      local temp_bufnr = file_info.bufnr
+      local wait_start = vim.loop.hrtime()
+      
+      local attached = vim.wait(500, function()
+        return #vim.lsp.get_clients({ bufnr = temp_bufnr }) > 0
+      end, 50)
+      
+      local wait_time_ms = (vim.loop.hrtime() - wait_start) / 1e6
+      
+      -- Debug: Check attached LSP clients
+      local clients = vim.lsp.get_clients({ bufnr = temp_bufnr })
+      if log_file then
+        log_file:write(string.format('  LSP attach wait for buffer %d: %s in %.1fms\n', 
+          temp_bufnr, attached and 'success' or 'timeout', wait_time_ms))
+        log_file:write(string.format('  LSP clients attached to buffer %d: %d\n', temp_bufnr, #clients))
+        for _, client in ipairs(clients) do
+          log_file:write(string.format('    - %s (id: %d, capabilities: %s)\n', 
+            client.name, client.id, 
+            client.server_capabilities.diagnosticProvider and 'diagnostics' or 'no-diagnostics'))
+        end
       end
-      end  -- Close the if file_path then check
+    end
+    
+    if log_file then
+      -- Check all available LSP clients in the system
+      local all_clients = vim.lsp.get_clients()
+      log_file:write(string.format('  Total LSP clients in system: %d\n', #all_clients))
+      for _, client in ipairs(all_clients) do
+        log_file:write(string.format('    - %s (id: %d)\n', client.name, client.id))
+      end
+      
+      log_file:close()
     end
   end
   
   -- Wait for LSP diagnostics from all files
+  local lsp_wait_success = false
   if #files_to_check > 0 then
-    lsp_utils.await_lsp_diagnostics(files_to_check, 1000)
+    -- Use 3 second timeout for all files since we now trigger push events
+    local timeout_ms = 3000
+    lsp_wait_success = lsp_utils.await_lsp_diagnostics(files_to_check, timeout_ms)
   end
   
   -- Collect diagnostics after waiting
-  local log_file = io.open('/tmp/nvim-claude-mcp-debug.log', 'a')
+  local logger = require('nvim-claude.logger')
+  local log_file_path = logger.get_mcp_debug_log_file()
+  local log_file = io.open(log_file_path, 'a')
   if log_file then
-    log_file:write(string.format('[%s] Collecting diagnostics from %d files\n', os.date('%Y-%m-%d %H:%M:%S'), #files_to_check))
+    log_file:write(string.format('[%s] Collecting diagnostics from %d files (LSP wait %s)\n', 
+      os.date('%Y-%m-%d %H:%M:%S'), 
+      #files_to_check,
+      lsp_wait_success and 'completed' or 'timed out'))
   end
   
   for _, file_info in ipairs(files_to_check) do
@@ -217,7 +247,7 @@ function M.get_diagnostic_context(file_path, line)
       path = vim.api.nvim_buf_get_name(bufnr),
       bufnr = bufnr
     }}
-    lsp_utils.await_lsp_diagnostics(files_to_check, 2000) -- Shorter timeout for single file
+    lsp_utils.await_lsp_diagnostics(files_to_check, 3000) -- 3 second timeout for LSP analysis
   end
   
   -- Get diagnostics for the specific line
@@ -284,7 +314,7 @@ function M.get_diagnostic_summary()
   
   -- Wait for LSP diagnostics from all files
   if #files_to_check > 0 then
-    lsp_utils.await_lsp_diagnostics(files_to_check, 1000)
+    lsp_utils.await_lsp_diagnostics(files_to_check, 3000) -- 3 second timeout for LSP analysis
   end
   
   -- Collect diagnostics after waiting

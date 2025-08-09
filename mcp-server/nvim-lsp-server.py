@@ -154,10 +154,11 @@ end
     
     nvim_cmd.extend(["-u", init_file])
     
-    # Start the headless Neovim process
+    # Start the headless Neovim process in the project directory
     try:
         _headless_process = subprocess.Popen(
             nvim_cmd,
+            cwd=cwd,  # Start in the project directory for proper LSP context
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             preexec_fn=os.setsid if sys.platform != 'win32' else None
@@ -255,6 +256,7 @@ except Exception as e:
     
     try:
         # Run the script in a subprocess
+        # 5 second timeout should be sufficient now that we trigger push events
         result = subprocess.run(
             [sys.executable, '-c', script],
             capture_output=True,
