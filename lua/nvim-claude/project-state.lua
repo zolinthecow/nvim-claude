@@ -87,31 +87,36 @@ function M.save_project_state(project_root, state_data)
   return M.save_all_states(all_states)
 end
 
--- Get inline diff state for project
-function M.get_inline_diff_state(project_root)
+-- Generic get/set for any key in project state
+function M.get(project_root, key)
   local state = M.get_project_state(project_root)
-  return state and state.inline_diff_state or nil
+  return state and state[key] or nil
 end
 
--- Save inline diff state for project
-function M.save_inline_diff_state(project_root, diff_state)
-  return M.save_project_state(project_root, {
-    inline_diff_state = diff_state
-  })
+function M.set(project_root, key, value)
+  local project_key = M.get_project_key(project_root)
+  if not project_key then
+    logger.error('set', 'No project key available')
+    return false
+  end
+  
+  local all_states = M.load_all_states()
+  all_states[project_key] = all_states[project_key] or {}
+  
+  if value == nil then
+    -- Explicitly remove the key when value is nil
+    all_states[project_key][key] = nil
+  else
+    -- Set the value normally
+    all_states[project_key][key] = value
+  end
+  
+  -- Update last_accessed
+  all_states[project_key].last_accessed = os.time()
+  
+  return M.save_all_states(all_states)
 end
 
--- Get agent registry for project
-function M.get_agent_registry(project_root)
-  local state = M.get_project_state(project_root)
-  return state and state.agent_registry or {}
-end
-
--- Save agent registry for project
-function M.save_agent_registry(project_root, registry_data)
-  return M.save_project_state(project_root, {
-    agent_registry = registry_data
-  })
-end
 
 -- Clean up old project states
 function M.cleanup_old_projects(days_threshold)
@@ -185,7 +190,7 @@ function M.migrate_local_state(project_root)
     if content then
       local ok, old_state = pcall(vim.json.decode, content)
       if ok and old_state then
-        M.save_inline_diff_state(project_root, old_state)
+        M.set(project_root, 'inline_diff_state', old_state)
         logger.info('migrate_local_state', 'Migrated inline diff state')
       end
     end
@@ -198,7 +203,7 @@ function M.migrate_local_state(project_root)
     if content then
       local ok, old_registry = pcall(vim.json.decode, content)
       if ok and old_registry then
-        M.save_agent_registry(project_root, old_registry)
+        M.set(project_root, 'agent_registry', old_registry)
         logger.info('migrate_local_state', 'Migrated agent registry')
       end
     end

@@ -5,6 +5,21 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Get project-specific debug log file
+get_debug_log_file() {
+    local project_path="$1"
+    if [ -n "$project_path" ]; then
+        # Use same hashing as logger.lua - project-specific folder structure
+        local key_hash=$(echo -n "$project_path" | shasum -a 256 | cut -d' ' -f1)
+        local short_hash=${key_hash:0:8}
+        local log_dir="$HOME/.local/share/nvim/nvim-claude/logs/$short_hash"
+        mkdir -p "$log_dir"
+        echo "$log_dir/stop-hook-debug.log"
+    else
+        echo "/tmp/stop-hook-debug.log"  # fallback
+    fi
+}
+
 # Read JSON input from stdin
 INPUT=$(cat)
 
@@ -14,46 +29,73 @@ if [ -z "$CWD" ]; then
     CWD=$(pwd)
 fi
 
-# Find any file in the current project to use as TARGET_FILE
-# This helps nvr-proxy find the correct Neovim instance for this project
-if [ -d "$CWD" ]; then
-    TARGET_FILE=$(find "$CWD" -type f -name "*.md" -o -name "*.txt" -o -name "*.lua" -o -name "*.js" 2>/dev/null | head -1)
-    if [ -z "$TARGET_FILE" ]; then
-        TARGET_FILE=$(find "$CWD" -type f 2>/dev/null | head -1)
+# Change to the project directory to ensure correct project state loading
+cd "$CWD" 2>/dev/null || true
+
+# Get project-specific debug log file
+DEBUG_LOG=$(get_debug_log_file "$CWD")
+
+# Get the path to the MCP environment Python
+MCP_PYTHON="$HOME/.local/share/nvim/nvim-claude/mcp-env/bin/python"
+
+# Check if the MCP environment exists
+if [ ! -f "$MCP_PYTHON" ]; then
+    echo "# ERROR: MCP environment not found at $MCP_PYTHON" >> "$DEBUG_LOG"
+    # Allow completion if MCP not installed
+    echo '{"continue": true}'
+    exit 0
+fi
+
+# Read session edited files from project state
+# We'll get the list of files from the nvim-claude project state
+PROJECT_STATE_DIR="$HOME/.local/share/nvim/nvim-claude/projects"
+STATE_FILE="$PROJECT_STATE_DIR/state.json"
+
+# Extract session edited files for this project
+if [ -f "$STATE_FILE" ]; then
+    # Use jq to extract session_edited_files for the current project
+    # The state file uses project paths as keys
+    SESSION_FILES=$(cat "$STATE_FILE" | jq -r --arg cwd "$CWD" '.[$cwd].session_edited_files // [] | .[]' 2>/dev/null)
+    
+    # Debug: Log the files we found
+    echo "DEBUG: Found session files: $SESSION_FILES" >> "$DEBUG_LOG"
+    
+    if [ -z "$SESSION_FILES" ]; then
+        echo "# INFO: No session edited files found for project $CWD" >> "$DEBUG_LOG"
+        # No files edited, allow completion
+        echo '{"continue": true}'
+        exit 0
     fi
-fi
-
-# If still no file found, use the CWD itself
-if [ -z "$TARGET_FILE" ]; then
-    TARGET_FILE="$CWD"
-fi
-
-# Get diagnostic counts from Neovim using nvim-rpc
-# This will find the correct server for this project
-DIAGNOSTIC_JSON=$(TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.hooks").get_session_diagnostic_counts()' 2>&1)
-
-# Debug: Log what we got from nvim-rpc
-echo "DEBUG: nvim-rpc returned: $DIAGNOSTIC_JSON" >> /tmp/stop-hook-debug.log
-
-# Check if nvim-rpc command succeeded or returned empty
-if [ $? -ne 0 ] || [ -z "$DIAGNOSTIC_JSON" ]; then
-    # If nvim-rpc fails, allow completion to avoid blocking Claude
+    
+    # Convert the list of files to arguments for check-diagnostics.py
+    # Each file needs to be an absolute path
+    FILE_ARGS=""
+    while IFS= read -r file; do
+        if [ -n "$file" ]; then
+            FILE_ARGS="$FILE_ARGS \"$file\""
+        fi
+    done <<< "$SESSION_FILES"
+    
+    # Call check-diagnostics.py with the session files
+    if [ -n "$FILE_ARGS" ]; then
+        echo "DEBUG: Running command: $MCP_PYTHON $SCRIPT_DIR/check-diagnostics.py $FILE_ARGS" >> "$DEBUG_LOG"
+        DIAGNOSTIC_JSON=$(eval "$MCP_PYTHON" "$SCRIPT_DIR/check-diagnostics.py" $FILE_ARGS 2>/dev/null)
+    else
+        DIAGNOSTIC_JSON='{"errors":0,"warnings":0}'
+    fi
+else
+    echo "# INFO: No project state file found" >> "$DEBUG_LOG"
+    # No state file, allow completion
     echo '{"continue": true}'
     exit 0
 fi
 
-# Parse diagnostic counts - handle potential output quirks
-# nvim-rpc might return the JSON with extra characters, so we extract just the JSON part
-CLEAN_JSON=$(echo "$DIAGNOSTIC_JSON" | grep -o '{.*}' | head -1)
-if [ -z "$CLEAN_JSON" ]; then
-    # No valid JSON found, allow completion
-    echo '{"continue": true}'
-    exit 0
-fi
+# Debug: Log what we got from check-diagnostics.py
+echo "DEBUG: check-diagnostics.py returned: $DIAGNOSTIC_JSON" >> "$DEBUG_LOG"
 
-ERROR_COUNT=$(echo "$CLEAN_JSON" | jq -r '.errors // 0')
-WARNING_COUNT=$(echo "$CLEAN_JSON" | jq -r '.warnings // 0')
-TOTAL_COUNT=$((ERROR_COUNT + WARNING_COUNT))
+# Parse diagnostic counts
+ERROR_COUNT=$(echo "$DIAGNOSTIC_JSON" | jq -r '.errors // 0')
+WARNING_COUNT=$(echo "$DIAGNOSTIC_JSON" | jq -r '.warnings // 0')
 
 # Check if we should block - only block on errors, not warnings
 if [ "$ERROR_COUNT" -gt 0 ]; then
@@ -71,7 +113,22 @@ EOF
 else
     # No errors found, allow completion (warnings are okay)
     if [ "$WARNING_COUNT" -gt 0 ]; then
-        echo "# INFO: Found $WARNING_COUNT warnings but allowing completion" >> /tmp/stop-hook-debug.log
+        echo "# INFO: Found $WARNING_COUNT warnings but allowing completion" >> "$DEBUG_LOG"
     fi
+    
+    # Clear session files on successful validation
+    # We need to call nvim-rpc to clear the session tracking
+    # Find a file in the project to use as TARGET_FILE
+    TARGET_FILE=$(find "$CWD" -type f -name "*.md" -o -name "*.txt" -o -name "*.lua" -o -name "*.js" 2>/dev/null | head -1)
+    if [ -z "$TARGET_FILE" ]; then
+        TARGET_FILE=$(find "$CWD" -type f 2>/dev/null | head -1)
+    fi
+    if [ -z "$TARGET_FILE" ]; then
+        TARGET_FILE="$CWD"
+    fi
+    
+    # Clear session tracking via nvim-rpc
+    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.hooks").reset_session_tracking()' 2>/dev/null || true
+    
     echo '{"continue": true}'
 fi

@@ -3,7 +3,7 @@ local M = {}
 
 -- Helper function to wait for LSP diagnostics from all attached clients
 function M.await_lsp_diagnostics(files_to_check, timeout_ms)
-  timeout_ms = timeout_ms or 3000
+  timeout_ms = timeout_ms or 1500
   
   -- Track which buffers had inline diffs before we start
   local inline_diff = require('nvim-claude.inline-diff')
@@ -48,6 +48,9 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
   
   -- Set up autocmd to track diagnostic changes
   local diagnostic_received = false
+  local client_response_times = {}  -- Track when each client responds
+  local start_time = vim.loop.hrtime()
+  
   local autocmd_id = vim.api.nvim_create_autocmd('DiagnosticChanged', {
     callback = function(args)
       local bufnr = args.buf
@@ -65,6 +68,11 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
         for _, diagnostic in ipairs(diagnostics) do
           if diagnostic.source then
             sources_seen[diagnostic.source] = true
+            -- Log when this client first responded
+            if not client_response_times[diagnostic.source] then
+              local elapsed_ms = (vim.loop.hrtime() - start_time) / 1e6
+              client_response_times[diagnostic.source] = elapsed_ms
+            end
           end
         end
         
@@ -98,18 +106,27 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
   
   -- Wait for all LSPs to report or timeout
   local function all_lsps_reported()
-    -- First check if we've received any diagnostic changes at all
+    -- For TypeScript, we can't rely on diagnostic sources being set
+    -- So we just check if diagnostics have been updated at all
+    
+    -- If we haven't received any diagnostic changes, keep waiting
     if not diagnostic_received then
       return false
     end
     
+    -- For TypeScript files, consider it done once we get any diagnostic update
+    -- since typescript-tools doesn't always set the source field
     for file_path, info in pairs(pending_files) do
-      -- For each expected source, check if it has reported
-      for _, expected_source in ipairs(info.expected_sources) do
-        if not info.received_sources[expected_source] then
-          -- This LSP hasn't reported yet
-          -- However, if enough time has passed and we have some diagnostics, consider it done
-          return false
+      local is_typescript = file_path:match('%.tsx?$') or file_path:match('%.jsx?$')
+      if is_typescript then
+        -- For TypeScript, just check if we got a diagnostic event
+        return true
+      else
+        -- For other languages, check sources as before
+        for _, expected_source in ipairs(info.expected_sources) do
+          if not info.received_sources[expected_source] then
+            return false
+          end
         end
       end
     end
@@ -139,9 +156,45 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
   -- Wait for diagnostics with fallback strategy
   local success = vim.wait(timeout_ms, all_lsps_reported, 50)
   
-  -- If not all LSPs reported but we have some diagnostics, that's okay
-  if not success then
-    success = has_some_diagnostics()
+  local logger = require('nvim-claude.logger')
+  
+  -- Log whether we got all diagnostics or timed out
+  if success then
+    logger.debug('lsp-utils', 'All LSP servers reported diagnostics', {
+      timeout_ms = timeout_ms,
+      files_checked = vim.tbl_count(pending_files),
+      client_response_times = client_response_times
+    })
+  else
+    -- Check if we at least have some diagnostics
+    local partial_success = has_some_diagnostics()
+    
+    -- Log detailed timeout information
+    local missing_clients = {}
+    for file_path, info in pairs(pending_files) do
+      for _, expected_source in ipairs(info.expected_sources) do
+        if not info.received_sources[expected_source] then
+          table.insert(missing_clients, expected_source)
+        end
+      end
+    end
+    
+    if partial_success then
+      logger.debug('lsp-utils', 'Partial LSP diagnostics received (timeout)', {
+        timeout_ms = timeout_ms,
+        files_checked = vim.tbl_count(pending_files),
+        received_diagnostics = diagnostic_received,
+        client_response_times = client_response_times,
+        missing_clients = missing_clients
+      })
+      success = true
+    else
+      logger.warn('lsp-utils', 'LSP diagnostics timeout - no diagnostics received', {
+        timeout_ms = timeout_ms,
+        files_checked = vim.tbl_count(pending_files),
+        missing_clients = missing_clients
+      })
+    end
   end
   
   -- Clean up autocmd

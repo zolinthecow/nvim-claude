@@ -1347,18 +1347,15 @@ end
 -- Load setup history for a project
 function M.load_setup_history(project_root)
   local project_state = require 'nvim-claude.project-state'
-  local state = project_state.get_project_state(project_root)
-  return state and state.agent_setup_history or nil
+  return project_state.get(project_root, 'agent_setup_history')
 end
 
 -- Save setup history for a project
 function M.save_setup_history(project_root, commands)
   local project_state = require 'nvim-claude.project-state'
-  project_state.save_project_state(project_root, {
-    agent_setup_history = {
-      last_used = os.date '!%Y-%m-%dT%H:%M:%SZ',
-      setup_commands = commands,
-    },
+  project_state.set(project_root, 'agent_setup_history', {
+    last_used = os.date '!%Y-%m-%dT%H:%M:%SZ',
+    setup_commands = commands,
   })
 end
 
@@ -2754,5 +2751,52 @@ function M.return_from_checkpoint()
     vim.notify('Not in preview mode', vim.log.levels.WARN)
   end
 end
+
+-- ClaudeDebugLogs command to show log file locations
+vim.api.nvim_create_user_command('ClaudeDebugLogs', function()
+  local logger = require 'nvim-claude.logger'
+  local utils = require 'nvim-claude.utils'
+  
+  local project_root = utils.get_project_root()
+  if not project_root then
+    vim.notify('Not in a project directory', vim.log.levels.WARN)
+    return
+  end
+
+  local debug_log = logger.get_log_file()
+  local stop_hook_log = logger.get_stop_hook_log_file()
+  
+  vim.notify('=== Debug Log Files ===', vim.log.levels.INFO)
+  vim.notify('Project: ' .. project_root, vim.log.levels.INFO)
+  vim.notify('Main debug log: ' .. debug_log, vim.log.levels.INFO)
+  vim.notify('Stop hook log: ' .. stop_hook_log, vim.log.levels.INFO)
+  
+  -- Check if files exist and show sizes
+  local debug_size = vim.fn.getfsize(debug_log)
+  local stop_size = vim.fn.getfsize(stop_hook_log)
+  
+  if debug_size > 0 then
+    vim.notify(string.format('Main log size: %.2f KB', debug_size / 1024), vim.log.levels.INFO)
+  else
+    vim.notify('Main log: empty or not found', vim.log.levels.INFO)
+  end
+  
+  if stop_size > 0 then
+    vim.notify(string.format('Stop hook log size: %.2f KB', stop_size / 1024), vim.log.levels.INFO)
+  else
+    vim.notify('Stop hook log: empty or not found', vim.log.levels.INFO)
+  end
+  
+  -- Offer to open the logs
+  local response = vim.fn.input('Open logs? (y/n): ')
+  if response:lower() == 'y' then
+    if debug_size > 0 then
+      vim.cmd('edit ' .. debug_log)
+    end
+    if stop_size > 0 then
+      vim.cmd('vsplit ' .. stop_hook_log)
+    end
+  end
+end, { desc = 'Show debug log file locations for current project' })
 
 return M

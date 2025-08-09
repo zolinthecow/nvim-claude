@@ -76,7 +76,7 @@ function M.get_state_file()
 end
 
 -- Save current diff state
-function M.save_state(diff_data)
+function M.save_state(diff_data, project_root)
   -- Structure:
   -- {
   --   version: 1,
@@ -116,8 +116,8 @@ function M.save_state(diff_data)
 
   -- Note: We no longer persist hunks/content - diffs are computed fresh from git baseline
 
-  -- Get project root for global storage
-  local project_root = utils.get_project_root()
+  -- Get project root for global storage - use provided one or detect from cwd
+  project_root = project_root or utils.get_project_root()
   if not project_root then
     logger.error('save_state', 'No project root found')
     return false
@@ -125,7 +125,7 @@ function M.save_state(diff_data)
 
   -- Save using global project state
   local project_state = require 'nvim-claude.project-state'
-  local success = project_state.save_inline_diff_state(project_root, state)
+  local success = project_state.set(project_root, 'inline_diff_state', state)
   
   if not success then
     logger.error('save_state', 'Failed to save state to global storage')
@@ -154,7 +154,7 @@ function M.load_state()
   project_state.migrate_local_state(project_root)
 
   -- Load from global storage
-  local state = project_state.get_inline_diff_state(project_root)
+  local state = project_state.get(project_root, 'inline_diff_state')
   if not state then
     return nil
   end
@@ -295,7 +295,7 @@ function M.clear_state()
   
   -- Clear from global storage
   local project_state = require 'nvim-claude.project-state'
-  project_state.save_inline_diff_state(project_root, nil)
+  project_state.set(project_root, 'inline_diff_state', nil)
   
   -- Also clear the git ref
   M.clear_baseline_ref()

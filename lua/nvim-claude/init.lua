@@ -164,14 +164,26 @@ function M.check_and_install_mcp()
     return
   end
   
-  -- Run installation in background
+  -- Get project root to run the command in the right directory
+  local project_root = utils.get_project_root()
+  if not project_root then
+    project_root = vim.fn.getcwd()
+  end
+  
+  -- Run installation in background, passing project root as environment variable
   vim.fn.jobstart({'bash', install_script}, {
+    cwd = project_root,  -- Run in project root directory
+    env = {
+      PROJECT_ROOT = project_root,
+      PATH = vim.env.PATH,
+      HOME = vim.env.HOME,
+    },
     on_exit = function(_, code, _)
       if code == 0 then
         vim.notify('nvim-claude: MCP server installed successfully!', vim.log.levels.INFO)
         local mcp_server_path = plugin_dir .. 'mcp-server/nvim-lsp-server.py'
         vim.notify('Run "claude mcp add nvim-lsp -s local ' .. venv_python .. ' ' .. 
-                   mcp_server_path .. '" to complete setup', 
+                   mcp_server_path .. '" in your project root to complete setup', 
                    vim.log.levels.INFO)
       else
         vim.notify('nvim-claude: MCP installation failed', vim.log.levels.ERROR)
@@ -271,6 +283,13 @@ end
 -- Plugin setup
 function M.setup(user_config)
   M.config = merge_config(user_config)
+  
+  -- If running in headless mode, only set up minimal functionality
+  if vim.g.headless_mode then
+    -- Only load the MCP bridge module for headless operation
+    M.mcp_bridge = require('nvim-claude.mcp-bridge')
+    return
+  end
   
   -- Check plugin integrity early
   vim.defer_fn(function()

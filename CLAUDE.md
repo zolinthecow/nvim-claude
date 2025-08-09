@@ -188,10 +188,19 @@ Hooks use wrapper scripts that handle base64 encoding and call `nvim-rpc.sh` (Py
 - Project-specific agent registry
 - Commands: `:ClaudeBg`, `:ClaudeAgents`, `:ClaudeKillAll`
 
-#### MCP Server Integration
-- Provides LSP diagnostics to Claude
-- Install with `:ClaudeInstallMCP`
-- Requires Python 3.10+
+#### MCP Server Integration (Headless Neovim Architecture)
+- Provides LSP diagnostics to Claude via isolated headless Neovim instance
+- Install with `:ClaudeInstallMCP` (auto-installs Python env and registers with Claude Code)
+- Requires Python 3.10+ and pynvim
+- **Architecture**: Headless Neovim instance runs separately from main editor
+  - Loads user's full config (lazy.nvim, LSP servers, etc.)
+  - Communicates via subprocess using pynvim (no event loop conflicts)
+  - Creates temporary buffers with actual file paths for proper LSP attachment
+  - Stop hook also uses this headless instance for error checking
+- **Key Benefits**: 
+  - Zero UI freezing when Claude accesses diagnostics
+  - No buffer modifications in user's active editor
+  - Thread-safe subprocess isolation
 
 #### Status Line Integration
 - Shows active diff count in status line
@@ -278,9 +287,14 @@ Think of it as a multi-layer system:
 3. **Persistence Layer**: Saves state between Neovim sessions
 4. **Checkpoint Layer**: Manages save points for work in progress
 5. **Agent Layer**: Manages background Claude instances in git worktrees
-6. **MCP Layer**: Provides LSP diagnostics to Claude via MCP protocol
+6. **MCP Layer**: Provides LSP diagnostics via headless Neovim instance
+   - Headless instance loads user config but skips UI-related operations
+   - Stop hook delegates diagnostic checks to MCP bridge
+   - All diagnostic operations run outside main editor event loop
 
 The flow is: Claude edits → Hooks capture → Baseline commit created/updated → Diff displayed → User accepts/rejects → State persisted
+
+For diagnostics: Claude requests diagnostics → MCP server spawns headless Neovim → Loads files in temp buffers → LSP attaches → Returns diagnostics → Headless instance cleaned up
 
 #### 9. Key Invariants to Maintain
 - If a file is in `claude_edited_files`, there must be a valid baseline reference
@@ -289,12 +303,24 @@ The flow is: Claude edits → Hooks capture → Baseline commit created/updated 
 - Persistence should survive Neovim restarts
 - Agent registry is project-specific, not global
 - Checkpoints are separate from baselines and stored as git commits
+- Headless Neovim must not write server files (checks `vim.g.headless_mode`)
+- Stop hook must use MCP bridge for diagnostics (never create buffers in main instance)
+- LSP diagnostics use `bufadd(full_path)` not unnamed buffers for proper LSP attachment
 
 #### 10. Where to Look When Things Break
 - **Diff not showing**: Check if baseline exists and contains the file
 - **Stale diffs**: Ensure buffer is refreshed with `:checktime`
 - **Persistence issues**: Check both baseline references are in sync
 - **New file issues**: Look for error message handling in baseline retrieval
+- **LSP diagnostics not working**:
+  - Check if headless Neovim is running: `ps aux | grep nvim-claude-headless`
+  - Verify pynvim installed: `~/.local/share/nvim/nvim-claude/mcp-env/bin/pip list | grep pynvim`
+  - Check server file not overwritten: `cat /tmp/nvim-claude-*-server`
+  - Debug logs: `/tmp/nvim-claude-mcp-debug.log` (if debug logging enabled)
+- **Stop hook not triggering**:
+  - Check `/tmp/stop-hook-debug.log` for diagnostic counts
+  - Verify MCP server is running and accessible
+  - Ensure `get_session_diagnostic_counts()` uses MCP bridge
 
 ### Hook Debugging Methodology
 

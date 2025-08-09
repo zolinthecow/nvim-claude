@@ -7,10 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- Fixed `<leader>IR` (reject all files) writing error messages to new files
+### Changed
+- **BREAKING**: Complete rewrite of LSP diagnostics system to use headless Neovim
+  - MCP server now runs diagnostics in isolated headless Neovim instance
+  - Stop hook also uses headless approach for error checking
+  - Eliminates all UI freezing when Claude accesses diagnostics
+  - Requires reinstalling MCP server with `:ClaudeInstallMCP` for pynvim dependency
+- Improved LSP diagnostic collection to handle both push and pull diagnostic models
+  - Now triggers `InsertLeave` and `TextChanged` events to force push-based LSP servers (like typescript-tools) to send diagnostics
+  - Reduced timeouts from 20s to 3s now that push events are properly triggered
+  - Works with all LSP servers regardless of their diagnostic delivery mechanism
+- Enhanced inline diff persistence system
+  - `project_state.set()` now explicitly removes keys when value is `nil` instead of using `vim.tbl_extend`
+  - `accept_all_files()` and `clear_state()` properly remove inline diff state from persistence
+  - Accepted changes no longer reappear as pending diffs after restarting Neovim
+- Improved `<leader>IR` (reject all files) behavior
   - Now properly detects and deletes new files that don't exist in baseline
   - Matches behavior of individual file rejection (`<leader>iR`)
+- Enhanced session tracking for deleted files
+  - Session tracking now automatically removes deleted files
+  - Stop hook and MCP tools no longer report errors for non-existent files
+  - Prevents ghost diagnostics from appearing in Claude after file deletions
+- Updated headless Neovim to avoid conflicts with main instance
+  - Headless instance now skips server file creation when `vim.g.headless_mode` is set
+  - Prevents hooks from connecting to wrong Neovim instance
+- Improved LSP server attachment in headless instance
+  - Changed from `bufadd()` to `:buffer` command to properly trigger `textDocument/didOpen` event
+  - LSP servers now properly identify and attach to files
+
+### Added
+- Automatic MCP server registration during installation
+  - Install script now attempts to run `claude mcp add` automatically
+  - Properly registers from project root for correct project isolation
+  - Each project gets its own MCP server registration with `-s local` flag
+  - Claude Code only has LSP access when opened in the specific project directory
+- Project-specific logging for MCP debug output
+  - MCP debug logs now stored in project-specific directories
+  - Log paths use SHA256 hash of project path for organization
+  - Prevents log conflicts between multiple projects
+- Enhanced diagnostic logging
+  - Added detailed timing information for LSP client responses
+  - Tracks which specific LSP servers respond and when
+  - Logs missing clients at timeout for better debugging
+
+### Technical Details
+- Headless Neovim loads user's full config including lazy.nvim and LSP servers
+- Uses subprocess isolation with pynvim for thread-safe communication
+- Buffers opened with `:buffer` command to trigger proper LSP protocol events
+- Stop hook diagnostic counts now delegated to MCP bridge
+- All diagnostic operations run outside main editor event loop
 
 ## [v0.1.1] - 2025-08-05
 
