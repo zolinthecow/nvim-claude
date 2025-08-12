@@ -44,6 +44,7 @@ A powerful Neovim plugin for seamless integration with Claude AI. Chat with Clau
     })
   end,
   dependencies = {
+    'nvim-telescope/telescope.nvim'  -- Required
     'nvim-lua/plenary.nvim',         -- Required
     'sindrets/diffview.nvim',        -- Optional: for enhanced diff viewing
   },
@@ -70,6 +71,7 @@ use {
     })
   end,
   requires = {
+    'nvim-telescope/telescope.nvim'  -- Required
     'nvim-lua/plenary.nvim',          -- Required
     'sindrets/diffview.nvim',          -- Optional
   }
