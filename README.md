@@ -10,9 +10,6 @@ A powerful Neovim plugin for seamless integration with Claude AI. Chat with Clau
 - **Checkpoint System**: Automatically save and restore codebase state at any point in chat history
 - **LSP Integration**: Give Claude real-time access to LSP diagnostics via MCP
 - **Smart Selection**: Send buffer content, visual selections, or git hunks to Claude
-- **Global State Storage**: All plugin state stored globally, not in project directories
-- **File Deletion Tracking**: Track when Claude deletes files, with ability to restore them
-- **Agent Setup Wizard**: Interactive UI for configuring agent environments with auto-detected setup commands
 
 ## Requirements
 

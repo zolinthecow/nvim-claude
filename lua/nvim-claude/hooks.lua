@@ -868,10 +868,14 @@ function M.install_hooks()
     return
   end
 
-  -- Create .claude directory
+  -- Create .claude directory if it doesn't exist
   local claude_dir = project_root .. '/.claude'
-  if not vim.fn.isdirectory(claude_dir) then
-    vim.fn.mkdir(claude_dir, 'p')
+  if vim.fn.isdirectory(claude_dir) == 0 then
+    local ok = vim.fn.mkdir(claude_dir, 'p')
+    if ok ~= 1 then
+      vim.notify('Failed to create .claude directory', vim.log.levels.ERROR)
+      return
+    end
   end
 
   -- Create hooks configuration using proxy scripts
