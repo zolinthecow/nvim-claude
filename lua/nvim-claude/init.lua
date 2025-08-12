@@ -165,7 +165,7 @@ function M.check_and_install_mcp()
   end
   
   -- Get project root to run the command in the right directory
-  local project_root = utils.get_project_root()
+  local project_root = M.utils and M.utils.get_project_root() or vim.fn.getcwd()
   if not project_root then
     project_root = vim.fn.getcwd()
   end
