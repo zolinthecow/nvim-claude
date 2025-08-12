@@ -109,6 +109,60 @@ local function merge_config(user_config)
   return merged
 end
 
+-- Check and install RPC client (needed for hooks)
+function M.check_and_install_rpc()
+  local rpc_venv_path = vim.fn.expand('~/.local/share/nvim/nvim-claude/rpc-env')
+  local rpc_python = rpc_venv_path .. '/bin/python'
+  
+  -- Check if RPC is already installed
+  if vim.fn.filereadable(rpc_python) == 1 then
+    -- Check if pynvim is installed
+    local check_cmd = string.format('%s -c "import pynvim" 2>/dev/null', rpc_python)
+    vim.fn.system(check_cmd)
+    if vim.v.shell_error == 0 then
+      return -- Already installed
+    end
+  end
+  
+  -- Install RPC client
+  vim.notify('nvim-claude: Installing RPC client (pynvim) for hooks...', vim.log.levels.INFO)
+  
+  -- Get plugin directory
+  local plugin_dir = M.get_plugin_dir()
+  if not plugin_dir then
+    vim.notify('nvim-claude: Could not find plugin directory', vim.log.levels.ERROR)
+    return
+  end
+  
+  local install_script = plugin_dir .. 'scripts/install-rpc.sh'
+  
+  -- Check if install script exists
+  if vim.fn.filereadable(install_script) == 0 then
+    vim.notify('nvim-claude: RPC install script not found', vim.log.levels.ERROR)
+    return
+  end
+  
+  -- Run installation in background
+  vim.fn.jobstart({'bash', install_script}, {
+    on_exit = function(_, exit_code)
+      if exit_code == 0 then
+        vim.notify('nvim-claude: RPC client installed successfully', vim.log.levels.INFO)
+      else
+        vim.notify('nvim-claude: RPC installation failed. Check :messages for details', vim.log.levels.ERROR)
+      end
+    end,
+    on_stderr = function(_, data)
+      if data and #data > 0 then
+        for _, line in ipairs(data) do
+          if line ~= '' then
+            vim.notify('nvim-claude RPC install: ' .. line, vim.log.levels.WARN)
+          end
+        end
+      end
+    end
+  })
+end
+
 -- Check and install MCP server
 function M.check_and_install_mcp()
   local install_path = M.config.mcp.install_path or vim.fn.stdpath('data') .. '/nvim-claude/mcp-env'
@@ -332,6 +386,9 @@ function M.setup(user_config)
   end, 1000)
   M.diff_review.setup()
   M.settings_updater.setup()
+  
+  -- Check and install RPC client (needed for hooks to work)
+  M.check_and_install_rpc()
   
   -- Check and install MCP server if configured
   if M.config.mcp.auto_install then
