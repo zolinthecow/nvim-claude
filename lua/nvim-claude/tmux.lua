@@ -83,9 +83,6 @@ function M.create_pane(command)
   if size_opt ~= '' then table.insert(parts, size_opt) end
   table.insert(parts, '-P')
   local cmd = table.concat(parts, ' ')
-  if command then
-    cmd = cmd .. " '" .. command .. "'"
-  end
 
   local result, err = utils.exec(cmd)
   if err or not result or result == '' or result:match('error') then
