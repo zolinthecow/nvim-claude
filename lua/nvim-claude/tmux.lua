@@ -95,7 +95,14 @@ function M.create_pane(command)
   
   -- Launch command in the new pane if provided
   if command and command ~= '' then
-    M.send_to_pane(pane_id, command)
+	if command == 'claude' then
+		-- Wait 1 seconds before sending claude command to allow pane to initialize
+		vim.defer_fn(function()
+			M.send_to_pane(pane_id, command)
+		end, 1000)
+	else
+		M.send_to_pane(pane_id, command)
+	end
   end
   
   return pane_id
