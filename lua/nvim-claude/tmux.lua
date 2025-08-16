@@ -83,9 +83,6 @@ function M.create_pane(command)
   if size_opt ~= '' then table.insert(parts, size_opt) end
   table.insert(parts, '-P')
   local cmd = table.concat(parts, ' ')
-  if command then
-    cmd = cmd .. " '" .. command .. "'"
-  end
 
   local result, err = utils.exec(cmd)
   if err or not result or result == '' or result:match('error') then
@@ -98,7 +95,14 @@ function M.create_pane(command)
   
   -- Launch command in the new pane if provided
   if command and command ~= '' then
-    M.send_to_pane(pane_id, command)
+	if command == 'claude' then
+		-- Wait 1 seconds before sending claude command to allow pane to initialize
+		vim.defer_fn(function()
+			M.send_to_pane(pane_id, command)
+		end, 1000)
+	else
+		M.send_to_pane(pane_id, command)
+	end
   end
   
   return pane_id
