@@ -341,6 +341,32 @@ function M.accept_checkpoint()
       utils.exec(drop_cmd)
     end
   end
+  
+  -- Reset inline diff state since we're accepting a checkpoint
+  -- There should be no diffs after accepting a checkpoint
+  local persistence = require('nvim-claude.inline-diff-persistence')
+  local hooks = require('nvim-claude.hooks')
+  
+  -- Clear baseline reference
+  persistence.clear_baseline_ref()
+  persistence.current_stash_ref = nil
+  
+  -- Clear tracked files
+  hooks.claude_edited_files = {}
+  
+  -- Clear persistence state
+  persistence.clear_state()
+  
+  -- Clear any active diffs in buffers
+  local inline_diff = require('nvim-claude.inline-diff')
+  for bufnr, _ in pairs(inline_diff.active_diffs) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      inline_diff.clear_inline_diff(bufnr)
+    end
+  end
+  inline_diff.active_diffs = {}
+  
+  logger.info('checkpoint.accept_checkpoint', 'Reset inline diff state after accepting checkpoint')
 
   -- Get current HEAD SHA before we move
   local git_root = utils.get_project_root()

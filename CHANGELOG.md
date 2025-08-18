@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved LSP server attachment in headless instance
   - Changed from `bufadd()` to `:buffer` command to properly trigger `textDocument/didOpen` event
   - LSP servers now properly identify and attach to files
+- Reset inline diff state when accepting checkpoints
+  - Accepting a checkpoint now clears all inline diff tracking
+  - Removes baseline reference, tracked files, and active diffs
+  - Ensures clean slate after checkpoint acceptance since there should be no diffs
 
 ### Added
 - Automatic MCP server registration during installation
