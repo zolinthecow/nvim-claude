@@ -46,6 +46,18 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
     return true
   end
   
+  -- Log which LSP servers we're expecting to respond
+  local logger = require('nvim-claude.logger')
+  local expected_clients = {}
+  for file_path, info in pairs(pending_files) do
+    expected_clients[vim.fn.fnamemodify(file_path, ':t')] = info.expected_sources
+  end
+  logger.debug('lsp-utils', 'Starting LSP diagnostic wait', {
+    timeout_ms = timeout_ms,
+    files = vim.tbl_count(pending_files),
+    expected_clients = expected_clients
+  })
+  
   -- Set up autocmd to track diagnostic changes
   local diagnostic_received = false
   local client_response_times = {}  -- Track when each client responds
@@ -63,21 +75,45 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
         -- Get all diagnostics for this buffer
         local diagnostics = args.data.diagnostics or {}
         
+        local logger = require('nvim-claude.logger')
+        logger.debug('lsp-utils', 'DiagnosticChanged event received', {
+          file = vim.fn.fnamemodify(file_path, ':t'),
+          buffer = bufnr,
+          diagnostic_count = #diagnostics,
+          elapsed_ms = (vim.loop.hrtime() - start_time) / 1e6
+        })
+        
         -- Track which sources have reported
         local sources_seen = {}
+        local diagnostics_by_source = {}
         for _, diagnostic in ipairs(diagnostics) do
-          if diagnostic.source then
-            sources_seen[diagnostic.source] = true
-            -- Log when this client first responded
-            if not client_response_times[diagnostic.source] then
-              local elapsed_ms = (vim.loop.hrtime() - start_time) / 1e6
-              client_response_times[diagnostic.source] = elapsed_ms
-            end
+          local source = diagnostic.source or 'unknown'
+          sources_seen[source] = true
+          diagnostics_by_source[source] = (diagnostics_by_source[source] or 0) + 1
+          
+          -- Log when this client first responded
+          if not client_response_times[source] then
+            local elapsed_ms = (vim.loop.hrtime() - start_time) / 1e6
+            client_response_times[source] = elapsed_ms
+            logger.debug('lsp-utils', 'LSP server responded', {
+              source = source,
+              file = vim.fn.fnamemodify(file_path, ':t'),
+              elapsed_ms = elapsed_ms,
+              diagnostic_count = diagnostics_by_source[source]
+            })
           end
         end
         
         -- Update received sources for this file
         pending_files[file_path].received_sources = sources_seen
+        
+        -- Log the breakdown by source
+        if next(diagnostics_by_source) then
+          logger.debug('lsp-utils', 'Diagnostics by source', {
+            file = vim.fn.fnamemodify(file_path, ':t'),
+            breakdown = diagnostics_by_source
+          })
+        end
       end
     end
   })
@@ -169,15 +205,33 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
     -- Check if we at least have some diagnostics
     local partial_success = has_some_diagnostics()
     
-    -- Log detailed timeout information
+    -- Log detailed timeout information with per-file breakdown
     local missing_clients = {}
+    local timeout_details = {}
     for file_path, info in pairs(pending_files) do
+      local file_missing = {}
       for _, expected_source in ipairs(info.expected_sources) do
         if not info.received_sources[expected_source] then
           table.insert(missing_clients, expected_source)
+          table.insert(file_missing, expected_source)
         end
       end
+      if #file_missing > 0 then
+        timeout_details[vim.fn.fnamemodify(file_path, ':t')] = {
+          missing_sources = file_missing,
+          expected_sources = info.expected_sources,
+          received_sources = vim.tbl_keys(info.received_sources)
+        }
+      end
     end
+    
+    -- Log which specific LSP servers timed out
+    logger.warn('lsp-utils', 'LSP server timeout details', {
+      timeout_ms = timeout_ms,
+      files_checked = vim.tbl_count(pending_files),
+      timeout_details = timeout_details,
+      client_response_times = client_response_times
+    })
     
     if partial_success then
       logger.debug('lsp-utils', 'Partial LSP diagnostics received (timeout)', {

@@ -1,61 +1,30 @@
 #!/usr/bin/env python3
-"""
-Simple wrapper to call MCP diagnostics without the full MCP protocol
-"""
+"""Helper script to call MCP diagnostics directly"""
 import sys
-import json
 import os
+import json
 
-# Add the MCP server to path
-mcp_server_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mcp-server')
+# Add the mcp-server directory to Python path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+mcp_server_dir = os.path.join(os.path.dirname(script_dir), 'mcp-server')
 sys.path.insert(0, mcp_server_dir)
 
-# Set required environment variables for the MCP server
-os.environ['FASTMCP_DISABLE_BANNER'] = '1'
-os.environ['FASTMCP_LOG_LEVEL'] = 'ERROR'
-os.environ['LOG_LEVEL'] = 'ERROR'
-
-# Import and call the function
-import subprocess
-import tempfile
-
-# Since the MCP server needs to be run as a full process, let's call it properly
-def get_diagnostics_via_subprocess(file_paths):
+import importlib.util
+spec = importlib.util.spec_from_file_location("nvim_lsp_server", os.path.join(mcp_server_dir, "nvim-lsp-server.py"))
+if spec and spec.loader:
+    nvim_lsp_server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(nvim_lsp_server)
+    get_diagnostics = nvim_lsp_server.get_diagnostics
+else:
+    raise ImportError("Failed to load nvim-lsp-server module")
 
 if __name__ == "__main__":
-    # Read file paths from command line or stdin
-    if len(sys.argv) > 1:
-        # Files passed as arguments
-        file_paths = sys.argv[1:]
-    else:
-        # Read JSON array from stdin
-        input_data = sys.stdin.read()
-        try:
-            file_paths = json.loads(input_data) if input_data else []
-        except:
-            file_paths = []
+    file_path = sys.argv[1] if len(sys.argv) > 1 else None
+    result = get_diagnostics([file_path] if file_path else [])
     
-    # Get diagnostics
-    result = get_diagnostics(file_paths)
-    
-    # Parse the result to count errors/warnings
+    # Parse and pretty print result
     try:
-        diagnostics = json.loads(result)
-        error_count = 0
-        warning_count = 0
-        
-        for file_diags in diagnostics.values():
-            for diag in file_diags:
-                if diag['severity'] == 'ERROR':
-                    error_count += 1
-                elif diag['severity'] == 'WARN':
-                    warning_count += 1
-        
-        # Output counts as JSON
-        print(json.dumps({
-            "errors": error_count,
-            "warnings": warning_count
-        }))
-    except Exception as e:
-        # On error, return safe defaults
-        print(json.dumps({"errors": 0, "warnings": 0}))
+        parsed = json.loads(result)
+        print(json.dumps(parsed, indent=2))
+    except:
+        print(result)

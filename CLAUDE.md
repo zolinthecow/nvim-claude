@@ -192,15 +192,24 @@ Hooks use wrapper scripts that handle base64 encoding and call `nvim-rpc.sh` (Py
 - Provides LSP diagnostics to Claude via isolated headless Neovim instance
 - Install with `:ClaudeInstallMCP` (auto-installs Python env and registers with Claude Code)
 - Requires Python 3.10+ and pynvim
+
 - **Architecture**: Headless Neovim instance runs separately from main editor
-  - Loads user's full config (lazy.nvim, LSP servers, etc.)
+  - **Simple init approach**: Uses `-u ~/.config/nvim/init.lua` directly (no custom init files)
+  - **Real file paths**: Creates buffers with actual file paths for proper LSP attachment
+  - **Fixed timing**: 3-second diagnostic wait instead of complex event-driven waits
+  - **Generic LSP support**: Works with any LSP servers (not hardcoded to specific ones)
   - Communicates via subprocess using pynvim (no event loop conflicts)
-  - Creates temporary buffers with actual file paths for proper LSP attachment
   - Stop hook also uses this headless instance for error checking
+
 - **Key Benefits**: 
   - Zero UI freezing when Claude accesses diagnostics
   - No buffer modifications in user's active editor
   - Thread-safe subprocess isolation
+  - Works reliably with TypeScript, Biome, and other LSP servers
+
+- **Historical Note**: Originally used complex custom init files and event-driven diagnostic waiting, 
+  but this caused subtle issues where TypeScript diagnostics wouldn't work. The current simple 
+  approach mirrors a normal Neovim session and is much more reliable.
 
 #### Status Line Integration
 - Shows active diff count in status line
@@ -425,6 +434,59 @@ tail -20 ~/.local/share/nvim/nvim-claude-hooks.log
 # 6. Verify state changes
 :lua vim.inspect(require('nvim-claude.hooks').claude_edited_files)
 ```
+
+## Key Learnings and Development Philosophy
+
+### 1. Simplicity Over Complexity
+
+**Core Principle**: When debugging complex issues, always test if a simpler approach works first.
+
+**Case Study - MCP Server TypeScript Diagnostics (August 2025)**:
+- **Problem**: Complex MCP server architecture with custom init files, event-driven waits, and sophisticated LSP triggering failed to capture TypeScript diagnostics, despite hours of debugging
+- **Solution**: Replaced with simple approach: direct user config loading, fixed 3-second waits, basic buffer setup
+- **Result**: TypeScript diagnostics started working immediately
+- **Lesson**: Sophisticated ≠ Better. The complex approach introduced subtle bugs that were hard to debug
+
+### 2. Step-by-Step Debugging Methodology
+
+When facing complex issues, follow this systematic approach:
+
+1. **Reproduce the issue** - Create minimal test cases
+2. **Create working baseline** - Find any approach that works, even if simple
+3. **Compare approaches** - Identify exact differences between working vs broken
+4. **Test theories individually** - Change one variable at a time
+5. **Programmatic verification** - Write scripts to test hypotheses
+6. **Environmental isolation** - Rule out timing, permissions, paths, etc.
+7. **Adopt the working approach** - Don't be afraid to simplify
+
+**Example Applied to MCP Diagnostics**:
+1. Confirmed issue: TypeScript diagnostics missing in MCP server
+2. Created manual headless test: TypeScript diagnostics worked
+3. Compared: Manual vs MCP server environments  
+4. Tested theories: headless_mode flag, timing, buffer creation
+5. Built programmatic tests: Scripts that replicated both approaches
+6. Isolated differences: Custom init files vs direct config loading
+7. Adopted simple approach: Direct config, fixed timing, real file paths
+
+### 3. Environmental Debugging
+
+**Always verify assumptions about the environment**:
+- Check if new code is actually running (add temporary debug prints)
+- Verify working directories, file paths, permissions
+- Test with minimal reproduction cases
+- Use logging to trace execution flow
+- Compare working vs non-working environments side-by-side
+
+### 4. Documentation Through Discovery
+
+When solving complex issues:
+- Document the debugging process, not just the solution
+- Capture failed approaches and why they failed  
+- Note environmental factors that mattered
+- Include reproduction steps for future debugging
+- Update architecture docs with lessons learned
+
+This prevents future developers (including future Claude instances) from repeating the same mistakes and provides debugging templates for similar issues.
 
 ## Coding Guidelines
 - Always use single quotes instead of double quotes.

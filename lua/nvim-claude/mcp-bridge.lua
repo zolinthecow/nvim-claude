@@ -89,7 +89,6 @@ function M.get_diagnostics(file_paths)
     end
     
     -- Second pass: trigger LSP for all buffers by visiting each once
-    local current_buf = vim.api.nvim_get_current_buf()
     for _, file_info in ipairs(files_to_check) do
       local temp_bufnr = file_info.bufnr
       
@@ -106,8 +105,10 @@ function M.get_diagnostics(file_paths)
           log_file:write(string.format('  Filetype detected for %s: %s\n', file_info.path, ft or 'none'))
         end
         
-        -- Trigger diagnostic push events for all files
-        -- Many LSP servers use push model and only send diagnostics on these events
+        -- Let LSP servers attach naturally first, then trigger minimal events
+        -- Avoid duplicate didOpen calls that might confuse servers
+        
+        -- Simple approach that works - just basic events
         vim.api.nvim_exec_autocmds('InsertLeave', { buffer = temp_bufnr })
         vim.api.nvim_exec_autocmds('TextChanged', { buffer = temp_bufnr })
       end)
@@ -118,9 +119,10 @@ function M.get_diagnostics(file_paths)
       local temp_bufnr = file_info.bufnr
       local wait_start = vim.loop.hrtime()
       
-      local attached = vim.wait(500, function()
-        return #vim.lsp.get_clients({ bufnr = temp_bufnr }) > 0
-      end, 50)
+      -- Wait for LSP clients to attach (any number of clients)
+      local attached = vim.wait(2000, function()
+        return #vim.lsp.get_clients({ bufnr = temp_bufnr }) > 0  -- Wait for at least one client
+      end, 100)
       
       local wait_time_ms = (vim.loop.hrtime() - wait_start) / 1e6
       
@@ -131,9 +133,21 @@ function M.get_diagnostics(file_paths)
           temp_bufnr, attached and 'success' or 'timeout', wait_time_ms))
         log_file:write(string.format('  LSP clients attached to buffer %d: %d\n', temp_bufnr, #clients))
         for _, client in ipairs(clients) do
+          -- Check multiple possible diagnostic capability fields
+          local has_diagnostics = client.server_capabilities.diagnosticProvider 
+            or client.server_capabilities.textDocumentSync 
+            or (client.server_capabilities.publishDiagnostics ~= false)
+            or client.supports_method('textDocument/publishDiagnostics')
+          
           log_file:write(string.format('    - %s (id: %d, capabilities: %s)\n', 
             client.name, client.id, 
-            client.server_capabilities.diagnosticProvider and 'diagnostics' or 'no-diagnostics'))
+            has_diagnostics and 'diagnostics' or 'no-diagnostics'))
+          
+          -- Debug: log actual capabilities structure
+          log_file:write(string.format('      diagnosticProvider: %s\n', 
+            tostring(client.server_capabilities.diagnosticProvider)))
+          log_file:write(string.format('      textDocumentSync: %s\n', 
+            tostring(client.server_capabilities.textDocumentSync)))
         end
       end
     end
@@ -150,12 +164,18 @@ function M.get_diagnostics(file_paths)
     end
   end
   
-  -- Wait for LSP diagnostics from all files
-  local lsp_wait_success = false
+  -- Simple wait for diagnostics (like our successful test scripts)
   if #files_to_check > 0 then
-    -- Use 3 second timeout for all files since we now trigger push events
-    local timeout_ms = 3000
-    lsp_wait_success = lsp_utils.await_lsp_diagnostics(files_to_check, timeout_ms)
+    local logger = require('nvim-claude.logger')
+    local log_file_path = logger.get_mcp_debug_log_file()
+    local wait_log_file = io.open(log_file_path, 'a')
+    if wait_log_file then
+      wait_log_file:write(string.format('[%s] Simple wait for diagnostics (3 seconds)\n', os.date('%Y-%m-%d %H:%M:%S')))
+      wait_log_file:close()
+    end
+    
+    -- Simple approach: just wait 3 seconds like our successful scripts
+    vim.wait(3000, function() return false end)  -- Always wait full 3 seconds
   end
   
   -- Collect diagnostics after waiting
@@ -174,7 +194,30 @@ function M.get_diagnostics(file_paths)
     local diags = vim.diagnostic.get(bufnr)
     
     if log_file then
-      log_file:write(string.format('  File: %s, Buffer: %d, Diagnostics: %d\n', file_info.path, bufnr, #diags))
+      log_file:write(string.format('  File: %s, Buffer: %d, Total Diagnostics: %d\n', file_info.path, bufnr, #diags))
+      
+      -- Show which LSP clients are attached to this buffer
+      local clients = vim.lsp.get_clients({ bufnr = bufnr })
+      log_file:write(string.format('    LSP clients for buffer %d: %d\n', bufnr, #clients))
+      for _, client in ipairs(clients) do
+        log_file:write(string.format('      - %s (id: %d)\n', client.name, client.id))
+      end
+      
+      -- Show diagnostics by source
+      local by_source = {}
+      for _, diag in ipairs(diags) do
+        local source = diag.source or 'unknown'
+        by_source[source] = (by_source[source] or 0) + 1
+      end
+      
+      if next(by_source) then
+        log_file:write('    Diagnostics by source:\n')
+        for source, count in pairs(by_source) do
+          log_file:write(string.format('      - %s: %d\n', source, count))
+        end
+      else
+        log_file:write('    No diagnostics from any source\n')
+      end
     end
     
     if #diags > 0 then
@@ -187,9 +230,17 @@ function M.get_diagnostics(file_paths)
     log_file:close()
   end
   
-  -- Clean up temporary buffers
+  -- Clean up temporary buffers and their LSP clients
   for bufnr, _ in pairs(temp_buffers) do
     if vim.api.nvim_buf_is_valid(bufnr) then
+      -- Stop LSP clients attached to this buffer before deleting
+      local clients = vim.lsp.get_clients({ bufnr = bufnr })
+      for _, client in ipairs(clients) do
+        -- Detach from this buffer
+        vim.lsp.buf_detach_client(bufnr, client.id)
+      end
+      
+      -- Delete the buffer
       vim.api.nvim_buf_delete(bufnr, { force = true })
     end
   end
@@ -270,6 +321,12 @@ function M.get_diagnostic_context(file_path, line)
   
   -- Clean up temporary buffer if we created it
   if temp_buffer and vim.api.nvim_buf_is_valid(bufnr) then
+    -- Stop LSP clients attached to this buffer before deleting
+    local clients = vim.lsp.get_clients({ bufnr = bufnr })
+    for _, client in ipairs(clients) do
+      vim.lsp.buf_detach_client(bufnr, client.id)
+    end
+    
     vim.api.nvim_buf_delete(bufnr, { force = true })
   end
   
@@ -290,17 +347,9 @@ function M.get_diagnostic_summary()
     if vim.api.nvim_buf_is_loaded(buf) then
       local name = vim.api.nvim_buf_get_name(buf)
       if name ~= '' and vim.fn.filereadable(name) == 1 then
-        -- Create a temporary buffer copy
-        local temp_bufnr = vim.fn.bufadd('')
-        
-        -- Copy content from original buffer
-        local content = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-        vim.api.nvim_buf_set_lines(temp_bufnr, 0, -1, false, content)
-        
-        -- Set buffer name and filetype (add unique suffix to avoid conflicts)
-        local unique_name = name .. '.mcp-temp-' .. temp_bufnr
-        vim.api.nvim_buf_set_name(temp_bufnr, unique_name)
-        vim.bo[temp_bufnr].filetype = vim.bo[buf].filetype
+        -- Use real file path instead of fake temp names (like main diagnostic flow)
+        local temp_bufnr = vim.fn.bufadd(name)
+        vim.fn.bufload(temp_bufnr)
         
         temp_buffers[temp_bufnr] = true
         
@@ -343,9 +392,17 @@ function M.get_diagnostic_summary()
     end
   end
   
-  -- Clean up temporary buffers
+  -- Clean up temporary buffers and their LSP clients
   for bufnr, _ in pairs(temp_buffers) do
     if vim.api.nvim_buf_is_valid(bufnr) then
+      -- Stop LSP clients attached to this buffer before deleting
+      local clients = vim.lsp.get_clients({ bufnr = bufnr })
+      for _, client in ipairs(clients) do
+        -- Detach from this buffer
+        vim.lsp.buf_detach_client(bufnr, client.id)
+      end
+      
+      -- Delete the buffer
       vim.api.nvim_buf_delete(bufnr, { force = true })
     end
   end
