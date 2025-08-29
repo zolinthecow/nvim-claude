@@ -9,6 +9,94 @@ local ns_id = vim.api.nvim_create_namespace 'nvim_claude_inline_diff'
 -- State tracking
 M.active_diffs = {} -- Track active inline diffs by buffer number
 
+-- Baseline reference management (moved from inline-diff-persistence.lua)
+local baseline_refs = {} -- Cache baseline refs by project
+
+-- Get baseline reference for a project
+function M.get_baseline_ref(git_root)
+  if not git_root then
+    local utils = require('nvim-claude.utils')
+    git_root = utils.get_project_root()
+  end
+  
+  if not git_root then
+    return nil
+  end
+  
+  -- Check memory cache first
+  if baseline_refs[git_root] then
+    return baseline_refs[git_root]
+  end
+  
+  -- Load from project state
+  local project_state = require('nvim-claude.project-state')
+  local state = project_state.get(git_root, 'inline_diff_state')
+  if state and state.stash_ref then
+    baseline_refs[git_root] = state.stash_ref
+    return state.stash_ref
+  end
+  
+  -- Try git ref as fallback
+  local utils = require('nvim-claude.utils')
+  local ref_cmd = string.format('cd "%s" && git rev-parse refs/nvim-claude/baseline 2>/dev/null', git_root)
+  local ref, err = utils.exec(ref_cmd)
+  if ref and not err then
+    ref = ref:gsub('%s+', '')
+    if ref ~= '' and ref:match('^[a-f0-9]+$') then
+      baseline_refs[git_root] = ref
+      return ref
+    end
+  end
+  
+  return nil
+end
+
+-- Set baseline reference for a project
+function M.set_baseline_ref(git_root, ref)
+  if not git_root then
+    local utils = require('nvim-claude.utils')
+    git_root = utils.get_project_root()
+  end
+  
+  if not git_root then
+    return
+  end
+  
+  -- Update memory cache
+  baseline_refs[git_root] = ref
+  
+  -- Update git ref if we have a valid SHA
+  if ref and ref:match('^[a-f0-9]+$') then
+    local utils = require('nvim-claude.utils')
+    local ref_cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, ref)
+    utils.exec(ref_cmd)
+  elseif not ref then
+    -- Clear git ref if ref is nil
+    local utils = require('nvim-claude.utils')
+    local ref_cmd = string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root)
+    utils.exec(ref_cmd)
+  end
+end
+
+-- Clear state for a project
+function M.clear_state(git_root)
+  if not git_root then
+    local utils = require('nvim-claude.utils')
+    git_root = utils.get_project_root()
+  end
+  
+  if not git_root then
+    return
+  end
+  
+  -- Clear memory cache
+  baseline_refs[git_root] = nil
+  
+  -- Clear from project state
+  local project_state = require('nvim-claude.project-state')
+  project_state.set(git_root, 'inline_diff_state', nil)
+end
+
 -- Initialize inline diff for a buffer
 function M.show_inline_diff(bufnr, old_content, new_content, opts)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -31,12 +119,19 @@ function M.show_inline_diff(bufnr, old_content, new_content, opts)
       if hooks.claude_edited_files[relative_path] then
         hooks.claude_edited_files[relative_path] = nil
         
-        -- Save the updated state
-        local persistence = require('nvim-claude.inline-diff-persistence')
-        persistence.save_state({
-          stash_ref = persistence.get_baseline_ref(),
-          claude_edited_files = hooks.claude_edited_files,
-        })
+        -- Save the updated state directly to project-state
+        local project_state = require('nvim-claude.project-state')
+        local utils = require('nvim-claude.utils')
+        local git_root = utils.get_project_root()
+        if git_root then
+          local inline_diff_state = {
+            version = 1,
+            timestamp = os.time(),
+            stash_ref = M.get_baseline_ref(git_root),
+            claude_edited_files = hooks.claude_edited_files,
+          }
+          project_state.set(git_root, 'inline_diff_state', inline_diff_state)
+        end
         
         vim.notify('File matches baseline - removed from tracking', vim.log.levels.INFO)
       end
@@ -645,9 +740,8 @@ function M.update_baseline_with_content(git_root, relative_path, content, curren
     -- Cleanup temporary directory
     vim.fn.delete(temp_dir, 'rf')
 
-    -- Update baseline reference in persistence module
-    local persistence = require 'nvim-claude.inline-diff-persistence'
-    persistence.set_baseline_ref(new_commit_hash)
+    -- Update baseline reference directly
+    M.set_baseline_ref(git_root, new_commit_hash)
 
     return true
   end)
@@ -659,10 +753,21 @@ end
 -- The complex git stash approach was causing issues
 function M.update_file_baseline(bufnr)
   -- No longer storing in memory - we always read from git stash
-  -- Just save state for persistence
-  local persistence = require 'nvim-claude.inline-diff-persistence'
-  if persistence.current_stash_ref then
-    persistence.save_state { stash_ref = persistence.current_stash_ref }
+  -- Save state directly to project-state
+  local project_state = require('nvim-claude.project-state')
+  local utils = require('nvim-claude.utils')
+  local git_root = utils.get_project_root()
+  if git_root then
+    local baseline_ref = M.get_baseline_ref(git_root)
+    if baseline_ref then
+      local inline_diff_state = {
+        version = 1,
+        timestamp = os.time(),
+        stash_ref = baseline_ref,
+        claude_edited_files = hooks.claude_edited_files,
+      }
+      project_state.set(git_root, 'inline_diff_state', inline_diff_state)
+    end
   end
 end
 
@@ -683,7 +788,6 @@ function M.accept_current_hunk(bufnr)
 
   local utils = require 'nvim-claude.utils'
   local hooks = require 'nvim-claude.hooks'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
@@ -692,7 +796,7 @@ function M.accept_current_hunk(bufnr)
   local hunk_patch = M.generate_hunk_patch(hunk, relative_path)
 
   -- Step 2: Get current baseline from stash
-  local stash_ref = persistence.get_baseline_ref()
+  local stash_ref = M.get_baseline_ref(git_root)
   if not stash_ref then
     vim.notify('No baseline stash found', vim.log.levels.ERROR)
     return
@@ -738,10 +842,16 @@ function M.accept_current_hunk(bufnr)
     vim.notify('All changes accepted for this file.', vim.log.levels.INFO)
 
     hooks.claude_edited_files[relative_path] = nil
-    persistence.save_state {
-      stash_ref = persistence.get_baseline_ref(),
+    
+    -- Save state directly to project-state
+    local project_state = require('nvim-claude.project-state')
+    local inline_diff_state = {
+      version = 1,
+      timestamp = os.time(),
+      stash_ref = M.get_baseline_ref(git_root),
       claude_edited_files = hooks.claude_edited_files,
     }
+    project_state.set(git_root, 'inline_diff_state', inline_diff_state)
 
     M.close_inline_diff(bufnr, true)
   else
@@ -825,10 +935,8 @@ function M.reject_current_hunk(bufnr)
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-  local persistence = require 'nvim-claude.inline-diff-persistence'
-
   -- Check if this is a new file
-  local stash_ref = persistence.get_baseline_ref()
+  local stash_ref = M.get_baseline_ref(git_root)
   if stash_ref then
     local baseline_check = string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, stash_ref, relative_path)
     local baseline_result = utils.exec(baseline_check)
@@ -857,10 +965,15 @@ function M.reject_current_hunk(bufnr)
           local hooks = require 'nvim-claude.hooks'
           if hooks.claude_edited_files[relative_path] then
             hooks.claude_edited_files[relative_path] = nil
-            persistence.save_state {
-              stash_ref = persistence.current_stash_ref,
+            -- Save state directly to project-state
+            local project_state = require('nvim-claude.project-state')
+            local inline_diff_state = {
+              version = 1,
+              timestamp = os.time(),
+              stash_ref = M.get_baseline_ref(git_root),
               claude_edited_files = hooks.claude_edited_files,
             }
+            project_state.set(git_root, 'inline_diff_state', inline_diff_state)
           end
         end
       end
@@ -896,8 +1009,7 @@ function M.reject_current_hunk(bufnr)
   local hooks = require 'nvim-claude.hooks'
 
   -- Get the new baseline content
-  local persistence = require 'nvim-claude.inline-diff-persistence'
-  local stash_ref = persistence.get_baseline_ref()
+  local stash_ref = M.get_baseline_ref(git_root)
   if not stash_ref then
     vim.notify('No baseline stash reference found', vim.log.levels.ERROR)
     return
@@ -941,11 +1053,16 @@ function M.reject_current_hunk(bufnr)
       -- Remove this file from Claude edited files tracking
       if hooks.claude_edited_files[relative_path] then
         hooks.claude_edited_files[relative_path] = nil
-        local persistence = require 'nvim-claude.inline-diff-persistence'
-        persistence.save_state {
-          stash_ref = persistence.current_stash_ref,
+        
+        -- Save state directly to project-state
+        local project_state = require('nvim-claude.project-state')
+        local inline_diff_state = {
+          version = 1,
+          timestamp = os.time(),
+          stash_ref = M.get_baseline_ref(git_root),
           claude_edited_files = hooks.claude_edited_files,
         }
+        project_state.set(git_root, 'inline_diff_state', inline_diff_state)
       end
 
       M.close_inline_diff(bufnr, false)
@@ -1136,7 +1253,6 @@ function M.accept_all_hunks(bufnr)
 
   local utils = require 'nvim-claude.utils'
   local hooks = require 'nvim-claude.hooks'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
   
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
@@ -1157,11 +1273,15 @@ function M.accept_all_hunks(bufnr)
   if hooks.claude_edited_files[relative_path] then
     hooks.claude_edited_files[relative_path] = nil
     
-    -- Save state with updated tracking
-    persistence.save_state {
-      stash_ref = persistence.get_baseline_ref(),
+    -- Save state directly to project-state
+    local project_state = require('nvim-claude.project-state')
+    local inline_diff_state = {
+      version = 1,
+      timestamp = os.time(),
+      stash_ref = M.get_baseline_ref(git_root),
       claude_edited_files = hooks.claude_edited_files,
     }
+    project_state.set(git_root, 'inline_diff_state', inline_diff_state)
   end
 
   -- Check if there are any other tracked files
@@ -1173,8 +1293,8 @@ function M.accept_all_hunks(bufnr)
 
   -- If no other files are tracked, clear the baseline
   if not has_other_files then
-    persistence.set_baseline_ref(nil)
-    persistence.clear_state()
+    M.set_baseline_ref(git_root, nil)
+    M.clear_state(git_root)
   end
 
   vim.notify('Accepted all Claude changes', vim.log.levels.INFO)
@@ -1193,13 +1313,12 @@ function M.reject_all_hunks(bufnr)
 
   local utils = require 'nvim-claude.utils'
   local hooks = require 'nvim-claude.hooks'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
   local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
 
   -- Get baseline content from stash
-  local stash_ref = persistence.get_baseline_ref()
+  local stash_ref = M.get_baseline_ref(git_root)
   if not stash_ref then
     vim.notify('No baseline stash reference found', vim.log.levels.ERROR)
     return
@@ -1255,11 +1374,16 @@ function M.reject_all_hunks(bufnr)
   -- Remove this file from Claude edited files tracking
   if hooks.claude_edited_files[relative_path] then
     hooks.claude_edited_files[relative_path] = nil
-    local persistence = require 'nvim-claude.inline-diff-persistence'
-    persistence.save_state {
-      stash_ref = persistence.current_stash_ref,
+    
+    -- Save state directly to project-state
+    local project_state = require('nvim-claude.project-state')
+    local inline_diff_state = {
+      version = 1,
+      timestamp = os.time(),
+      stash_ref = M.get_baseline_ref(git_root),
       claude_edited_files = hooks.claude_edited_files,
     }
+    project_state.set(git_root, 'inline_diff_state', inline_diff_state)
   end
 
   -- Check if there are any other tracked files
@@ -1273,8 +1397,8 @@ function M.reject_all_hunks(bufnr)
 
   -- If no other files are tracked, clear the baseline
   if not has_other_files then
-    persistence.set_baseline_ref(nil)
-    persistence.clear_state()
+    M.set_baseline_ref(git_root, nil)
+    M.clear_state(git_root)
   end
 end
 
@@ -1317,12 +1441,12 @@ function M.close_inline_diff(bufnr, keep_baseline)
 
   -- Only clear everything if no active diffs AND no tracked files
   if not has_active_diffs and not has_tracked_files then
-    local persistence = require 'nvim-claude.inline-diff-persistence'
-    persistence.clear_state()
-    persistence.current_stash_ref = nil
-
-    -- Reset the stable baseline in hooks
-    persistence.set_baseline_ref(nil)
+    local utils = require('nvim-claude.utils')
+    local git_root = utils.get_project_root()
+    if git_root then
+      M.clear_state(git_root)
+      M.set_baseline_ref(git_root, nil)
+    end
     hooks.claude_edited_files = {}
   end
 
@@ -1397,8 +1521,7 @@ function M.next_diff_file()
   -- Check if file exists
   if vim.fn.filereadable(next_file) == 0 then
     -- File is deleted, use special handler
-    local persistence = require 'nvim-claude.inline-diff-persistence'
-    local baseline_ref = persistence.get_baseline_ref()
+    local baseline_ref = M.get_baseline_ref(git_root)
     
     if baseline_ref then
       -- For deleted files, we need to use defer_fn to ensure the highlighting works
@@ -1460,8 +1583,7 @@ function M.prev_diff_file()
   -- Check if file exists
   if vim.fn.filereadable(prev_file) == 0 then
     -- File is deleted, use special handler
-    local persistence = require 'nvim-claude.inline-diff-persistence'
-    local baseline_ref = persistence.get_baseline_ref()
+    local baseline_ref = M.get_baseline_ref(git_root)
     
     if baseline_ref then
       -- For deleted files, we need to use defer_fn to ensure the highlighting works
@@ -1488,12 +1610,10 @@ function M.refresh_inline_diff(bufnr)
   -- Get current baseline
   local hooks = require 'nvim-claude.hooks'
   local utils = require 'nvim-claude.utils'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
-
-  local stash_ref = persistence.get_baseline_ref()
+  local git_root = utils.get_project_root()
+  local stash_ref = M.get_baseline_ref(git_root)
   if not stash_ref then
     -- Check if this file is Claude-tracked - only warn if it should have a baseline
-    local git_root = utils.get_project_root()
     local file_path = vim.api.nvim_buf_get_name(bufnr)
     local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
 
@@ -1630,8 +1750,7 @@ function M.list_diff_files()
       if selected_file.deleted then
         -- For deleted files, use the special handler
         local hooks = require 'nvim-claude.hooks'
-        local persistence = require 'nvim-claude.inline-diff-persistence'
-        local baseline_ref = persistence.get_baseline_ref()
+        local baseline_ref = M.get_baseline_ref(git_root)
 
         if baseline_ref then
           hooks.show_deleted_file_diff(selected_file.path, git_root, baseline_ref)
@@ -1648,12 +1767,15 @@ function M.list_diff_files()
           local hooks = require 'nvim-claude.hooks'
           hooks.claude_edited_files[selected_file.relative_path] = nil
 
-          -- Save the updated state
-          local persistence = require 'nvim-claude.inline-diff-persistence'
-          persistence.save_state {
-            stash_ref = persistence.get_baseline_ref(),
+          -- Save the updated state directly to project-state
+          local project_state = require('nvim-claude.project-state')
+          local inline_diff_state = {
+            version = 1,
+            timestamp = os.time(),
+            stash_ref = M.get_baseline_ref(git_root),
             claude_edited_files = hooks.claude_edited_files,
           }
+          project_state.set(git_root, 'inline_diff_state', inline_diff_state)
 
           vim.notify('File has been untracked', vim.log.levels.INFO)
         else
@@ -1674,8 +1796,8 @@ end
 -- Accept all diffs across all files
 function M.accept_all_files()
   local hooks = require 'nvim-claude.hooks'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
   local logger = require 'nvim-claude.logger'
+  local utils = require 'nvim-claude.utils'
 
   logger.info('accept_all_files', 'Function called - accepting ALL files')
 
@@ -1692,6 +1814,12 @@ function M.accept_all_files()
     return
   end
 
+  local git_root = utils.get_project_root()
+  if not git_root then
+    vim.notify('Not in a git repository', vim.log.levels.ERROR)
+    return
+  end
+
   -- Clear all visual diff displays from all buffers
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
@@ -1704,10 +1832,15 @@ function M.accept_all_files()
 
   -- Clear all tracking
   hooks.claude_edited_files = {}
-  persistence.set_baseline_ref(nil)
+  M.set_baseline_ref(git_root, nil)
 
-  -- Clear persistence
-  persistence.clear_state()
+  -- Clear persistence state completely
+  M.clear_state(git_root)
+
+  logger.info('accept_all_files', 'Successfully cleared all state', {
+    cleared_count = cleared_count,
+    git_root = git_root
+  })
 
   vim.notify(string.format('Accepted all changes from %d files', cleared_count), vim.log.levels.INFO)
 end
@@ -1716,7 +1849,6 @@ end
 function M.reject_all_files()
   local hooks = require 'nvim-claude.hooks'
   local utils = require 'nvim-claude.utils'
-  local persistence = require 'nvim-claude.inline-diff-persistence'
 
   -- Count tracked files for reporting
   local file_count = vim.tbl_count(hooks.claude_edited_files)
@@ -1734,7 +1866,7 @@ function M.reject_all_files()
   end
 
   -- Get baseline reference
-  local baseline_ref = persistence.get_baseline_ref()
+  local baseline_ref = M.get_baseline_ref(git_root)
   if not baseline_ref then
     vim.notify('No baseline found to restore from', vim.log.levels.ERROR)
     return
@@ -1777,15 +1909,171 @@ function M.reject_all_files()
 
   -- Clear all tracking
   hooks.claude_edited_files = {}
-  persistence.set_baseline_ref(nil)
+  M.set_baseline_ref(git_root, nil)
 
   -- Clear persistence completely for consistency with accept all
-  persistence.clear_state()
+  M.clear_state(git_root)
 
   -- Refresh all buffers
   vim.cmd 'checktime'
 
   vim.notify(string.format('Rejected all Claude changes in %d files', file_count), vim.log.levels.INFO)
+end
+
+-- Persistence functions (moved from deleted inline-diff-persistence.lua)
+-- These maintain compatibility with hooks.lua that expects a persistence interface
+
+-- Current stash/baseline ref - this property is accessed by hooks.lua
+M.current_stash_ref = nil
+
+function M.save_state(state_data)
+  local utils = require('nvim-claude.utils')
+  local git_root = utils.get_project_root()
+  if not git_root then
+    return false
+  end
+  
+  local project_state = require('nvim-claude.project-state')
+  local current_state = project_state.get(git_root, 'inline_diff_state') or {}
+  
+  -- Update with new state data
+  if state_data.stash_ref then
+    current_state.stash_ref = state_data.stash_ref
+    M.current_stash_ref = state_data.stash_ref
+    baseline_refs[git_root] = state_data.stash_ref
+  end
+  
+  current_state.timestamp = os.time()
+  project_state.set(git_root, 'inline_diff_state', current_state)
+  
+  return true
+end
+
+function M.load_state()
+  local utils = require('nvim-claude.utils')
+  local git_root = utils.get_project_root()
+  if not git_root then
+    return nil
+  end
+  
+  local project_state = require('nvim-claude.project-state')
+  local state = project_state.get(git_root, 'inline_diff_state')
+  
+  if state and state.stash_ref then
+    M.current_stash_ref = state.stash_ref
+    baseline_refs[git_root] = state.stash_ref
+  end
+  
+  return state
+end
+
+function M.get_state_file()
+  local utils = require('nvim-claude.utils')
+  local git_root = utils.get_project_root()
+  if not git_root then
+    return nil
+  end
+  
+  local project_state = require('nvim-claude.project-state')
+  return project_state.get_state_file()
+end
+
+function M.setup_autocmds()
+  -- Setup autocmds for persistence
+  local augroup = vim.api.nvim_create_augroup('nvim_claude_persistence', { clear = true })
+  
+  vim.api.nvim_create_autocmd('VimLeavePre', {
+    group = augroup,
+    callback = function()
+      -- Save current state on exit
+      local hooks = require('nvim-claude.hooks')
+      if M.current_stash_ref and next(hooks.claude_edited_files) then
+        M.save_state({ stash_ref = M.current_stash_ref })
+      end
+    end,
+  })
+end
+
+function M.restore_diffs()
+  local logger = require('nvim-claude.logger')
+  
+  -- Load state from persistence
+  local state = M.load_state()
+  if not state or not state.stash_ref then
+    logger.debug('restore_diffs', 'No saved state found')
+    return false
+  end
+  
+  -- Set current stash ref
+  M.current_stash_ref = state.stash_ref
+  
+  logger.info('restore_diffs', 'Restored baseline ref from persistence', {
+    stash_ref = state.stash_ref
+  })
+  
+  return true
+end
+
+function M.create_baseline(message)
+  local utils = require('nvim-claude.utils')
+  local logger = require('nvim-claude.logger')
+  
+  local git_root = utils.get_project_root()
+  if not git_root then
+    logger.error('create_baseline', 'No git root found')
+    return nil
+  end
+  
+  -- Create git commit with current working directory state
+  local commit_cmd = string.format('cd "%s" && git add -A && git commit -m "%s"', git_root, message)
+  local result, err = utils.exec(commit_cmd)
+  
+  if err or result:match('fatal:') then
+    -- Try without staging changes if that fails
+    local commit_cmd2 = string.format('cd "%s" && git stash push -u -m "%s"', git_root, message)
+    local result2, err2 = utils.exec(commit_cmd2)
+    
+    if err2 or not result2 or result2:match('No local changes') then
+      logger.warn('create_baseline', 'No changes to commit/stash')
+      return nil
+    end
+    
+    -- Get the stash SHA
+    local stash_sha_cmd = string.format('cd "%s" && git rev-parse stash@{0}', git_root)
+    local stash_sha, sha_err = utils.exec(stash_sha_cmd)
+    
+    if sha_err or not stash_sha then
+      logger.error('create_baseline', 'Failed to get stash SHA')
+      return nil
+    end
+    
+    stash_sha = stash_sha:gsub('%s+', '')
+    
+    -- Update git ref to point to stash
+    local ref_cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, stash_sha)
+    utils.exec(ref_cmd)
+    
+    logger.info('create_baseline', 'Created stash baseline', { stash_ref = stash_sha })
+    return stash_sha
+  else
+    -- Get the commit SHA
+    local commit_sha_cmd = string.format('cd "%s" && git rev-parse HEAD', git_root)
+    local commit_sha, sha_err = utils.exec(commit_sha_cmd)
+    
+    if sha_err or not commit_sha then
+      logger.error('create_baseline', 'Failed to get commit SHA')
+      return nil
+    end
+    
+    commit_sha = commit_sha:gsub('%s+', '')
+    
+    -- Update git ref to point to commit
+    local ref_cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, commit_sha)
+    utils.exec(ref_cmd)
+    
+    logger.info('create_baseline', 'Created commit baseline', { commit_ref = commit_sha })
+    return commit_sha
+  end
 end
 
 return M
