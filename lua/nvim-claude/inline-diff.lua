@@ -1943,6 +1943,11 @@ function M.save_state(state_data)
     baseline_refs[git_root] = state_data.stash_ref
   end
   
+  -- Save claude_edited_files if provided
+  if state_data.claude_edited_files then
+    current_state.claude_edited_files = state_data.claude_edited_files
+  end
+  
   current_state.timestamp = os.time()
   project_state.set(git_root, 'inline_diff_state', current_state)
   
@@ -1962,6 +1967,12 @@ function M.load_state()
   if state and state.stash_ref then
     M.current_stash_ref = state.stash_ref
     baseline_refs[git_root] = state.stash_ref
+    
+    -- Also restore claude_edited_files to hooks.claude_edited_files
+    if state.claude_edited_files then
+      local hooks = require('nvim-claude.hooks')
+      hooks.claude_edited_files = state.claude_edited_files
+    end
   end
   
   return state
