@@ -15,14 +15,12 @@ FILE_PATH=$(echo "$JSON_INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/n
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Call the proxy script with the file path
+# Call the proxy script with the file path via events adapter
 if [ -n "$FILE_PATH" ]; then
-    # Base64 encode the file path to avoid escaping issues
-    FILE_PATH_B64=$(echo -n "$FILE_PATH" | base64)
-    # Execute the pre-hook with base64 encoded file path
-    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').pre_tool_use_hook_b64('$FILE_PATH_B64')\")"
+    FILE_PATH_B64=$(printf '%s' "$FILE_PATH" | base64)
+    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').pre_tool_use_b64('$FILE_PATH_B64')\")"
 else
-    "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr 'luaeval("require(\"nvim-claude.hooks\").pre_tool_use_hook_b64()")'
+    "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr "luaeval('require(\"nvim-claude.events.adapter\").pre_tool_use_b64()')"
 fi
 
 # Return the exit code from nvim-rpc

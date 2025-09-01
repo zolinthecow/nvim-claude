@@ -52,7 +52,7 @@ PROMPT_B64=$(echo -n "$PROMPT" | base64)
 
 # Call the hook function with base64 encoded prompt
 log "Calling nvim-rpc with user_prompt_submit_hook_b64"
-TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.hooks').user_prompt_submit_hook_b64('$PROMPT_B64')\")" 2>&1 | tee -a "$LOG_FILE"
+TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').user_prompt_submit_b64('$PROMPT_B64')\")" 2>&1 | tee -a "$LOG_FILE"
 
 # Always exit successfully
 exit 0

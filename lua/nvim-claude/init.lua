@@ -134,7 +134,7 @@ function M.check_and_install_rpc()
     return
   end
   
-  local install_script = plugin_dir .. 'scripts/install-rpc.sh'
+  local install_script = plugin_dir .. 'rpc/install.sh'
   
   -- Check if install script exists
   if vim.fn.filereadable(install_script) == 0 then

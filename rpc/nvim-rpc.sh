@@ -21,3 +21,4 @@ fi
 
 # Pass through TARGET_FILE environment variable and all arguments
 exec "$RPC_VENV_PATH/bin/python" "$SCRIPT_DIR/nvim_rpc.py" "$@"
+

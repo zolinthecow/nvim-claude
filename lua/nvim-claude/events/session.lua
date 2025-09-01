@@ -72,8 +72,11 @@ function M.get_turn_files(git_root)
 end
 
 function M.clear_turn_files(git_root)
+  if not git_root or git_root == '' then
+    local ok, utils = pcall(require, 'nvim-claude.utils')
+    if ok and utils then git_root = utils.get_project_root() end
+  end
   return set_turn_list(git_root, {})
 end
 
 return M
-

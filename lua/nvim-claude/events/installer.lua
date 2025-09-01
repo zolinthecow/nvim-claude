@@ -76,11 +76,11 @@ function M.install()
 
   local settings_file = path_or_err
   local root = plugin_root()
-  local pre = root .. 'scripts/pre-hook-wrapper.sh'
-  local post = root .. 'scripts/post-hook-wrapper.sh'
-  local bash_pre = root .. 'scripts/bash-hook-wrapper.sh'
-  local bash_post = root .. 'scripts/bash-post-hook-wrapper.sh'
-  local stop = root .. 'scripts/stop-hook-validator.sh'
+  local pre = root .. 'claude-hooks/pre-hook-wrapper.sh'
+  local post = root .. 'claude-hooks/post-hook-wrapper.sh'
+  local bash_pre = root .. 'claude-hooks/bash-hook-wrapper.sh'
+  local bash_post = root .. 'claude-hooks/bash-post-hook-wrapper.sh'
+  local stop = root .. 'claude-hooks/stop-hook-validator.sh'
 
   add_command_to_section(settings.hooks.PreToolUse, pre, 'Edit|Write|MultiEdit')
   add_command_to_section(settings.hooks.PostToolUse, post, 'Edit|Write|MultiEdit')
@@ -159,4 +159,3 @@ function M.uninstall()
 end
 
 return M
-
