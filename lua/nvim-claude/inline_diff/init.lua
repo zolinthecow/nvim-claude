@@ -19,6 +19,16 @@ function M.set_baseline_ref(git_root, ref) return baseline.set_baseline_ref(git_
 function M.clear_baseline_ref(git_root) return baseline.clear_baseline_ref(git_root) end
 function M.create_baseline(message) return baseline.create_baseline(message) end
 
+-- Update a single file's content inside the current baseline commit
+-- Returns true on success
+function M.update_baseline_file(git_root, relative_path, new_content)
+  git_root = git_root or utils.get_project_root()
+  if not git_root then return false end
+  local ref = baseline.get_baseline_ref(git_root)
+  if not ref then return false end
+  return baseline.update_baseline_with_content(git_root, relative_path, new_content or '', ref)
+end
+
 -- --- Diff state helpers (read-only) ---
 function M.has_active_diff(bufnr) return active_diffs[bufnr] ~= nil end
 function M.get_diff_state(bufnr)
@@ -120,4 +130,3 @@ function M.reject_all_files()
 end
 
 return M
-
