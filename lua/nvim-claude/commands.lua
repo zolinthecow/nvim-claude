@@ -720,18 +720,17 @@ function M.claude_bg(task)
 
   -- If task provided via command line, use old flow for backwards compatibility
   if task and task ~= '' then
-    M.create_agent_from_task(task, nil)
+    require('nvim-claude.background_agent').create_agent(task, nil)
     return
   end
 
   -- Otherwise show the new UI
-  M.show_agent_creation_ui()
+  require('nvim-claude.background_agent').start_create_flow()
 end
 
 -- Show agent creation UI
 function M.show_agent_creation_ui()
-  -- Start with mission input stage
-  M.show_mission_input_ui()
+  return require('nvim-claude.background_agent').start_create_flow()
 end
 
 -- Stage 1: Mission input with multiline support
@@ -1526,62 +1525,14 @@ function M.create_agent_from_task(task, fork_from, setup_commands)
     return
   end
 
-  -- Handle fork options
-  local success, result
+  -- Handle fork options using background_agent.worktree
   local base_info = ''
-
-  if fork_from and fork_from.type == 'stash' then
-    -- Create a stash first (including untracked files)
-    vim.notify('Creating stash of current changes (including untracked files)...', vim.log.levels.INFO)
-    local stash_cmd = 'git stash push -u -m "Agent fork: ' .. task:sub(1, 50) .. '"'
-    local stash_result = claude.utils.exec(stash_cmd)
-
-    if stash_result and stash_result:match 'Saved working directory' then
-      -- Get the stash reference (it's the latest stash)
-      local stash_ref = claude.utils.exec 'git rev-parse stash@{0}'
-      if stash_ref then
-        stash_ref = stash_ref:gsub('\n', '')
-      end
-
-      -- Create worktree from current branch
-      local branch = claude.git.current_branch() or claude.git.default_branch()
-      success, result = claude.git.create_worktree(agent_dir, branch)
-
-      if success and stash_ref then
-        -- Apply the stash in the new worktree using the SHA reference
-        local apply_cmd = string.format('cd "%s" && git stash apply %s', agent_dir, stash_ref)
-        local apply_result = claude.utils.exec(apply_cmd)
-
-        if apply_result and not apply_result:match 'error:' then
-          base_info = string.format('Forked from: %s (with stashed changes including untracked files)', branch)
-          -- Pop the stash from the main repository since it was successfully applied
-          claude.utils.exec 'git stash pop'
-        else
-          vim.notify('Warning: Could not apply stashed changes to worktree', vim.log.levels.WARN)
-          base_info = string.format('Forked from: %s (stash apply failed)', branch)
-        end
-      end
-    else
-      vim.notify('No changes or untracked files to stash, using current branch', vim.log.levels.INFO)
-      fork_from = { type = 'branch', branch = claude.git.current_branch() or claude.git.default_branch() }
-    end
-  end
-
-  if not success and fork_from and fork_from.type == 'branch' then
-    -- Create worktree from specified branch
-    success, result = claude.git.create_worktree(agent_dir, fork_from.branch)
-    base_info = string.format('Forked from: %s branch', fork_from.branch)
-  elseif not success then
-    -- Default behavior - use current branch
-    local branch = claude.git.current_branch() or claude.git.default_branch()
-    success, result = claude.git.create_worktree(agent_dir, branch)
-    base_info = string.format('Forked from: %s branch', branch)
-  end
-
-  if not success then
-    vim.notify('Failed to create worktree: ' .. tostring(result), vim.log.levels.ERROR)
+  local ok, info = require('nvim-claude.background_agent.worktree').create(agent_dir, fork_from, task)
+  if not ok then
+    vim.notify('Failed to create worktree: ' .. tostring(info), vim.log.levels.ERROR)
     return
   end
+  base_info = info.base_info
 
   -- Create mission log with fork info
   local log_content =
@@ -1604,7 +1555,7 @@ function M.create_agent_from_task(task, fork_from, setup_commands)
 
   if window_id then
     -- Prepare fork info for registry
-    local fork_info = {
+    local fork_info = (info and info.fork_info) or {
       type = fork_from and fork_from.type or 'branch',
       branch = fork_from and fork_from.branch or (claude.git.current_branch() or claude.git.default_branch()),
       base_info = base_info,
@@ -1910,74 +1861,17 @@ end
 -- Kill an agent
 function M.kill_agent(agent_id)
   if not agent_id or agent_id == '' then
-    -- Show selection UI for agent killing
-    M.show_kill_agent_ui()
+    -- Show selection UI for agent killing via façade
+    require('nvim-claude.background_agent').show_kill_ui()
     return
   end
 
-  local agent = claude.registry.get(agent_id)
-  if not agent then
-    vim.notify('Agent not found: ' .. agent_id, vim.log.levels.ERROR)
-    return
-  end
-
-  -- Kill tmux window
-  if agent.window_id then
-    local cmd = 'tmux kill-window -t ' .. agent.window_id
-    claude.utils.exec(cmd)
-  end
-
-  -- Update registry
-  claude.registry.update_status(agent_id, 'killed')
-
-  vim.notify(string.format('Agent killed: %s (%s)', agent_id, agent.task), vim.log.levels.INFO)
+  require('nvim-claude.background_agent').kill_agent(agent_id)
 end
 
 -- Kill all active agents
 function M.kill_all_agents()
-  -- Validate agents first
-  claude.registry.validate_agents()
-
-  local agents = claude.registry.get_project_agents()
-  local active_agents = {}
-
-  for id, agent in pairs(agents) do
-    if agent.status == 'active' then
-      agent.id = id
-      table.insert(active_agents, agent)
-    end
-  end
-
-  if #active_agents == 0 then
-    vim.notify('No active agents to kill', vim.log.levels.INFO)
-    return
-  end
-
-  -- Show confirmation
-  local agent_list = {}
-  for _, agent in ipairs(active_agents) do
-    table.insert(agent_list, '• ' .. (agent.task:match '[^\n]*' or agent.task))
-  end
-
-  local message = string.format('Kill %d active agent%s?\n\n%s', #active_agents, #active_agents > 1 and 's' or '', table.concat(agent_list, '\n'))
-
-  local choice = vim.fn.confirm(message, '&Yes\n&No', 2)
-  if choice == 1 then
-    local killed_count = 0
-    for _, agent in ipairs(active_agents) do
-      -- Kill tmux window
-      if agent.window_id then
-        local cmd = 'tmux kill-window -t ' .. agent.window_id
-        claude.utils.exec(cmd)
-      end
-
-      -- Update registry
-      claude.registry.update_status(agent.id, 'killed')
-      killed_count = killed_count + 1
-    end
-
-    vim.notify(string.format('Killed %d agent%s', killed_count, killed_count > 1 and 's' or ''), vim.log.levels.INFO)
-  end
+  require('nvim-claude.background_agent').kill_all()
 end
 
 -- Show agent kill selection UI
@@ -2350,15 +2244,8 @@ function M.switch_agent(agent_id)
   -- Get agent from registry
   local agent = claude.registry.get(agent_id)
   if not agent then
-    -- If no ID provided, show selection UI
-    local agents = claude.registry.get_project_agents()
-    if #agents == 0 then
-      vim.notify('No agents found', vim.log.levels.INFO)
-      return
-    end
-
-    -- Always show selection UI unless ID was provided
-    M.show_agent_selection 'switch'
+    -- If no ID provided, show minimal list picker that switches on Enter
+    return require('nvim-claude.background_agent').show_agent_list()
     return
   end
 
@@ -2384,28 +2271,8 @@ function M.switch_agent(agent_id)
     return
   end
 
-  -- Save current session state
-  vim.cmd 'wall' -- Write all buffers
-
-  -- Change to agent's worktree
-  vim.cmd('cd ' .. agent.work_dir)
-
-  -- Background agents keep hooks disabled - no inline diffs
-  -- This keeps the workflow simple and predictable
-
-  -- Clear all buffers and open new nvim in the worktree
-  vim.cmd '%bdelete'
-  vim.cmd 'edit .'
-
-  -- Notify user
-  vim.notify(
-    string.format('Switched to agent worktree (no inline diffs)\nTask: %s\nWindow: %s\nUse :ClaudeDiffAgent to review changes', agent.task, agent.window_name),
-    vim.log.levels.INFO
-  )
-
-  -- Also switch tmux to the agent's window
-  local tmux_cmd = string.format('tmux select-window -t %s', agent.window_id)
-  os.execute(tmux_cmd)
+  -- Switch tmux to the agent's window via façade
+  require('nvim-claude.background_agent').switch_agent(agent_id)
 end
 
 -- Show agent selection UI for different actions
@@ -2568,96 +2435,15 @@ function M.diff_agent(agent_id)
         -- Auto-select the only agent
         agent = agents[1]
       else
-        -- Show selection UI for multiple agents
-        M.show_agent_selection 'diff'
+        -- Show minimal list; user can press 'd' to diff
+        require('nvim-claude.background_agent').show_agent_list()
         return
       end
     end
   end
 
-  -- Check if worktree still exists
-  if not claude.utils.file_exists(agent.work_dir) then
-    vim.notify('Agent work directory no longer exists', vim.log.levels.ERROR)
-    return
-  end
-
-  -- Get the base branch that the agent started from
-  local base_branch = agent.fork_info and agent.fork_info.branch or (claude.git.current_branch() or claude.git.default_branch())
-
-  -- Check if diffview is available
-  local has_diffview = pcall(require, 'diffview')
-  if not has_diffview then
-    -- Fallback to fugitive
-    vim.notify('Diffview not found, using fugitive', vim.log.levels.INFO)
-    -- Save current directory and change to agent directory
-    local original_cwd = vim.fn.getcwd()
-    vim.cmd('cd ' .. agent.work_dir)
-    vim.cmd('Git diff ' .. base_branch)
-  else
-    -- Save current directory to restore later
-    local original_cwd = vim.fn.getcwd()
-
-    -- Change to the agent's worktree directory
-    vim.cmd('cd ' .. agent.work_dir)
-
-    -- Set up autocmd to restore directory when diffview closes
-    local restore_dir_group = vim.api.nvim_create_augroup('ClaudeRestoreDir', { clear = true })
-    vim.api.nvim_create_autocmd('User', {
-      pattern = 'DiffviewViewClosed',
-      group = restore_dir_group,
-      once = true,
-      callback = function()
-        vim.cmd('cd ' .. original_cwd)
-      end,
-    })
-
-    -- Also restore on BufWinLeave as a fallback
-    vim.api.nvim_create_autocmd('BufWinLeave', {
-      pattern = 'diffview://*',
-      group = restore_dir_group,
-      once = true,
-      callback = function()
-        -- Small delay to ensure diffview cleanup is complete
-        vim.defer_fn(function()
-          if vim.fn.getcwd() ~= original_cwd then
-            vim.cmd('cd ' .. original_cwd)
-          end
-        end, 100)
-      end,
-    })
-
-    -- Now diffview will work in the context of the worktree
-    -- First check if there are uncommitted changes
-    local git_status = claude.git.status(agent.work_dir)
-    local has_uncommitted = #git_status > 0
-
-    if has_uncommitted then
-      -- Show working directory changes (including uncommitted files)
-      vim.cmd 'DiffviewOpen'
-      vim.notify(
-        string.format(
-          'Showing uncommitted changes in agent worktree\nTask: %s\nWorktree: %s\n\nNote: Agent has uncommitted changes. To see branch diff, commit the changes first.',
-          agent.task:match '[^\n]*' or agent.task,
-          agent.work_dir
-        ),
-        vim.log.levels.INFO
-      )
-    else
-      -- Use triple-dot notation to compare against the merge-base
-      local cmd = string.format(':DiffviewOpen %s...HEAD --imply-local', base_branch)
-      vim.cmd(cmd)
-      vim.notify(
-        string.format(
-          'Reviewing agent changes\nTask: %s\nComparing against: %s\nWorktree: %s\nOriginal dir: %s',
-          agent.task:match '[^\n]*' or agent.task,
-          base_branch,
-          agent.work_dir,
-          original_cwd
-        ),
-        vim.log.levels.INFO
-      )
-    end
-  end
+  -- Delegate to background_agent façade (main Neovim mode for now)
+  require('nvim-claude.background_agent').open_diff(agent)
 end
 
 -- Checkpoint commands
@@ -2798,5 +2584,10 @@ vim.api.nvim_create_user_command('ClaudeDebugLogs', function()
     end
   end
 end, { desc = 'Show debug log file locations for current project' })
+
+-- Override list_agents to use the new background_agent UI list
+M.list_agents = function()
+  require('nvim-claude.background_agent').show_agent_list()
+end
 
 return M
