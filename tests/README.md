@@ -1,4 +1,4 @@
-# nvim-claude Inline Diff Tests
+# nvim-claude Tests (current focus: hunks action plans)
 
 ## Prerequisites
 
@@ -17,39 +17,29 @@
 
 ## Running Tests
 
-### Option 1: Use the test runner script
+### Run the current test suite
 ```bash
 cd /path/to/nvim-claude
-./run_tests.sh
+./scripts/run_tests.sh
 ```
 
-### Option 2: Run directly with Neovim
+### Run directly with Neovim (headless)
 ```bash
-# Run all tests
-nvim --headless -c "PlenaryBustedFile tests/inline-diff_spec.lua"
-
-# Run specific test suite
-nvim --headless -c "PlenaryBustedFile tests/inline-diff_spec.lua" -c "qa!" | grep -E "(✓|✗|describe)"
-```
-
-### Option 3: Run interactively (for debugging)
-```vim
-:PlenaryBustedFile tests/inline-diff_spec.lua
+nvim --headless -u tests/minimal_init.lua -c "PlenaryBustedFile tests/hunks_spec.lua" -c "qa!"
 ```
 
 ## Test Structure
 
-- `tests/inline-diff_spec.lua` - Main test suite with ~10 core tests
-- `tests/helpers.lua` - Test utilities for git operations and mocking
-- `tests/fixtures/` - Sample files used in tests
+- `tests/hunks_spec.lua` - Action plan tests for hunks.lua
 
-## Tests Cover
+## Tests Cover (so far)
 
-1. **Basic Hunk Operations** - Accept/reject individual hunks
-2. **Batch Operations** - Accept/reject all hunks in file or project
-3. **Edge Cases** - Deletion-only hunks, concurrent editing, git failures, undo/redo
-4. **State & Persistence** - Session restoration, invalid stash recovery
-5. **Navigation** - Hunk and file navigation
+1. **Hunk Action Plans**
+   - accept/reject individual hunks (existing/new files)
+   - accept/reject all in file
+   - batch accept/reject across open buffers
+
+We’ll add more focused suites (executor, renderer, façade) as refactor completes.
 
 ## Troubleshooting
 
@@ -59,6 +49,6 @@ nvim --headless -c "PlenaryBustedFile tests/inline-diff_spec.lua" -c "qa!" | gre
 
 ## Adding New Tests
 
-1. Add test case to appropriate `describe()` block in `inline-diff_spec.lua`
-2. Use helpers from `tests/helpers.lua` for common operations
-3. Follow existing patterns for test structure and assertions
+1. Add test case to `tests/hunks_spec.lua` or create a new spec file.
+2. Keep tests focused on a single module/contract.
+3. Use temporary git repos and headless buffers as shown.

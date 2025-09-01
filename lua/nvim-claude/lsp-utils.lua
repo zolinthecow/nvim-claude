@@ -259,10 +259,9 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
     vim.defer_fn(function()
       local hooks = require('nvim-claude.hooks')
       local utils = require('nvim-claude.utils')
-      local persistence = require('nvim-claude.inline-diff-persistence')
       local git_root = utils.get_project_root()
       
-      if git_root and persistence.get_baseline_ref() then
+      if git_root and inline_diff.get_baseline_ref(git_root) then
         for bufnr, diff_info in pairs(buffers_with_diffs) do
           if vim.api.nvim_buf_is_valid(bufnr) then
             local file_path = diff_info.file_path
@@ -270,7 +269,7 @@ function M.await_lsp_diagnostics(files_to_check, timeout_ms)
             
             -- Re-show the inline diff if file is still tracked
             if hooks.claude_edited_files[relative_path] then
-              hooks.show_inline_diff_for_file(bufnr, relative_path, git_root, persistence.get_baseline_ref(), true)
+              hooks.show_inline_diff_for_file(bufnr, relative_path, git_root, inline_diff.get_baseline_ref(git_root), true)
               
               -- Restore hunk position
               if inline_diff.active_diffs[bufnr] then
@@ -323,7 +322,6 @@ function M.refresh_buffer_diagnostics(bufnr)
     vim.defer_fn(function()
       local hooks = require('nvim-claude.hooks')
       local utils = require('nvim-claude.utils')
-      local persistence = require('nvim-claude.inline-diff-persistence')
       
       -- Get git root and relative path
       local git_root = utils.get_project_root()
@@ -331,8 +329,8 @@ function M.refresh_buffer_diagnostics(bufnr)
         local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
         
         -- Re-show the inline diff
-        if hooks.claude_edited_files[relative_path] and persistence.get_baseline_ref() then
-          hooks.show_inline_diff_for_file(bufnr, relative_path, git_root, persistence.get_baseline_ref(), true)
+        if hooks.claude_edited_files[relative_path] and inline_diff.get_baseline_ref(git_root) then
+          hooks.show_inline_diff_for_file(bufnr, relative_path, git_root, inline_diff.get_baseline_ref(git_root), true)
           
           -- Restore cursor and hunk position
           if diff_state and inline_diff.active_diffs[bufnr] then

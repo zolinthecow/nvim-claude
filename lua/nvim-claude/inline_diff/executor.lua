@@ -1,0 +1,92 @@
+-- Executor for inline diff actions and redraws (renamed from ui.lua)
+
+local M = {}
+
+local baseline = require 'nvim-claude.inline_diff.baseline'
+local diffmod = require 'nvim-claude.inline_diff.diff'
+local render = require 'nvim-claude.inline_diff.render'
+local utils = require 'nvim-claude.utils'
+local project_state = require 'nvim-claude.project-state'
+
+local function set_buffer_content(bufnr, content)
+  content = content or ''
+  local lines = {}
+  if content ~= '' then
+    lines = vim.split(content, '\n', { plain = true })
+    if lines[#lines] == '' then table.remove(lines) end
+  end
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+end
+
+function M.run_action(action)
+  if not action or not action.type then return end
+  if action.type == 'baseline_update_file' then
+    local git_root = action.git_root or utils.get_project_root()
+    local ref = baseline.get_baseline_ref(git_root)
+    if not ref then return end
+    baseline.update_baseline_with_content(git_root, action.relative_path, action.new_content or '', ref)
+  elseif action.type == 'buffer_set_content' then
+    set_buffer_content(action.bufnr, action.content)
+  elseif action.type == 'buffer_write' then
+    if action.bufnr and vim.api.nvim_buf_is_valid(action.bufnr) then
+      vim.api.nvim_buf_call(action.bufnr, function() vim.cmd 'write!' end)
+    end
+  elseif action.type == 'buffer_reload' then
+    if action.bufnr and vim.api.nvim_buf_is_valid(action.bufnr) then
+      vim.api.nvim_buf_call(action.bufnr, function() vim.cmd 'edit!' end)
+    end
+  elseif action.type == 'file_delete' then
+    if action.path and action.path ~= '' then pcall(os.remove, action.path) end
+  elseif action.type == 'buffer_close' then
+    if action.bufnr and vim.api.nvim_buf_is_valid(action.bufnr) then
+      vim.api.nvim_buf_delete(action.bufnr, { force = true })
+    end
+  elseif action.type == 'project_untrack_file' then
+    local git_root = action.git_root or utils.get_project_root()
+    if git_root and action.relative_path then
+      project_state.remove_claude_edited_file(git_root, action.relative_path)
+    end
+  elseif action.type == 'worktree_apply_reverse_patch' then
+    local git_root = action.git_root or utils.get_project_root()
+    local patch_file = vim.fn.tempname() .. '.patch'
+    utils.write_file(patch_file, action.patch or '')
+    utils.exec(string.format('cd "%s" && git apply --reverse --verbose "%s" 2>&1', git_root, patch_file))
+    vim.fn.delete(patch_file)
+  end
+end
+
+function M.run_actions(actions)
+  for _, a in ipairs(actions or {}) do
+    M.run_action(a)
+  end
+end
+
+function M.recompute_and_render(bufnr, active_diffs)
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then return end
+  local git_root = utils.get_project_root()
+  local ref = git_root and baseline.get_baseline_ref(git_root) or nil
+  if not ref then return end
+  local file_path = vim.api.nvim_buf_get_name(bufnr)
+  local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  local base_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, ref, relative_path)
+  local base_content = utils.exec(base_cmd) or ''
+  local current_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
+  local d = diffmod.compute_diff(base_content, current_content)
+  active_diffs = active_diffs or {}
+  if not d or not d.hunks or #d.hunks == 0 then
+    active_diffs[bufnr] = nil
+  else
+    active_diffs[bufnr] = { hunks = d.hunks, current_hunk = 1 }
+    render.apply_diff_visualization(bufnr, active_diffs[bufnr])
+  end
+  return d
+end
+
+function M.apply_plan_and_redraw(bufnr, plan, active_diffs)
+  if not plan or plan.status == 'error' then return nil end
+  M.run_actions(plan.actions)
+  return M.recompute_and_render(bufnr, active_diffs)
+end
+
+return M
+

@@ -67,19 +67,39 @@ if [ -f "$STATE_FILE" ]; then
         exit 0
     fi
     
-    # Convert the list of files to arguments for check-diagnostics.py
-    # Each file needs to be an absolute path
-    FILE_ARGS=""
+    # Convert the list of files to an array for batching
+    FILE_LIST=()
     while IFS= read -r file; do
         if [ -n "$file" ]; then
-            FILE_ARGS="$FILE_ARGS \"$file\""
+            FILE_LIST+=("$file")
         fi
     done <<< "$SESSION_FILES"
     
-    # Call check-diagnostics.py with the session files
-    if [ -n "$FILE_ARGS" ]; then
-        echo "DEBUG: Running command: $MCP_PYTHON $SCRIPT_DIR/check-diagnostics.py $FILE_ARGS" >> "$DEBUG_LOG"
-        DIAGNOSTIC_JSON=$(eval "$MCP_PYTHON" "$SCRIPT_DIR/check-diagnostics.py" $FILE_ARGS 2>/dev/null)
+    # Process files in batches of 10 to avoid overwhelming MCP server
+    TOTAL_ERRORS=0
+    TOTAL_WARNINGS=0
+    BATCH_SIZE=10
+    
+    if [ ${#FILE_LIST[@]} -gt 0 ]; then
+        for ((i=0; i<${#FILE_LIST[@]}; i+=BATCH_SIZE)); do
+            # Create batch arguments
+            BATCH_ARGS=""
+            for ((j=i; j<i+BATCH_SIZE && j<${#FILE_LIST[@]}; j++)); do
+                BATCH_ARGS="$BATCH_ARGS \"${FILE_LIST[j]}\""
+            done
+            
+            echo "DEBUG: Batch $((i/BATCH_SIZE + 1)): $MCP_PYTHON $SCRIPT_DIR/check-diagnostics.py $BATCH_ARGS" >> "$DEBUG_LOG"
+            BATCH_JSON=$(eval "$MCP_PYTHON" "$SCRIPT_DIR/check-diagnostics.py" $BATCH_ARGS 2>/dev/null)
+            echo "DEBUG: Batch result: $BATCH_JSON" >> "$DEBUG_LOG"
+            
+            # Parse batch results and add to totals
+            BATCH_ERRORS=$(echo "$BATCH_JSON" | jq -r '.errors // 0')
+            BATCH_WARNINGS=$(echo "$BATCH_JSON" | jq -r '.warnings // 0')
+            TOTAL_ERRORS=$((TOTAL_ERRORS + BATCH_ERRORS))
+            TOTAL_WARNINGS=$((TOTAL_WARNINGS + BATCH_WARNINGS))
+        done
+        
+        DIAGNOSTIC_JSON="{\"errors\":$TOTAL_ERRORS,\"warnings\":$TOTAL_WARNINGS}"
     else
         DIAGNOSTIC_JSON='{"errors":0,"warnings":0}'
     fi
@@ -97,11 +117,25 @@ echo "DEBUG: check-diagnostics.py returned: $DIAGNOSTIC_JSON" >> "$DEBUG_LOG"
 ERROR_COUNT=$(echo "$DIAGNOSTIC_JSON" | jq -r '.errors // 0')
 WARNING_COUNT=$(echo "$DIAGNOSTIC_JSON" | jq -r '.warnings // 0')
 
+# Clear session tracking regardless of outcome to prevent accumulation
+# Find a file in the project to use as TARGET_FILE for nvim-rpc
+TARGET_FILE=$(find "$CWD" -type f -name "*.md" -o -name "*.txt" -o -name "*.lua" -o -name "*.js" 2>/dev/null | head -1)
+if [ -z "$TARGET_FILE" ]; then
+    TARGET_FILE=$(find "$CWD" -type f 2>/dev/null | head -1)
+fi
+if [ -z "$TARGET_FILE" ]; then
+    TARGET_FILE="$CWD"
+fi
+
 # Check if we should block - only block on errors, not warnings
 if [ "$ERROR_COUNT" -gt 0 ]; then
     REASON="Found $ERROR_COUNT errors in edited files. "
     REASON="${REASON}Please fix these errors before completing. "
     REASON="${REASON}Use 'mcp__nvim-lsp__get_session_diagnostics' to see details."
+    
+    echo "# INFO: Blocking due to $ERROR_COUNT errors, clearing session tracking" >> "$DEBUG_LOG"
+    # Clear session tracking after blocking (so errors don't accumulate)
+    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.hooks").reset_session_tracking()' 2>/dev/null || true
     
     # Return block decision
     cat <<EOF
@@ -116,18 +150,8 @@ else
         echo "# INFO: Found $WARNING_COUNT warnings but allowing completion" >> "$DEBUG_LOG"
     fi
     
-    # Clear session files on successful validation
-    # We need to call nvim-rpc to clear the session tracking
-    # Find a file in the project to use as TARGET_FILE
-    TARGET_FILE=$(find "$CWD" -type f -name "*.md" -o -name "*.txt" -o -name "*.lua" -o -name "*.js" 2>/dev/null | head -1)
-    if [ -z "$TARGET_FILE" ]; then
-        TARGET_FILE=$(find "$CWD" -type f 2>/dev/null | head -1)
-    fi
-    if [ -z "$TARGET_FILE" ]; then
-        TARGET_FILE="$CWD"
-    fi
-    
-    # Clear session tracking via nvim-rpc
+    echo "# INFO: No errors found, clearing session tracking and allowing completion" >> "$DEBUG_LOG"
+    # Clear session tracking on successful validation
     TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.hooks").reset_session_tracking()' 2>/dev/null || true
     
     echo '{"continue": true}'
