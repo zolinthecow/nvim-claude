@@ -355,7 +355,6 @@ function M.setup(user_config)
   end, 100)
   
   -- Force reload modules to ensure latest code
-  package.loaded['nvim-claude.hooks'] = nil
   package.loaded['nvim-claude.diff-review'] = nil
   
   -- Load submodules
@@ -364,7 +363,7 @@ function M.setup(user_config)
   M.utils = require('nvim-claude.utils')
   M.commands = require('nvim-claude.commands')
   M.registry = require('nvim-claude.registry')
-  M.hooks = require('nvim-claude.hooks')
+  M.events = require('nvim-claude.events')
   M.diff_review = require('nvim-claude.diff-review')
   M.settings_updater = require('nvim-claude.settings-updater')
   
@@ -372,7 +371,7 @@ function M.setup(user_config)
   M.tmux.setup(M.config.tmux)
   M.git.setup(M.config.agents)
   M.registry.setup(M.config.agents)
-  M.hooks.setup()
+  M.events.setup()
   
   -- Migrate old local state if needed (deferred to not slow startup)
   vim.defer_fn(function()
@@ -397,7 +396,6 @@ function M.setup(user_config)
   
   -- Set up commands
   M.commands.setup(M)
-  M.hooks.setup_commands()
   
   -- Note: Hook installation is handled by settings-updater.setup()
   -- which runs on VimEnter and uses the proxy scripts

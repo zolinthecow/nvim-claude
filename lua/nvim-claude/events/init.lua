@@ -3,6 +3,7 @@
 local M = {}
 
 local core = require 'nvim-claude.events.core'
+local session = require 'nvim-claude.events.session'
 local installer = require 'nvim-claude.events.installer'
 local autocmds = require 'nvim-claude.events.autocmds'
 local commands = require 'nvim-claude.events.commands'
@@ -22,6 +23,11 @@ function M.uninstall_hooks() return installer.uninstall() end
 function M.setup()
   commands.setup()
   autocmds.setup()
+end
+
+-- Minimal public session helpers
+function M.get_turn_files(git_root)
+  return session.get_turn_files(git_root)
 end
 
 return M

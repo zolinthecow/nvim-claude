@@ -107,7 +107,11 @@ def ensure_headless_nvim():
                 config_dir = os.path.expanduser("~/.config/nvim")
                 user_init = os.path.join(config_dir, "init.lua")
                 
-                nvim_cmd = ["nvim", "--headless", "--listen", _headless_socket, "-u", user_init]
+                nvim_cmd = [
+                    "nvim", "--headless", "--listen", _headless_socket,
+                    "-u", user_init,
+                    "-c", "let g:headless_mode=1"
+                ]
                 
                 # Start the headless Neovim process in the project directory
                 try:
@@ -381,68 +385,8 @@ def get_diagnostic_summary() -> str:
 
 @mcp.tool()
 def get_session_diagnostics() -> str:
-    """Get diagnostics only for files edited in the current Claude session.
-    
-    Note: This reads the session files from the user's main Neovim instance
-    but processes them in the headless instance.
-    """
-    # First, get the list of session files from the user's Neovim
-    cwd = os.getcwd()
-    project_hash = hashlib.sha256(cwd.encode()).hexdigest()[:8]
-    
-    # Try to get session files from the main instance's server file
-    session_files = []
-    
-    # Try connecting to main instance briefly just to get session files
-    runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
-    server_file = os.path.join(runtime_dir, f"nvim-claude-{project_hash}-server")
-    if not os.path.exists(server_file):
-        server_file = f"/tmp/nvim-claude-{project_hash}-server"
-    
-    if os.path.exists(server_file):
-        with open(server_file, 'r') as f:
-            main_socket = f.read().strip()
-        
-        # Use subprocess to get session files
-        script = f"""
-import json
-import pynvim
-
-try:
-    nvim = pynvim.attach('socket', path='{main_socket}')
-    files = nvim.exec_lua('''
-        local hooks = require('nvim-claude.hooks')
-        local files = {{}}
-        for file_path, _ in pairs(hooks.session_edited_files or {{}}) do
-            if vim.fn.filereadable(file_path) == 1 then
-                table.insert(files, file_path)
-            end
-        end
-        return files
-    ''')
-    nvim.close()
-    print(json.dumps(files))
-except:
-    print('[]')
-"""
-        
-        try:
-            result = subprocess.run(
-                [sys.executable, '-c', script],
-                capture_output=True,
-                text=True,
-                timeout=2.0
-            )
-            if result.returncode == 0:
-                session_files = json.loads(result.stdout.strip() or '[]')
-        except:
-            pass
-    
-    # Now check diagnostics for session files in headless instance
-    if session_files:
-        return call_headless_lua("get_diagnostics", session_files)
-    else:
-        return json.dumps([])
+    """Get diagnostics only for files edited this turn (headless-only)."""
+    return call_headless_lua("get_session_diagnostics")
 
 
 # ---------------------------------------------------------------------------

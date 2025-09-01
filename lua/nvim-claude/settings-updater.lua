@@ -48,9 +48,9 @@ function M.update_claude_settings()
     os.remove(old_server_file)
   end
 
-  -- Use the install_hooks function from hooks module to update settings
-  local hooks = require 'nvim-claude.hooks'
-  hooks.install_hooks()
+  -- Install/update Claude Code hook settings via events installer
+  local events = require 'nvim-claude.events'
+  events.install_hooks()
 end
 
 -- Setup autocmds to update settings
@@ -67,4 +67,3 @@ function M.setup()
 end
 
 return M
-
