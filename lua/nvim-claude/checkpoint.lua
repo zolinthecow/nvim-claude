@@ -4,6 +4,7 @@
 local M = {}
 local utils = require('nvim-claude.utils')
 local logger = require('nvim-claude.logger')
+local project_state = require('nvim-claude.project-state')
 
 -- Generate checkpoint ID from timestamp
 local function generate_checkpoint_id()
@@ -157,34 +158,36 @@ end
 
 -- Load checkpoint state
 function M.load_state()
-  local state_file = utils.get_project_root() .. '/.nvim-claude/checkpoint-state.json'
-  local content = utils.read_file(state_file)
-  if not content then
-    return nil
-  end
-  
-  local ok, state = pcall(vim.json.decode, content)
+  local git_root = utils.get_project_root()
+  if not git_root then return nil end
+  -- Prefer global project-state storage
+  local state = project_state.get(git_root, 'checkpoint_state')
+  if state and next(state) ~= nil then return state end
+  -- Legacy fallback: migrate from local file if present
+  local legacy_path = git_root .. '/.nvim-claude/checkpoint-state.json'
+  local content = utils.read_file(legacy_path)
+  if not content or content == '' then return nil end
+  local ok, legacy = pcall(vim.json.decode, content)
   if not ok then
-    logger.error('checkpoint.load_state', 'Failed to parse state file', { error = state })
+    logger.error('checkpoint.load_state', 'Failed to parse legacy state file', { error = legacy })
     return nil
   end
-  
-  return state
+  -- Save migrated state and optionally remove legacy file
+  project_state.set(git_root, 'checkpoint_state', legacy)
+  -- Best-effort cleanup
+  utils.exec(string.format('rm -f %q', legacy_path))
+  return legacy
 end
 
 -- Save checkpoint state
 function M.save_state(state)
-  local state_file = utils.get_project_root() .. '/.nvim-claude/checkpoint-state.json'
-  local dir = vim.fn.fnamemodify(state_file, ':h')
-  utils.ensure_dir(dir)
-  
-  local content = vim.json.encode(state)
-  local ok = utils.write_file(state_file, content)
+  local git_root = utils.get_project_root()
+  if not git_root then return false end
+  local ok = project_state.set(git_root, 'checkpoint_state', state or {})
   if not ok then
-    logger.error('checkpoint.save_state', 'Failed to save state')
+    logger.error('checkpoint.save_state', 'Failed to save state to project-state')
     return false
   end
-  
   return true
 end
 
@@ -344,25 +347,24 @@ function M.accept_checkpoint()
   
   -- Reset inline diff state since we're accepting a checkpoint
   -- There should be no diffs after accepting a checkpoint
-  local hooks = require('nvim-claude.hooks')
+  local inline_diff = require('nvim-claude.inline_diff')
+  local events = require('nvim-claude.events')
+  local git_root = utils.get_project_root()
   
-  -- Clear baseline reference
-  local inline_diff = require('nvim-claude.inline-diff')
-  inline_diff.clear_baseline_ref()
-  
-  -- Clear tracked files
-  hooks.claude_edited_files = {}
-  
-  -- Clear persistence state
-  inline_diff.clear_state()
-  
-  -- Clear any active diffs in buffers
-  for bufnr, _ in pairs(inline_diff.active_diffs) do
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      inline_diff.clear_inline_diff(bufnr)
+  if git_root then
+    inline_diff.clear_baseline_ref(git_root)
+    events.clear_edited_files(git_root)
+    inline_diff.clear_persistence(git_root)
+  else
+    inline_diff.clear_baseline_ref()
+    inline_diff.clear_persistence()
+  end
+  -- Close any active inline diffs in buffers (via façade)
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(bufnr) and inline_diff.has_active_diff and inline_diff.has_active_diff(bufnr) then
+      inline_diff.close_inline_diff(bufnr)
     end
   end
-  inline_diff.active_diffs = {}
   
   logger.info('checkpoint.accept_checkpoint', 'Reset inline diff state after accepting checkpoint')
 

@@ -30,4 +30,8 @@ function M.get_turn_files(git_root)
   return session.get_turn_files(git_root)
 end
 
+function M.clear_edited_files(git_root)
+  return session.clear_edited_files(git_root)
+end
+
 return M

@@ -9,6 +9,7 @@ local render = require 'nvim-claude.inline_diff.render'
 local hunks = require 'nvim-claude.inline_diff.hunks'
 local exec = require 'nvim-claude.inline_diff.executor'
 local nav = require 'nvim-claude.inline_diff.navigation'
+local persist = require 'nvim-claude.inline_diff.persistence'
 
 -- Private state: active diffs per buffer
 local active_diffs = {}
@@ -127,6 +128,11 @@ function M.reject_all_files()
   local plan = hunks.reject_all_hunks_in_all_files(active_diffs)
   exec.run_actions(plan.actions)
   for bufnr, _ in pairs(active_diffs) do M.refresh_inline_diff(bufnr) end
+end
+
+-- Clear persistence state for inline diffs (project-state)
+function M.clear_persistence(git_root)
+  return persist.clear_state(git_root)
 end
 
 return M
