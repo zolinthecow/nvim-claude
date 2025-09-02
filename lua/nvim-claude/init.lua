@@ -358,18 +358,18 @@ function M.setup(user_config)
   package.loaded['nvim-claude.diff-review'] = nil
   
   -- Load submodules
+  M.utils = require('nvim-claude.utils')
   M.tmux = M.utils.tmux
   M.git = M.utils.git
-  M.utils = require('nvim-claude.utils')
   M.commands = require('nvim-claude.commands')
-  M.registry = require('nvim-claude.registry')
   M.events = require('nvim-claude.events')
   M.settings_updater = require('nvim-claude.settings-updater')
+  M.background_agent = require('nvim-claude.background_agent')
   
   -- Initialize submodules with config
   M.tmux.setup(M.config.tmux)
   M.git.setup(M.config.agents)
-  M.registry.setup(M.config.agents)
+  M.background_agent.registry_setup(M.config.agents)
   M.events.setup()
   
   -- Migrate old local state if needed (deferred to not slow startup)
