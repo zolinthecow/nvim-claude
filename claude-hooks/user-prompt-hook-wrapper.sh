@@ -30,7 +30,7 @@ if [ -z "$CWD" ]; then
 fi
 
 # Find any file in the current project to use as TARGET_FILE
-# This helps nvr-proxy find the correct Neovim instance for this project
+# This helps nvim-rpc find the correct Neovim instance for this project
 if [ -d "$CWD" ]; then
     # Try to find a file in the project (prefer existing files)
     TARGET_FILE=$(find "$CWD" -type f -name "*.md" -o -name "*.txt" -o -name "*.lua" -o -name "*.js" 2>/dev/null | head -1)
