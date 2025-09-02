@@ -2,59 +2,37 @@
 local M = {}
 
 local utils = require('nvim-claude.utils')
+local function project_log_dir()
+  local project_root = utils.get_project_root()
+  if not project_root then return nil end
+  local project_state = require('nvim-claude.project-state')
+  local project_key = project_state.get_project_key(project_root)
+  local key_hash = vim.fn.sha256(project_key)
+  local short_hash = key_hash:sub(1, 8)
+  local dir = vim.fn.stdpath('data') .. '/nvim-claude/logs/' .. short_hash
+  utils.ensure_dir(dir)
+  return dir
+end
 
 -- Get log file path (in global storage)
 function M.get_log_file()
-  local project_root = utils.get_project_root()
-  if project_root then
-    -- Use project-specific folder structure
-    local project_state = require('nvim-claude.project-state')
-    local project_key = project_state.get_project_key(project_root)
-    local key_hash = vim.fn.sha256(project_key)
-    local short_hash = key_hash:sub(1, 8)
-    local log_dir = vim.fn.stdpath('data') .. '/nvim-claude/logs/' .. short_hash
-    utils.ensure_dir(log_dir)
-    return log_dir .. '/debug.log'
-  else
-    -- Fallback to home directory
-    return vim.fn.expand('~/.local/share/nvim/nvim-claude-debug.log')
-  end
+  local dir = project_log_dir()
+  if dir then return dir .. '/debug.log' end
+  return vim.fn.expand('~/.local/share/nvim/nvim-claude-debug.log')
 end
 
 -- Get stop-hook debug log file path for bash scripts
 function M.get_stop_hook_log_file()
-  local project_root = utils.get_project_root()
-  if project_root then
-    -- Use project-specific folder structure
-    local project_state = require('nvim-claude.project-state')
-    local project_key = project_state.get_project_key(project_root)
-    local key_hash = vim.fn.sha256(project_key)
-    local short_hash = key_hash:sub(1, 8)
-    local log_dir = vim.fn.stdpath('data') .. '/nvim-claude/logs/' .. short_hash
-    utils.ensure_dir(log_dir)
-    return log_dir .. '/stop-hook-debug.log'
-  else
-    -- Fallback to tmp directory
-    return '/tmp/stop-hook-debug.log'
-  end
+  local dir = project_log_dir()
+  if dir then return dir .. '/stop-hook-debug.log' end
+  return '/tmp/stop-hook-debug.log'
 end
 
 -- Get MCP debug log file path
 function M.get_mcp_debug_log_file()
-  local project_root = utils.get_project_root()
-  if project_root then
-    -- Use project-specific folder structure
-    local project_state = require('nvim-claude.project-state')
-    local project_key = project_state.get_project_key(project_root)
-    local key_hash = vim.fn.sha256(project_key)
-    local short_hash = key_hash:sub(1, 8)
-    local log_dir = vim.fn.stdpath('data') .. '/nvim-claude/logs/' .. short_hash
-    utils.ensure_dir(log_dir)
-    return log_dir .. '/mcp-debug.log'
-  else
-    -- Fallback to tmp directory
-    return '/tmp/nvim-claude-mcp-debug.log'
-  end
+  local dir = project_log_dir()
+  if dir then return dir .. '/mcp-debug.log' end
+  return '/tmp/nvim-claude-mcp-debug.log'
 end
 
 -- Write log entry
@@ -122,11 +100,12 @@ end
 -- Rotate log if too large (> 10MB)
 function M.rotate_if_needed()
   local max_size = 10 * 1024 * 1024 -- 10MB
-  if M.get_size() > max_size then
+  local current_size = M.get_size()
+  if current_size > max_size then
     local log_file = M.get_log_file()
     local backup_file = log_file .. '.old'
     os.rename(log_file, backup_file)
-    M.info('logger', 'Log rotated (was ' .. M.get_size() .. ' bytes)')
+    M.info('logger', 'Log rotated (was ' .. current_size .. ' bytes)')
   end
 end
 

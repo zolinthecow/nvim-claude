@@ -10,6 +10,7 @@ local hunks = require 'nvim-claude.inline_diff.hunks'
 local exec = require 'nvim-claude.inline_diff.executor'
 local nav = require 'nvim-claude.inline_diff.navigation'
 local persist = require 'nvim-claude.inline_diff.persistence'
+local project_state = require 'nvim-claude.project-state'
 
 -- Private state: active diffs per buffer
 local active_diffs = {}
@@ -133,6 +134,60 @@ end
 -- Clear persistence state for inline diffs (project-state)
 function M.clear_persistence(git_root)
   return persist.clear_state(git_root)
+end
+
+-- --- File navigation helpers (across project files with Claude edits) ---
+local function project_files_with_diffs()
+  local root = utils.get_project_root()
+  if not root then return root, {} end
+  local map = project_state.get_claude_edited_files(root) or {}
+  local list = vim.tbl_keys(map)
+  table.sort(list)
+  return root, list
+end
+
+local function current_relative_path(project_root)
+  local abs = vim.api.nvim_buf_get_name(0)
+  if abs == '' then return nil end
+  return abs:gsub('^' .. vim.pesc(project_root) .. '/', '')
+end
+
+function M.list_diff_files()
+  local root, files = project_files_with_diffs()
+  if not root or #files == 0 then
+    vim.notify('No Claude-edited files to list', vim.log.levels.INFO)
+    return
+  end
+  vim.ui.select(files, { prompt = 'Claude-edited files' }, function(choice)
+    if not choice then return end
+    vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. choice))
+  end)
+end
+
+function M.next_diff_file()
+  local root, files = project_files_with_diffs()
+  if not root or #files == 0 then
+    vim.notify('No Claude-edited files', vim.log.levels.INFO)
+    return
+  end
+  local cur = current_relative_path(root)
+  local idx = 0
+  for i, f in ipairs(files) do if f == cur then idx = i break end end
+  local next_idx = (idx % #files) + 1
+  vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. files[next_idx]))
+end
+
+function M.prev_diff_file()
+  local root, files = project_files_with_diffs()
+  if not root or #files == 0 then
+    vim.notify('No Claude-edited files', vim.log.levels.INFO)
+    return
+  end
+  local cur = current_relative_path(root)
+  local idx = 1
+  for i, f in ipairs(files) do if f == cur then idx = i break end end
+  local prev_idx = (idx - 2) % #files + 1
+  vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. files[prev_idx]))
 end
 
 return M
