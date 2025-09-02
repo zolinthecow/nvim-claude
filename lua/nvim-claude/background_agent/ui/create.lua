@@ -4,7 +4,7 @@ local M = {}
 
 local ba = require('nvim-claude.background_agent')
 local utils = require('nvim-claude.utils')
-local git = require('nvim-claude.git')
+local git = utils.git
 
 -- Internal: branch selection picker
 local function show_branch_selection(callback)

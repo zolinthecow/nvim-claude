@@ -3,7 +3,7 @@
 local M = {}
 
 local utils = require('nvim-claude.utils')
-local git = require('nvim-claude.git')
+local git = utils.git
 local registry = require('nvim-claude.background_agent.registry')
 
 local function base_branch_for(agent)
@@ -91,4 +91,3 @@ function M.open_by_id(agent_id)
 end
 
 return M
-

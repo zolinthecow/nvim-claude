@@ -4,7 +4,7 @@ local M = {}
 
 local nvc = require('nvim-claude')
 local utils = require('nvim-claude.utils')
-local git = require('nvim-claude.git')
+local git = utils.git
 local registry = require('nvim-claude.background_agent.registry')
 
 -- Rebuild agent registry by scanning work_dir for worktrees
@@ -132,4 +132,3 @@ function M.cleanup_older_than(days)
 end
 
 return M
-

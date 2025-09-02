@@ -3,7 +3,7 @@
 local M = {}
 
 local utils = require('nvim-claude.utils')
-local git = require('nvim-claude.git')
+local git = utils.git
 
 local function default_branch()
   return git.current_branch() or git.default_branch()
@@ -74,4 +74,3 @@ function M.remove(path)
 end
 
 return M
-

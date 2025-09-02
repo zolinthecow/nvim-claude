@@ -359,12 +359,11 @@ function M.setup(user_config)
   
   -- Load submodules
   M.tmux = require('nvim-claude.tmux')
-  M.git = require('nvim-claude.git')
+  M.git = M.utils.git
   M.utils = require('nvim-claude.utils')
   M.commands = require('nvim-claude.commands')
   M.registry = require('nvim-claude.registry')
   M.events = require('nvim-claude.events')
-  M.diff_review = require('nvim-claude.diff-review')
   M.settings_updater = require('nvim-claude.settings-updater')
   
   -- Initialize submodules with config
@@ -383,7 +382,6 @@ function M.setup(user_config)
       end
     end
   end, 1000)
-  M.diff_review.setup()
   M.settings_updater.setup()
   
   -- Check and install RPC client (needed for hooks to work)

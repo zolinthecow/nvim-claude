@@ -4,7 +4,7 @@ local M = {}
 
 local nvc = require('nvim-claude')
 local utils = require('nvim-claude.utils')
-local git = require('nvim-claude.git')
+local git = utils.git
 local tmux = require('nvim-claude.tmux')
 local registry = require('nvim-claude.background_agent.registry')
 local worktree = require('nvim-claude.background_agent.worktree')
@@ -206,4 +206,3 @@ The file `mission.log` contains additional details about this agent's creation a
 end
 
 return M
-
