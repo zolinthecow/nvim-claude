@@ -34,4 +34,24 @@ function M.clear_edited_files(git_root)
   return session.clear_edited_files(git_root)
 end
 
+function M.clear_turn_files(git_root)
+  return session.clear_turn_files(git_root)
+end
+
+function M.list_edited_files(git_root)
+  return session.list_edited_files(git_root)
+end
+
+function M.add_edited_file(git_root, relative_path)
+  return session.add_edited_file(git_root, relative_path)
+end
+
+function M.remove_edited_file(git_root, relative_path)
+  return session.remove_edited_file(git_root, relative_path)
+end
+
+function M.is_edited_file(git_root, relative_path)
+  return session.is_edited_file(git_root, relative_path)
+end
+
 return M

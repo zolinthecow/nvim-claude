@@ -10,7 +10,7 @@ local hunks = require 'nvim-claude.inline_diff.hunks'
 local exec = require 'nvim-claude.inline_diff.executor'
 local nav = require 'nvim-claude.inline_diff.navigation'
 local persist = require 'nvim-claude.inline_diff.persistence'
-local project_state = require 'nvim-claude.project-state'
+local events = require 'nvim-claude.events'
 
 -- Private state: active diffs per buffer
 local active_diffs = {}
@@ -140,9 +140,7 @@ end
 local function project_files_with_diffs()
   local root = utils.get_project_root()
   if not root then return root, {} end
-  local map = project_state.get_claude_edited_files(root) or {}
-  local list = vim.tbl_keys(map)
-  table.sort(list)
+  local list = events.list_edited_files(root)
   return root, list
 end
 

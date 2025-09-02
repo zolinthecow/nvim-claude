@@ -174,35 +174,7 @@ function M.list_projects()
   return projects
 end
 
--- Claude edited files management
-function M.get_claude_edited_files(project_root)
-  return M.get(project_root, 'claude_edited_files') or {}
-end
-
-function M.set_claude_edited_files(project_root, files)
-  return M.set(project_root, 'claude_edited_files', files)
-end
-
-function M.add_claude_edited_file(project_root, relative_path)
-  local files = M.get_claude_edited_files(project_root)
-  files[relative_path] = true
-  return M.set_claude_edited_files(project_root, files)
-end
-
-function M.remove_claude_edited_file(project_root, relative_path)
-  local files = M.get_claude_edited_files(project_root)
-  files[relative_path] = nil
-  return M.set_claude_edited_files(project_root, files)
-end
-
-function M.is_claude_edited_file(project_root, relative_path)
-  local files = M.get_claude_edited_files(project_root)
-  return files[relative_path] == true
-end
-
-function M.clear_claude_edited_files(project_root)
-  return M.set(project_root, 'claude_edited_files', {})
-end
+-- Note: Feature-specific helpers (e.g., edited files) live in their packages.
 
 -- Migrate from old local state if exists
 function M.migrate_local_state(project_root)

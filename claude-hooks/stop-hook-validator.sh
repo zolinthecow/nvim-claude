@@ -135,7 +135,7 @@ if [ "$ERROR_COUNT" -gt 0 ]; then
     
     echo "# INFO: Blocking due to $ERROR_COUNT errors, clearing session tracking" >> "$DEBUG_LOG"
     # Clear session tracking after blocking (so errors don't accumulate)
-    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events.session").clear_turn_files()' 2>/dev/null || true
+    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events").clear_turn_files()' 2>/dev/null || true
     
     # Return block decision
     cat <<EOF
@@ -152,7 +152,7 @@ else
     
     echo "# INFO: No errors found, clearing session tracking and allowing completion" >> "$DEBUG_LOG"
     # Clear session tracking on successful validation
-    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events.session").clear_turn_files()' 2>/dev/null || true
+    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events").clear_turn_files()' 2>/dev/null || true
     
     echo '{"continue": true}'
 fi

@@ -6,7 +6,7 @@ local baseline = require 'nvim-claude.inline_diff.baseline'
 local diffmod = require 'nvim-claude.inline_diff.diff'
 local render = require 'nvim-claude.inline_diff.render'
 local utils = require 'nvim-claude.utils'
-local project_state = require 'nvim-claude.project-state'
+local events = require 'nvim-claude.events'
 
 local function set_buffer_content(bufnr, content)
   content = content or ''
@@ -44,7 +44,7 @@ function M.run_action(action)
   elseif action.type == 'project_untrack_file' then
     local git_root = action.git_root or utils.get_project_root()
     if git_root and action.relative_path then
-      project_state.remove_claude_edited_file(git_root, action.relative_path)
+      events.remove_edited_file(git_root, action.relative_path)
     end
   elseif action.type == 'worktree_apply_reverse_patch' then
     local git_root = action.git_root or utils.get_project_root()
@@ -89,4 +89,3 @@ function M.apply_plan_and_redraw(bufnr, plan, active_diffs)
 end
 
 return M
-
