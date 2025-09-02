@@ -84,7 +84,7 @@ function M.setup(config, commands)
   
   -- Global keymaps for navigating between files with Claude diffs
   vim.keymap.set('n', ']f', function()
-    local inline_diff = require('nvim-claude.inline-diff')
+    local inline_diff = require('nvim-claude.inline_diff')
     inline_diff.next_diff_file()
   end, {
     desc = 'Next file with Claude diff',
@@ -92,7 +92,7 @@ function M.setup(config, commands)
   })
   
   vim.keymap.set('n', '[f', function()
-    local inline_diff = require('nvim-claude.inline-diff')
+    local inline_diff = require('nvim-claude.inline_diff')
     inline_diff.prev_diff_file()
   end, {
     desc = 'Previous file with Claude diff',
@@ -101,7 +101,7 @@ function M.setup(config, commands)
   
   -- Global keymap for listing files with diffs
   vim.keymap.set('n', prefix .. 'i', function()
-    local inline_diff = require('nvim-claude.inline-diff')
+    local inline_diff = require('nvim-claude.inline_diff')
     inline_diff.list_diff_files()
   end, {
     desc = 'List files with Claude diffs',
@@ -113,7 +113,7 @@ function M.setup(config, commands)
   
   -- Global keymap to accept all diffs across all files
   vim.keymap.set('n', '<leader>IA', function()
-    local inline_diff = require('nvim-claude.inline-diff')
+    local inline_diff = require('nvim-claude.inline_diff')
     inline_diff.accept_all_files()
   end, {
     desc = 'Accept ALL Claude diffs in ALL files',
@@ -122,7 +122,7 @@ function M.setup(config, commands)
   
   -- Global keymap to reject all diffs across all files
   vim.keymap.set('n', '<leader>IR', function()
-    local inline_diff = require('nvim-claude.inline-diff')
+    local inline_diff = require('nvim-claude.inline_diff')
     inline_diff.reject_all_files()
   end, {
     desc = 'Reject ALL Claude diffs in ALL files',
