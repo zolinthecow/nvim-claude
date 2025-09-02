@@ -23,8 +23,8 @@ local function format_diagnostics_list(diags)
 end
 
 function M.register(claude)
-  local tmux = require('nvim-claude.tmux')
   local utils = require('nvim-claude.utils')
+  local tmux = utils.tmux
 
   -- ClaudeChat: open pane
   define('ClaudeChat', function()

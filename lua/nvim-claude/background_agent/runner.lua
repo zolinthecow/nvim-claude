@@ -3,7 +3,7 @@
 local M = {}
 
 local utils = require('nvim-claude.utils')
-local tmux = require('nvim-claude.tmux')
+local tmux = utils.tmux
 local registry = require('nvim-claude.background_agent.registry')
 
 local function kill_window(window_id)
@@ -48,4 +48,3 @@ function M.kill_agent_by_id(agent_id)
 end
 
 return M
-

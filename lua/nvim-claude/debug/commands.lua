@@ -27,7 +27,7 @@ function M.register(claude)
       table.insert(lines, 'No panes found')
     end
     table.insert(lines, '')
-    local detected = require('nvim-claude.tmux').find_claude_pane()
+    local detected = require('nvim-claude.utils').tmux.find_claude_pane()
     table.insert(lines, detected and ('Detected Claude pane: ' .. detected) or 'No Claude pane detected')
 
     local buf = vim.api.nvim_create_buf(false, true)
@@ -101,4 +101,3 @@ function M.register(claude)
 end
 
 return M
-

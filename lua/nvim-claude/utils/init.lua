@@ -11,6 +11,6 @@ end
 
 -- Attach namespaced modules
 M.git = require('nvim-claude.utils.git')
+M.tmux = require('nvim-claude.utils.tmux')
 
 return M
-

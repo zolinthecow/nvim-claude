@@ -358,7 +358,7 @@ function M.setup(user_config)
   package.loaded['nvim-claude.diff-review'] = nil
   
   -- Load submodules
-  M.tmux = require('nvim-claude.tmux')
+  M.tmux = M.utils.tmux
   M.git = M.utils.git
   M.utils = require('nvim-claude.utils')
   M.commands = require('nvim-claude.commands')

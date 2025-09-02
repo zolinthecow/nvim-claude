@@ -4,7 +4,7 @@ local M = {}
 
 local registry = require('nvim-claude.background_agent.registry')
 local ba_diff = require('nvim-claude.background_agent.diff')
-local tmux = require('nvim-claude.tmux')
+local tmux = require('nvim-claude.utils').tmux
 
 local function fetch_active_agents()
   registry.validate_agents()

@@ -5,7 +5,7 @@ local M = {}
 local nvc = require('nvim-claude')
 local utils = require('nvim-claude.utils')
 local git = utils.git
-local tmux = require('nvim-claude.tmux')
+local tmux = utils.tmux
 local registry = require('nvim-claude.background_agent.registry')
 local worktree = require('nvim-claude.background_agent.worktree')
 
