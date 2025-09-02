@@ -394,15 +394,17 @@ function M.setup(user_config)
     M.check_and_install_mcp()
   end
   
-  -- Set up commands
-  M.commands.setup(M)
+  -- Set up commands via aggregator
+  if M.commands and M.commands.register_all then
+    M.commands.register_all(M)
+  end
   
   -- Note: Hook installation is handled by settings-updater.setup()
   -- which runs on VimEnter and uses the proxy scripts
   
   -- Set up keymappings if enabled
   if M.config.mappings then
-    require('nvim-claude.mappings').setup(M.config.mappings, M.commands)
+    require('nvim-claude.mappings').setup(M.config.mappings, nil)
   end
   
   -- Plugin loaded successfully

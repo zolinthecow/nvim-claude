@@ -6,6 +6,7 @@ local registry = require 'nvim-claude.background_agent.registry'
 local status = require 'nvim-claude.background_agent.status'
 local runner = require 'nvim-claude.background_agent.runner'
 local creator = require 'nvim-claude.background_agent.create'
+local maintenance = require 'nvim-claude.background_agent.maintenance'
 
 -- Public status API (used by statusline and others)
 function M.get_status()
@@ -77,6 +78,13 @@ function M.kill_all()
   vim.notify(string.format('Killed %d agent%s', killed, killed ~= 1 and 's' or ''), vim.log.levels.INFO)
   return killed
 end
+
+-- Maintenance façade
+function M.rebuild_registry() return maintenance.rebuild_registry() end
+function M.clean_orphans() return maintenance.clean_orphans() end
+function M.cleanup_completed() return maintenance.cleanup_completed() end
+function M.cleanup_all_inactive() return maintenance.cleanup_all_inactive() end
+function M.cleanup_older_than(days) return maintenance.cleanup_older_than(days) end
 
 -- Interactive create flow (UI)
 function M.start_create_flow()
