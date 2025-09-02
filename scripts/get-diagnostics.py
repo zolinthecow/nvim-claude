@@ -66,7 +66,7 @@ vim.diagnostic.config({{
     
     # Now call the diagnostics function
     lua_code = f"""
-local mcp_bridge = require('nvim-claude.mcp-bridge')
+local mcp_bridge = require('nvim-claude.lsp_mcp.bridge')
 local result = mcp_bridge.get_diagnostics({json.dumps(file_paths)})
 return result
 """

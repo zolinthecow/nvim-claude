@@ -46,7 +46,7 @@ from fastmcp import FastMCP  # type: ignore
 mcp = FastMCP("nvim-lsp")  # type: ignore
 
 # The Lua module we call inside Neovim
-LUA_MODULE = "nvim-claude.mcp-bridge"
+LUA_MODULE = "nvim-claude.lsp_mcp.bridge"
 
 
 # ---------------------------------------------------------------------------

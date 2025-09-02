@@ -341,7 +341,7 @@ function M.setup(user_config)
   -- If running in headless mode, only set up minimal functionality
   if vim.g.headless_mode then
     -- Only load the MCP bridge module for headless operation
-    M.mcp_bridge = require('nvim-claude.mcp-bridge')
+    M.mcp_bridge = require('nvim-claude.lsp_mcp.bridge')
     return
   end
   
