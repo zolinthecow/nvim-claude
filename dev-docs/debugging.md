@@ -85,7 +85,7 @@ Example:
 
 If you see files tracked in `inline-diff-state.json` but no baseline reference:
 
-1. Check the log for errors during stash creation:
+1. Check the log for errors during baseline creation:
    ```vim
    :ClaudeViewLog
    ```
@@ -98,16 +98,16 @@ If you see files tracked in `inline-diff-state.json` but no baseline reference:
    - Git operation failures (permissions, disk space)
    - Race conditions between pre and post hooks
 
-3. To reset corrupted state:
+3. To reset corrupted state (clear inline diff persistence for the project):
    ```vim
-   :ClaudeResetInlineDiff
+   :lua require('nvim-claude.inline_diff').clear_persistence()
    ```
 
 #### Issue: Inline diffs not showing
 
-1. Check if files are being tracked:
+1. Check if files are being tracked: open the debug log and search for post-hook entries
    ```vim
-   :ClaudeDebugInlineDiff
+   :ClaudeViewLog
    ```
 
 2. Review the log for hook execution:
@@ -134,7 +134,7 @@ It does not contain:
 
 When reporting bugs, please include:
 1. Relevant portions of the debug log (run `:ClaudeViewLog`)
-2. Debug information (run `:ClaudeDebugInlineDiff`)
+2. Debug information (run `:ClaudeDebugLogs` / `:ClaudeViewLog`)
 3. Steps to reproduce the issue
 4. Your Neovim version and OS
 
