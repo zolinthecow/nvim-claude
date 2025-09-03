@@ -43,7 +43,7 @@ MCP_PYTHON="$HOME/.local/share/nvim/nvim-claude/mcp-env/bin/python"
 # Check if the MCP environment exists
 if [ ! -f "$MCP_PYTHON" ]; then
     echo "# ERROR: MCP environment not found at $MCP_PYTHON" >> "$DEBUG_LOG"
-    # Allow completion if MCP not installed
+    # Approve completion if MCP not installed
     echo '{"decision": "approve"}'
     exit 0
 fi
@@ -64,8 +64,8 @@ if [ -f "$STATE_FILE" ]; then
     
     if [ -z "$SESSION_FILES" ]; then
         echo "# INFO: No session edited files found for project $CWD" >> "$DEBUG_LOG"
-        # No files edited, allow completion
-        echo '{"decision": "allow"}'
+        # No files edited, approve completion
+        echo '{"decision": "approve"}'
         exit 0
     fi
     
@@ -107,8 +107,8 @@ if [ -f "$STATE_FILE" ]; then
     fi
 else
     echo "# INFO: No project state file found" >> "$DEBUG_LOG"
-    # No state file, allow completion
-    echo '{"decision": "allow"}'
+    # No state file, approve completion
+    echo '{"decision": "approve"}'
     exit 0
 fi
 
@@ -138,19 +138,19 @@ if [ "$ERROR_COUNT" -gt 0 ]; then
     
     echo "# INFO: Blocking due to $ERROR_COUNT errors; preserving session_edited_files for visibility" >> "$DEBUG_LOG"
     # Do NOT clear session tracking on block, so users/tools can inspect diagnostics
-    # It will be cleared on successful validation (allow path) below
+    # It will be cleared on successful validation (approve path) below
     
     # Return block decision (no "continue" field); reason is a proper JSON string
     echo "{\"decision\":\"block\",\"reason\":$JSON_REASON}"
 else
-    # No errors found, allow completion (warnings are okay)
+    # No errors found, approve completion (warnings are okay)
     if [ "$WARNING_COUNT" -gt 0 ]; then
-        echo "# INFO: Found $WARNING_COUNT warnings but allowing completion" >> "$DEBUG_LOG"
+        echo "# INFO: Found $WARNING_COUNT warnings but approving completion" >> "$DEBUG_LOG"
     fi
     
-    echo "# INFO: No errors found, clearing session tracking and allowing completion" >> "$DEBUG_LOG"
+    echo "# INFO: No errors found, clearing session tracking and aproving completion" >> "$DEBUG_LOG"
     # Clear session tracking on successful validation
     TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events").clear_turn_files()' >/dev/null 2>&1 || true
     
-    echo '{"decision": "allow"}'
+    echo '{"decision": "approve"}'
 fi
