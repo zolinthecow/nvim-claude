@@ -490,5 +490,12 @@ This prevents future developers (including future Claude instances) from repeati
 - Wrapper scripts live in `claude-hooks/` and the RPC client is `rpc/nvim-rpc.sh`
 - RPC uses Python with pynvim for communication (no nvr dependency)
 - Use only the events facade from shell hooks: `require('nvim-claude.events')` via `events.adapter`
+ 
+### Import Rules (Facade Pattern)
+- Each feature exposes a facade in `init.lua`. Keep facades free of implementation details.
+- Cross‑feature code must import via facades only:
+  - Good: `require('nvim-claude.events')`, `require('nvim-claude.inline_diff')`, `require('nvim-claude.utils')`
+  - Bad: `require('nvim-claude.events.session')` or `require('nvim-claude.inline_diff.hunks')` from another feature
+- Internal modules may import other internals within the same feature.
 
 ```

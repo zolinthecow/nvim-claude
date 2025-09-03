@@ -61,3 +61,8 @@ we read/write from project-state and recompute when needed.
 - Facades: `utils/` (`require('nvim-claude.utils')`), `events/` (`require('nvim-claude.events')`), `inline_diff/` (`require('nvim-claude.inline_diff')`), `lsp_mcp/`, `rpc/`
 - Inline diff internals: `inline_diff/baseline.lua`, `diff.lua`, `render.lua`, `executor.lua`, `hunks.lua`, `navigation.lua`, `persistence.lua`
 - Hooks: wrapper scripts in `claude-hooks/` installed into `.claude/settings.local.json` via `events/installer.lua`
+
+### Facade pattern rules
+- Keep facades thin: expose public API only; avoid business logic in `init.lua` files.
+- Cross‑feature imports must go through the other feature’s facade (e.g., events ↔ inline_diff ↔ utils). Do not import another feature’s internals.
+- Within a feature, internal modules may depend on each other.

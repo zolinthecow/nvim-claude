@@ -329,7 +329,7 @@ See [debugging.md](dev-docs/debugging.md) for detailed debugging information.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+Contributions are welcome! Please read dev‑docs/coding‑guidelines.md for module boundaries and facade import rules before sending PRs.
 
 ## License
 
