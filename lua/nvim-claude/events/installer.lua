@@ -81,11 +81,13 @@ function M.install()
   local bash_pre = root .. 'claude-hooks/bash-hook-wrapper.sh'
   local bash_post = root .. 'claude-hooks/bash-post-hook-wrapper.sh'
   local stop = root .. 'claude-hooks/stop-hook-validator.sh'
+  local user_prompt = root .. 'claude-hooks/user-prompt-hook-wrapper.sh'
+  local user_prompt = root .. 'claude-hooks/user-prompt-hook-wrapper.sh'
 
   -- Ensure hook scripts are executable
   local scripts = {
     pre, post, bash_pre, bash_post, stop,
-    root .. 'claude-hooks/user-prompt-hook-wrapper.sh',
+    user_prompt,
     root .. 'claude-hooks/hook-common.sh',
     root .. 'rpc/nvim-rpc.sh',
   }
@@ -121,12 +123,14 @@ function M.install()
   settings.hooks.PreToolUse = prune_legacy(settings.hooks.PreToolUse)
   settings.hooks.PostToolUse = prune_legacy(settings.hooks.PostToolUse)
   settings.hooks.Stop = prune_legacy(settings.hooks.Stop)
+  settings.hooks.UserPromptSubmit = prune_legacy(settings.hooks.UserPromptSubmit)
 
   add_command_to_section(settings.hooks.PreToolUse, pre, 'Edit|Write|MultiEdit')
   add_command_to_section(settings.hooks.PostToolUse, post, 'Edit|Write|MultiEdit')
   add_command_to_section(settings.hooks.PreToolUse, bash_pre, 'Bash')
   add_command_to_section(settings.hooks.PostToolUse, bash_post, 'Bash')
   add_command_to_section(settings.hooks.Stop, stop, nil)
+  add_command_to_section(settings.hooks.UserPromptSubmit, user_prompt, nil)
 
   -- Sanitize stale/invalid permissions from older versions
   do
@@ -220,6 +224,7 @@ function M.uninstall()
   settings.hooks.PreToolUse = remove_command_from_section(settings.hooks.PreToolUse, bash_pre, 'Bash')
   settings.hooks.PostToolUse = remove_command_from_section(settings.hooks.PostToolUse, bash_post, 'Bash')
   settings.hooks.Stop = remove_command_from_section(settings.hooks.Stop, stop, nil)
+  settings.hooks.UserPromptSubmit = remove_command_from_section(settings.hooks.UserPromptSubmit, user_prompt, nil)
 
   local ok, err = utils.write_json(settings_file, settings)
   if not ok then

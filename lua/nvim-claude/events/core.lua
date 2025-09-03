@@ -97,10 +97,17 @@ end
 -- On user prompt: exit checkpoint preview if active, then checkpoint current state
 function M.user_prompt_submit(prompt)
   local checkpoint = require('nvim-claude.checkpoint')
+  local logger = require('nvim-claude.logger')
   if checkpoint.is_preview_mode() then
     checkpoint.accept_checkpoint()
   end
-  checkpoint.create_checkpoint(prompt)
+  local id = checkpoint.create_checkpoint(prompt)
+  if id then
+    local preview = (prompt or ''):gsub('\n',' '):sub(1,50)
+    logger.info('user_prompt_submit_hook', 'Created checkpoint', { checkpoint_id = id, prompt_preview = preview })
+  else
+    logger.warn('user_prompt_submit_hook', 'Failed to create checkpoint')
+  end
   return true
 end
 
