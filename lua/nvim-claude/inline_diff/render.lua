@@ -15,8 +15,13 @@ function M.apply_diff_visualization(bufnr, diff_data)
   -- Clear existing highlights
   vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
 
-  -- Get current buffer lines for reference
+  -- Get current buffer lines for reference; ensure at least one line for virtual placement
   local buf_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  if #buf_lines == 0 then
+    -- Insert a single empty line to allow virt_lines/extmarks to anchor
+    vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, { '' })
+    buf_lines = { '' }
+  end
 
   -- Apply highlights for each hunk
   for i, hunk in ipairs(diff_data.hunks) do
@@ -51,6 +56,7 @@ function M.apply_diff_visualization(bufnr, diff_data)
         -- This is a deleted line - show as virtual text above current position
         -- For replacements, the deletion should appear above the addition
         local del_line = new_line_num - 1
+        if del_line < 0 then del_line = 0 end
         if is_replacement and #additions > 0 then
           -- Place deletion above the first addition
           del_line = additions[1]
@@ -78,50 +84,36 @@ function M.apply_diff_visualization(bufnr, diff_data)
       end
     end
 
-    -- Show deletions as virtual text above their position with full-width background
-    for j, del in ipairs(deletions) do
-      -- Determine if this is an EOF deletion
-      local is_eof_deletion = del.line >= #buf_lines
-      local placement_line = is_eof_deletion and (#buf_lines - 1) or del.line
+    -- Show deletions as a single virt_lines block for stability (multiple lines)
+    if #deletions > 0 then
+      local anchor = (#additions > 0 and additions[1]) or 0
+      if anchor < 0 then anchor = 0 end
+      if anchor >= #buf_lines then anchor = math.max(0, #buf_lines - 1) end
 
-      if placement_line >= 0 and placement_line < #buf_lines then
-        -- Calculate full width for the deletion line
+      local win_width = vim.api.nvim_win_get_width(0)
+      local virt_lines = {}
+      for j, del in ipairs(deletions) do
         local text = '- ' .. del.text
-        local win_width = vim.api.nvim_win_get_width(0)
-
-        -- For deletion-only hunks, add hunk info to the first deletion
-        local hunk_indicator = ''
+        local parts = {}
+        table.insert(parts, { text, 'DiffDelete' })
         if j == 1 and #additions == 0 then
-          -- This is a deletion-only hunk, add the hunk indicator
-          hunk_indicator = ' [Hunk ' .. i .. '/' .. #diff_data.hunks .. ']'
-        end
-
-        -- Build virtual line parts
-        local virt_line_parts = {}
-        if hunk_indicator ~= '' then
-          -- Structure: deletion text + hunk indicator + padding to fill the rest
-          table.insert(virt_line_parts, { text, 'DiffDelete' })
-          table.insert(virt_line_parts, { hunk_indicator, 'Comment' })
-
-          -- Calculate remaining width and fill with red background
-          local used_width = vim.fn.strdisplaywidth(text) + vim.fn.strdisplaywidth(hunk_indicator)
-          local remaining_width = win_width - used_width
-          if remaining_width > 0 then
-            local padding = string.rep(' ', remaining_width)
-            table.insert(virt_line_parts, { padding, 'DiffDelete' })
-          end
+          local hint = ' [Hunk ' .. i .. '/' .. #diff_data.hunks .. ']'
+          table.insert(parts, { hint, 'Comment' })
+          local used = vim.fn.strdisplaywidth(text) + vim.fn.strdisplaywidth(hint)
+          local pad = string.rep(' ', math.max(0, win_width - used))
+          if pad ~= '' then table.insert(parts, { pad, 'DiffDelete' }) end
         else
-          -- Normal deletion line - keep full width for visibility
-          local padding = string.rep(' ', math.max(0, win_width - vim.fn.strdisplaywidth(text)))
-          table.insert(virt_line_parts, { text .. padding, 'DiffDelete' })
+          local pad = string.rep(' ', math.max(0, win_width - vim.fn.strdisplaywidth(text)))
+          if pad ~= '' then table.insert(parts, { pad, 'DiffDelete' }) end
         end
-
-        vim.api.nvim_buf_set_extmark(bufnr, ns_id, placement_line, 0, {
-          virt_lines = { virt_line_parts },
-          virt_lines_above = not is_eof_deletion, -- EOF deletions appear below the last line
-          id = 3000 + i * 100 + j,
-        })
+        table.insert(virt_lines, parts)
       end
+
+      vim.api.nvim_buf_set_extmark(bufnr, ns_id, anchor, 0, {
+        virt_lines = virt_lines,
+        virt_lines_above = true,
+        id = 3000 + i * 100,
+      })
     end
 
     -- Add sign in gutter for hunk (use first addition or deletion line)
@@ -168,4 +160,3 @@ function M.apply_diff_visualization(bufnr, diff_data)
 end
 
 return M
-

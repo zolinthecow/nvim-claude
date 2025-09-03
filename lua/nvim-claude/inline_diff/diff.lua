@@ -70,6 +70,24 @@ function M.compute_diff(old_text, new_text)
   local diff_output = utils.exec(cmd)
 
   local hunks = parse_diff(diff_output or '')
+  if (not hunks or #hunks == 0) and old_text ~= '' and new_text == '' then
+    -- Fallback: synthetic deletion-only hunk (entire file deleted)
+    local lines = {}
+    for _, l in ipairs(vim.split(old_text, '\n', { plain = true })) do
+      if l ~= '' then table.insert(lines, '-' .. l) end
+    end
+    table.insert(lines, '') -- ensure trailing context
+    hunks = {
+      {
+        old_start = 1,
+        old_count = #lines,
+        new_start = 1,
+        new_count = 0,
+        lines = lines,
+        header = string.format('@@ -1,%d +0,0 @@', #lines),
+      },
+    }
+  end
   return { hunks = hunks }
 end
 

@@ -54,6 +54,12 @@ function M.run_action(action)
     utils.write_file(patch_file, action.patch or '')
     utils.exec(string.format('cd "%s" && git apply --reverse --verbose "%s" 2>&1', git_root, patch_file))
     vim.fn.delete(patch_file)
+  elseif action.type == 'baseline_remove_file' then
+    local git_root = action.git_root or utils.get_project_root()
+    local ref = git_root and baseline.get_baseline_ref(git_root) or nil
+    if git_root and ref and action.relative_path then
+      baseline.remove_from_baseline(git_root, action.relative_path, ref)
+    end
   end
 end
 

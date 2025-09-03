@@ -116,14 +116,22 @@ function M.accept_hunk_for_file(bufnr, hunk)
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local current_content = table.concat(current_lines, '\n')
   local new_diff = diffmod.compute_diff(updated_baseline_content, current_content)
-  local actions = {
-    action('baseline_update_file', {
-      git_root = git_root,
-      relative_path = relative_path,
-      new_content = updated_baseline_content,
-      reason = 'accept_hunk',
-    })
-  }
+  local actions
+  if updated_baseline_content == '' then
+    actions = {
+      action('baseline_remove_file', { git_root = git_root, relative_path = relative_path, reason = 'accept_delete' }),
+      action('buffer_close', { bufnr = bufnr }),
+    }
+  else
+    actions = {
+      action('baseline_update_file', {
+        git_root = git_root,
+        relative_path = relative_path,
+        new_content = updated_baseline_content,
+        reason = 'accept_hunk',
+      })
+    }
+  end
   if not new_diff or not new_diff.hunks or #new_diff.hunks == 0 then
     table.insert(actions, action('project_untrack_file', { git_root = git_root, relative_path = relative_path }))
   end
@@ -260,18 +268,29 @@ function M.accept_all_hunks_in_file(bufnr)
 
   local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local current_content = table.concat(current_lines, '\n')
-  if current_content ~= '' and not current_content:match '\n$' then
-    current_content = current_content .. '\n'
+  if current_content == '' then
+    return {
+      status = 'ok',
+      actions = {
+        action('baseline_remove_file', { git_root = git_root, relative_path = relative_path, reason = 'accept_delete_all' }),
+        action('buffer_close', { bufnr = bufnr }),
+        action('project_untrack_file', { git_root = git_root, relative_path = relative_path }),
+      },
+      info = { bufnr = bufnr, file = file_path },
+    }
+  else
+    if current_content ~= '' and not current_content:match '\n$' then
+      current_content = current_content .. '\n'
+    end
+    return {
+      status = 'ok',
+      actions = {
+        action('baseline_update_file', { git_root = git_root, relative_path = relative_path, new_content = current_content, reason = 'accept_all' }),
+        action('project_untrack_file', { git_root = git_root, relative_path = relative_path }),
+      },
+      info = { bufnr = bufnr, file = file_path },
+    }
   end
-
-  return {
-    status = 'ok',
-    actions = {
-      action('baseline_update_file', { git_root = git_root, relative_path = relative_path, new_content = current_content, reason = 'accept_all' }),
-      action('project_untrack_file', { git_root = git_root, relative_path = relative_path }),
-    },
-    info = { bufnr = bufnr, file = file_path },
-  }
 end
 
 -- Reject all hunks in current file by restoring buffer to baseline content (or deleting new file)
@@ -346,6 +365,56 @@ function M.reject_all_hunks_in_all_files(active_diffs)
     end
   end
   return { status = 'ok', actions = actions }
+end
+
+-- Global accept/reject operations across all edited files
+-- Note: these operate at the data layer (baseline + filesystem + project_state).
+-- UI behaviors (like closing or switching buffers) should be handled by the facade.
+local navigation = require 'nvim-claude.inline_diff.navigation'
+local project_state = require 'nvim-claude.project-state'
+
+function M.accept_all_files()
+  local root, items = navigation.get_edited_items()
+  if not root or #items == 0 then return { ok = false, reason = 'no_items' } end
+  for _, it in ipairs(items) do
+    local ref = baseline.get_baseline_ref(root)
+    if it.deleted then
+      baseline.remove_from_baseline(root, it.rel, ref)
+    else
+      local full = root .. '/' .. it.rel
+      local content = utils.read_file(full) or ''
+      baseline.update_baseline_with_content(root, it.rel, content, ref)
+    end
+    local map = project_state.get(root, 'claude_edited_files') or {}
+    map[it.rel] = nil
+    project_state.set(root, 'claude_edited_files', map)
+  end
+  return { ok = true, root = root, items = items }
+end
+
+function M.reject_all_files()
+  local root, items = navigation.get_edited_items()
+  if not root or #items == 0 then return { ok = false, reason = 'no_items' } end
+  local ref = baseline.get_baseline_ref(root)
+  for _, it in ipairs(items) do
+    local full = root .. '/' .. it.rel
+    local base = ''
+    if ref and ref ~= '' then
+      local cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", root, ref, it.rel)
+      base = utils.exec(cmd) or ''
+      if base:match('^fatal:') or base:match('^error:') then base = '' end
+    end
+    if it.deleted then
+      utils.ensure_dir(vim.fn.fnamemodify(full, ':h'))
+      utils.write_file(full, base)
+    else
+      if base == '' then pcall(os.remove, full) else utils.write_file(full, base) end
+    end
+    local map = project_state.get(root, 'claude_edited_files') or {}
+    map[it.rel] = nil
+    project_state.set(root, 'claude_edited_files', map)
+  end
+  return { ok = true, root = root, items = items }
 end
 
 return M

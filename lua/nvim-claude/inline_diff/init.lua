@@ -10,10 +10,14 @@ local hunks = require 'nvim-claude.inline_diff.hunks'
 local exec = require 'nvim-claude.inline_diff.executor'
 local nav = require 'nvim-claude.inline_diff.navigation'
 local persist = require 'nvim-claude.inline_diff.persistence'
-local project_state = require 'nvim-claude.project-state'
 
 -- Private state: active diffs per buffer
 local active_diffs = {}
+-- Facade-local helper to detect deleted-file scratch buffers
+local function parse_deleted_rel(bufname)
+  if type(bufname) ~= 'string' then return nil end
+  return bufname:match('^%[deleted%]%s+(.+)$')
+end
 
 -- --- Baseline API ---
 function M.get_baseline_ref(git_root) return baseline.get_baseline_ref(git_root) end
@@ -137,16 +141,38 @@ function M.reject_all_hunks(bufnr)
 end
 
 function M.accept_all_files()
-  local plan = hunks.accept_all_hunks_in_all_files(active_diffs)
-  exec.run_actions(plan.actions)
-  -- Redraw all buffers that still have diffs
-  for bufnr, _ in pairs(active_diffs) do M.refresh_inline_diff(bufnr) end
+  local result = hunks.accept_all_files()
+  if not result or result.ok == false then
+    vim.notify('No Claude-edited files to accept', vim.log.levels.INFO)
+    return
+  end
+  -- Clear visuals in any buffers that had inline diffs
+  for bufnr, _ in pairs(active_diffs) do M.close_inline_diff(bufnr) end
+  -- If current buffer is a deleted-file scratch view, close it
+  local cur = vim.api.nvim_get_current_buf()
+  local rel = parse_deleted_rel(vim.api.nvim_buf_get_name(cur))
+  if rel then pcall(vim.api.nvim_buf_delete, cur, { force = true }) end
+  vim.notify('Accepted all Claude-edited files', vim.log.levels.INFO)
 end
 
 function M.reject_all_files()
-  local plan = hunks.reject_all_hunks_in_all_files(active_diffs)
-  exec.run_actions(plan.actions)
-  for bufnr, _ in pairs(active_diffs) do M.refresh_inline_diff(bufnr) end
+  local result = hunks.reject_all_files()
+  if not result or result.ok == false then
+    vim.notify('No Claude-edited files to reject', vim.log.levels.INFO)
+    return
+  end
+  local root = result.root
+  -- Clear visuals
+  for bufnr, _ in pairs(active_diffs) do M.close_inline_diff(bufnr) end
+  -- If current buffer is a deleted-file scratch view, jump to the restored file
+  local cur = vim.api.nvim_get_current_buf()
+  local rel = parse_deleted_rel(vim.api.nvim_buf_get_name(cur))
+  if rel and root then
+    local full = root .. '/' .. rel
+    pcall(vim.api.nvim_buf_delete, cur, { force = true })
+    vim.schedule(function() vim.cmd('edit ' .. vim.fn.fnameescape(full)) end)
+  end
+  vim.notify('Rejected all Claude-edited files', vim.log.levels.INFO)
 end
 
 -- Clear persistence state for inline diffs (project-state)
@@ -154,87 +180,9 @@ function M.clear_persistence(git_root)
   return persist.clear_state(git_root)
 end
 
--- --- File navigation helpers (across project files with Claude edits) ---
-local function project_files_with_diffs()
-  local root = utils.get_project_root()
-  if not root then return root, {} end
-  local map = project_state.get(root, 'claude_edited_files') or {}
-  local baseline_ref = baseline.get_baseline_ref(root)
-  local kept = {}
-  local changed = false
-  for rel, v in pairs(map) do
-    if v then
-      local full = root .. '/' .. rel
-      if vim.fn.filereadable(full) == 1 then
-        local base_content = ''
-        if baseline_ref and baseline_ref ~= '' then
-          local cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", root, baseline_ref, rel)
-          base_content = utils.exec(cmd) or ''
-          if base_content:match('^fatal:') or base_content:match('^error:') then base_content = '' end
-        end
-        local current = utils.read_file(full) or ''
-        local d = require('nvim-claude.inline_diff.diff').compute_diff(base_content, current)
-        if d and d.hunks and #d.hunks > 0 then
-          table.insert(kept, rel)
-        else
-          -- No diff; prune stale
-          map[rel] = nil
-          changed = true
-        end
-      else
-        -- Missing file; prune
-        map[rel] = nil
-        changed = true
-      end
-    end
-  end
-  if changed then project_state.set(root, 'claude_edited_files', map) end
-  table.sort(kept)
-  return root, kept
-end
-
-local function current_relative_path(project_root)
-  local abs = vim.api.nvim_buf_get_name(0)
-  if abs == '' then return nil end
-  return abs:gsub('^' .. vim.pesc(project_root) .. '/', '')
-end
-
-function M.list_diff_files()
-  local root, files = project_files_with_diffs()
-  if not root or #files == 0 then
-    vim.notify('No Claude-edited files to list', vim.log.levels.INFO)
-    return
-  end
-  vim.ui.select(files, { prompt = 'Claude-edited files' }, function(choice)
-    if not choice then return end
-    vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. choice))
-  end)
-end
-
-function M.next_diff_file()
-  local root, files = project_files_with_diffs()
-  if not root or #files == 0 then
-    vim.notify('No Claude-edited files', vim.log.levels.INFO)
-    return
-  end
-  local cur = current_relative_path(root)
-  local idx = 0
-  for i, f in ipairs(files) do if f == cur then idx = i break end end
-  local next_idx = (idx % #files) + 1
-  vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. files[next_idx]))
-end
-
-function M.prev_diff_file()
-  local root, files = project_files_with_diffs()
-  if not root or #files == 0 then
-    vim.notify('No Claude-edited files', vim.log.levels.INFO)
-    return
-  end
-  local cur = current_relative_path(root)
-  local idx = 1
-  for i, f in ipairs(files) do if f == cur then idx = i break end end
-  local prev_idx = (idx - 2) % #files + 1
-  vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. files[prev_idx]))
-end
+-- File navigation facade delegates
+function M.list_diff_files() return nav.list_files() end
+function M.next_diff_file() return nav.next_file() end
+function M.prev_diff_file() return nav.prev_file() end
 
 return M

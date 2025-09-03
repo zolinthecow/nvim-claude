@@ -64,6 +64,7 @@ end
 -- Called before rm deletes a file; ensure baseline has latest content and track
 function M.track_deleted_file(file_path)
   local git_root = utils.get_project_root_for_file(file_path)
+  local logger = require('nvim-claude.logger')
   if not git_root then return true end
 
   -- Ensure baseline exists
@@ -78,6 +79,9 @@ function M.track_deleted_file(file_path)
     inline_diff.update_baseline_file(git_root, relative, content)
     session.add_edited_file(git_root, relative)
     add_to_session(file_path)
+    logger.info('track_deleted_file', 'Tracked pre-delete file', { file = relative, project = git_root })
+  else
+    logger.warn('track_deleted_file', 'File not readable at track time', { file = file_path, project = git_root })
   end
 
   return true
@@ -88,8 +92,10 @@ function M.untrack_failed_deletion(file_path)
   local git_root = utils.get_project_root_for_file(file_path)
   if not git_root then return true end
   local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
+  local logger = require('nvim-claude.logger')
   if session.is_edited_file(git_root, relative) then
     session.remove_edited_file(git_root, relative)
+    logger.info('untrack_failed_deletion', 'Untracked after failed deletion', { file = relative, project = git_root })
   end
   return true
 end

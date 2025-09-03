@@ -82,7 +82,6 @@ function M.install()
   local bash_post = root .. 'claude-hooks/bash-post-hook-wrapper.sh'
   local stop = root .. 'claude-hooks/stop-hook-validator.sh'
   local user_prompt = root .. 'claude-hooks/user-prompt-hook-wrapper.sh'
-  local user_prompt = root .. 'claude-hooks/user-prompt-hook-wrapper.sh'
 
   -- Ensure hook scripts are executable
   local scripts = {
@@ -218,6 +217,7 @@ function M.uninstall()
   local bash_pre = root .. 'claude-hooks/bash-hook-wrapper.sh'
   local bash_post = root .. 'claude-hooks/bash-post-hook-wrapper.sh'
   local stop = root .. 'claude-hooks/stop-hook-validator.sh'
+  local user_prompt = root .. 'claude-hooks/user-prompt-hook-wrapper.sh'
 
   settings.hooks.PreToolUse = remove_command_from_section(settings.hooks.PreToolUse, pre, 'Edit|Write|MultiEdit')
   settings.hooks.PostToolUse = remove_command_from_section(settings.hooks.PostToolUse, post, 'Edit|Write|MultiEdit')
