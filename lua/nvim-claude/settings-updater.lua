@@ -1,5 +1,15 @@
 local M = {}
 local utils = require 'nvim-claude.utils'
+local logger = require 'nvim-claude.logger'
+local project_state = require 'nvim-claude.project-state'
+
+local function project_server_file(project_root)
+  if not project_root or project_root == '' then return nil end
+  local project_key = project_state.get_project_key(project_root)
+  local key_hash = vim.fn.sha256(project_key)
+  local temp_dir = vim.env.XDG_RUNTIME_DIR or '/tmp'
+  return string.format('%s/nvim-claude-%s-server', temp_dir, key_hash:sub(1, 8))
+end
 
 -- Update Claude settings with current Neovim server address
 function M.update_claude_settings()
@@ -20,26 +30,23 @@ function M.update_claude_settings()
     return
   end
 
-  -- Create a unique temp file for this project's nvim server address
-  -- Use project path hash to ensure consistent filename
-  local project_state = require 'nvim-claude.project-state'
-  local project_key = project_state.get_project_key(project_root)
-  local key_hash = vim.fn.sha256(project_key)
-  
-  -- Store in system temp directory
-  -- Use XDG_RUNTIME_DIR if available, otherwise /tmp
-  local temp_dir = vim.env.XDG_RUNTIME_DIR or '/tmp'
-  local server_file = string.format('%s/nvim-claude-%s-server', temp_dir, key_hash:sub(1, 8))
-  vim.fn.writefile({ server_addr }, server_file)
+  local server_file = project_server_file(project_root)
+  if not server_file then return end
+
+  -- Write file only if changed
+  local current = nil
+  if vim.fn.filereadable(server_file) == 1 then
+    local lines = vim.fn.readfile(server_file)
+    current = (lines and lines[1]) or nil
+  end
+  if current ~= server_addr then
+    vim.fn.writefile({ server_addr }, server_file)
+  end
   
   -- Debug logging
-  local logger = require('nvim-claude.logger')
-  logger.debug('settings_updater', 'Writing server file', {
+  logger.debug('settings_updater', 'Ensured server file', {
     server_addr = server_addr,
     server_file = server_file,
-    temp_dir = temp_dir,
-    project_key = project_key,
-    key_hash = key_hash:sub(1, 8)
   })
   
   -- Migrate old .nvim-server file if it exists
@@ -48,9 +55,8 @@ function M.update_claude_settings()
     os.remove(old_server_file)
   end
 
-  -- Use the install_hooks function from hooks module to update settings
-  local hooks = require 'nvim-claude.hooks'
-  hooks.install_hooks()
+  -- Install/update Claude Code hook settings via events installer
+  require('nvim-claude.events').install_hooks()
 end
 
 -- Setup autocmds to update settings
@@ -66,5 +72,7 @@ function M.setup()
   })
 end
 
-return M
+-- Alias for consumers that prefer a "refresh" semantics
+M.refresh = M.update_claude_settings
 
+return M

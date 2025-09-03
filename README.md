@@ -125,7 +125,7 @@ Default values are shown above. All configuration options are optional.
 ### Inline Diff Review
 When Claude makes changes to your files:
 
-**Note:** Diffs automatically refresh when you save the file (`:w`). Use `<leader>if` to manually refresh without saving.
+Note: Diffs refresh on save (`:w`). To force a refresh without saving, run `:lua require('nvim-claude.inline_diff').refresh_inline_diff()` or re-open the buffer.
 
 **Buffer-local keymaps (when viewing diffs):**
 - `]h` / `[h` - Navigate to next/previous hunk
@@ -133,15 +133,15 @@ When Claude makes changes to your files:
 - `<leader>ir` - Reject current hunk
 - `<leader>iA` - Accept all hunks in current file
 - `<leader>iR` - Reject all hunks in current file
-- `<leader>il` - List all files with Claude diffs
-- `<leader>if` - Refresh inline diff (manual refresh)
-- `<leader>iq` - Close inline diff view
+  
 
 **Global keymaps:**
 - `<leader>ci` - List files with Claude diffs
 - `<leader>IA` - Accept ALL diffs in ALL files
 - `<leader>IR` - Reject ALL diffs in ALL files
 - `]f` / `[f` - Navigate to next/previous file with diffs
+
+Deleted files open in a scratch buffer labeled `[deleted] path/to/file` with red lines. Use `<leader>ia`/`<leader>iA` to accept the deletion or `<leader>ir`/`<leader>iR` to restore the file.
 
 ## Commands
 
@@ -173,15 +173,13 @@ All commands below can be accessed via Ex commands. Those with keybindings are n
 - `:ClaudeCheckpointCreate <message>` - Create checkpoint manually
 - `:ClaudeCheckpointRestore <id>` - Restore specific checkpoint
 
-### Inline Diff Management
-- `:ClaudeAcceptAll` - Accept all Claude's changes (same as `<leader>IA`)
-- `:ClaudeResetBaseline` - Reset diff baseline
-- `:ClaudeResetInlineDiff` - Reset inline diff state (use when corrupted)
-- `:ClaudeCleanStaleTracking` - Clean up stale file tracking
-- `:ClaudeUntrackFile` - Untrack current file from diff system
-- `:ClaudeTrackModified` - Track all modified files for diff
-- `:ClaudeUpdateBaseline` - Update baseline for current file
-- `:ClaudeRestoreState` - Restore saved diff state
+### Inline Diff Actions
+Most inline diff actions are keymaps (listed above). Programmatic control is available via `require('nvim-claude.inline_diff')`:
+- `show_inline_diff(bufnr, old, new)`
+- `accept_current_hunk()` / `reject_current_hunk()`
+- `accept_all_hunks()` / `reject_all_hunks()`
+- `accept_all_files()` / `reject_all_files()`
+- `refresh_inline_diff()`
 
 ### Setup & Configuration
 - `:ClaudeInstallHooks` - Install Claude Code hooks for this project
@@ -191,17 +189,15 @@ All commands below can be accessed via Ex commands. Those with keybindings are n
 - `:ClaudeShowMCPCommand` - Show the command to add MCP server to Claude Code
 
 ### Debugging Commands
-- `:ClaudeDebug` - Show general debug information
+- `:ClaudeDebug` - Show tmux pane debug info
 - `:ClaudeDebugAgents` - Debug agent state
 - `:ClaudeDebugRegistry` - Debug agent registry
-- `:ClaudeDebugInstall` - Debug plugin installation and paths
-- `:ClaudeDebugInlineDiff` - Debug inline diff state
-- `:ClaudeViewLog` - View debug log file
-- `:ClaudeClearLog` - Clear debug log file
+- `:ClaudeDebugLogs` - Show project log location and open it
+- `:ClaudeViewLog` - View main debug log file
+- `:ClaudeClearLog` - Clear main debug log file
 
 ### Project Management
-- `:ClaudeListProjects` - List all projects tracked by nvim-claude
-- `:ClaudeCleanupProjects [days]` - Clean up projects older than N days (default: 30)
+Misc admin commands are evolving; see `:ClaudeDebugLogs` for state locations.
 
 ## Usage Examples
 
@@ -259,6 +255,18 @@ The plugin can automatically create baselines and track changes when Claude edit
 
 This creates a `.claude/settings.local.json` file in your project that integrates with Claude Code's hook system. This file is developer-specific and should not be committed to version control.
 
+What gets installed:
+- Pre/Post hooks for `Edit|Write|MultiEdit` → `claude-hooks/pre-hook-wrapper.sh` and `claude-hooks/post-hook-wrapper.sh`
+- Bash pre/post hooks for `Bash` → `claude-hooks/bash-hook-wrapper.sh` and `claude-hooks/bash-post-hook-wrapper.sh`
+- Stop hook validator → `claude-hooks/stop-hook-validator.sh` (blocks completion on LSP errors in this turn)
+- User prompt hook → `claude-hooks/user-prompt-hook-wrapper.sh` (creates checkpoints)
+
+The wrappers call the plugin RPC client (`rpc/nvim-rpc.sh`) to reach the running Neovim and only ever use the public events facade `require('nvim-claude.events')` via `events.adapter`.
+
+Notes:
+- The installer sanitizes legacy paths and ensures all scripts are executable.
+- The Stop hook returns `{"decision":"approve"|"block"}`; on block it includes a JSON `reason` with session diagnostics. It preserves session_edited_files on block and clears them on success.
+
 ## MCP Server Integration
 
 The plugin includes an MCP (Model Context Protocol) server that gives Claude access to LSP diagnostics:
@@ -288,7 +296,7 @@ Once configured, Claude can use these tools:
 #### MCP Install Script Not Found
 If you get "MCP install script not found" when running `:ClaudeInstallMCP`:
 
-1. **Debug the installation**: Run `:ClaudeDebugInstall` to see where the plugin is looking for files
+1. **Debug the installation**: Run `:ClaudeDebugLogs` to see paths and open logs
 2. **Check plugin structure**: Ensure the plugin was installed completely with the `mcp-server/` directory
 3. **Manual installation**: If using a non-standard setup, you can manually run:
    ```bash
@@ -300,8 +308,8 @@ If you get "MCP install script not found" when running `:ClaudeInstallMCP`:
 The plugin includes comprehensive debug logging for diagnosing issues:
 - **View logs**: `:ClaudeViewLog` - Opens the debug log file
 - **Clear logs**: `:ClaudeClearLog` - Clears the debug log
-- **Log location**: `~/.local/share/nvim/nvim-claude/logs/<project-hash>-debug.log`
-- **Debug installation**: `:ClaudeDebugInstall` - Shows plugin paths and installation status
+- **Log location**: `~/.local/share/nvim/nvim-claude/logs/<project-hash>/debug.log`
+- **Debug installation/logs**: `:ClaudeDebugLogs` - Shows plugin paths and log locations
 
 See [debugging.md](dev-docs/debugging.md) for detailed debugging information.
 
@@ -310,11 +318,9 @@ See [debugging.md](dev-docs/debugging.md) for detailed debugging information.
 - Check tmux version compatibility (>= 2.0 recommended)
 
 ### Diff Not Showing
-- Check `:ClaudeDebugInlineDiff` for state information
 - View debug log with `:ClaudeViewLog` to see hook execution details
 - Ensure git is available and you're in a git repository
-- Try `:ClaudeResetBaseline` to reset the diff system
-- If state is corrupted, use `:ClaudeResetInlineDiff`
+- Save the file to refresh inline diffs, or run `:lua require('nvim-claude.inline_diff').refresh_inline_diff()`
 
 ### Agent Issues
 - Check available disk space for worktrees
@@ -323,7 +329,7 @@ See [debugging.md](dev-docs/debugging.md) for detailed debugging information.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+Contributions are welcome! Please read dev‑docs/coding‑guidelines.md for module boundaries and facade import rules before sending PRs.
 
 ## License
 

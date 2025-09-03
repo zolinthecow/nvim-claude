@@ -1,5 +1,10 @@
 # nvim-claude Debug Tasks
 
+Note on module names: this document references legacy files from a pre-refactor layout. The current equivalents are:
+- `hooks.lua` → `events/*` (Lua) and `claude-hooks/*.sh` (wrappers)
+- `inline-diff.lua` → `inline_diff/*` (facade in `inline_diff/init.lua`, logic in `hunks.lua`, `navigation.lua`, `render.lua`, etc.)
+- `inline-diff-persistence.lua` → `inline_diff/persistence.lua` + `inline_diff/baseline.lua`
+
 ## ✅ Immediate Issues Resolved!
 
 ### Completed Tasks
@@ -20,7 +25,8 @@ All major debugging tasks have been completed. The plugin is working as intended
 
 #### 1. Shell Injection Vulnerabilities in Git Commands
 **Priority**: Critical  
-**Files**: `hooks.lua`, `inline-diff.lua`, `inline-diff-persistence.lua`
+**Files (legacy)**: `hooks.lua`, `inline-diff.lua`, `inline-diff-persistence.lua`
+See updated modules noted above for current code.
 
 **Problem**: File paths are used directly in shell commands without proper escaping, creating potential shell injection vulnerabilities.
 
@@ -44,7 +50,7 @@ local cmd = string.format('cd "%s" && git show %s:%s', git_root, stash_ref, file
 
 #### 2. Atomic Git Operations in update_baseline_for_file()
 **Priority**: Critical  
-**File**: `hooks.lua:177-341`
+**File (legacy)**: `hooks.lua:177-341` (see `inline_diff/baseline.lua` for commit/tree updates)
 
 **Problem**: The `update_baseline_for_file()` function performs complex multi-step git operations without atomicity. If any step fails mid-process, the baseline state becomes corrupted.
 
@@ -73,7 +79,7 @@ end
 
 #### 3. Race Conditions in Hook System
 **Priority**: High  
-**Files**: `hooks.lua`, `pre-hook-wrapper.sh`
+**Files (legacy)**: `hooks.lua`, `pre-hook-wrapper.sh` → now `events/core.lua` and `claude-hooks/pre-hook-wrapper.sh`
 
 **Problem**: Pre-hook and post-hook can execute concurrently or in unexpected order, leading to state inconsistencies.
 
@@ -91,7 +97,7 @@ end
 
 #### 4. Silent Git Operation Failures
 **Priority**: High  
-**Files**: `inline-diff.lua`, `hooks.lua`, `inline-diff-persistence.lua`
+**Files (legacy)**: `inline-diff.lua`, `hooks.lua`, `inline-diff-persistence.lua` → now `inline_diff/*` and `events/*`
 
 **Problem**: Many git operations fail silently or log errors but continue execution as if nothing happened.
 
@@ -153,7 +159,7 @@ end
 
 #### 7. Git Repository Edge Cases
 **Priority**: Low  
-**Files**: `hooks.lua`, `git.lua`
+**Files (legacy)**: `hooks.lua`, `git.lua` → now `events/*`, `utils/git.lua`
 
 **Problem**: Plugin assumes standard git repository structure and may break in edge cases.
 
@@ -170,7 +176,7 @@ end
 
 #### 8. Large File and Performance Issues
 **Priority**: Low  
-**Files**: `inline-diff.lua`, `utils.lua`
+**Files (legacy)**: `inline-diff.lua`, `utils.lua` → now `inline_diff/*`, `utils/*`
 
 **Problem**: No limits on file sizes processed, could cause memory issues with very large files.
 
@@ -197,8 +203,8 @@ end
 - Add diagnostic messages when hook communication fails
 
 #### 10. **CRITICAL BUG**: Accept Hunk Accepts All Changes
-**Priority**: Critical - **RESOLVED**  
-**File**: `inline-diff.lua:515-643`
+**Priority**: Critical - RESOLVED in `inline_diff/hunks.lua`
+**File (legacy)**: `inline-diff.lua:515-643`
 
 **Problem**: The `accept_current_hunk()` function is fundamentally broken. Instead of accepting only the current hunk, it accepts ALL changes by comparing current file content against itself.
 

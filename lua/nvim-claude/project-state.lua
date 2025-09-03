@@ -174,6 +174,8 @@ function M.list_projects()
   return projects
 end
 
+-- Note: Feature-specific helpers (e.g., edited files) live in their packages.
+
 -- Migrate from old local state if exists
 function M.migrate_local_state(project_root)
   local old_dir = project_root .. '/.nvim-claude'
