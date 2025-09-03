@@ -7,6 +7,28 @@ local diffmod = require 'nvim-claude.inline_diff.diff'
 local render = require 'nvim-claude.inline_diff.render'
 local utils = require 'nvim-claude.utils'
 local project_state = require 'nvim-claude.project-state'
+local nav = require 'nvim-claude.inline_diff.navigation'
+local hunks_mod = require 'nvim-claude.inline_diff.hunks'
+
+-- In-memory diff state per buffer (UI scope only)
+local active_diffs = {}
+
+function M.has_active_diff(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  return active_diffs[bufnr] ~= nil
+end
+
+function M.get_diff_state(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local d = active_diffs[bufnr]
+  if not d then return nil end
+  return { hunks = d.hunks, current_hunk = d.current_hunk }
+end
+
+function M.set_current_hunk(bufnr, idx)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  if active_diffs[bufnr] then active_diffs[bufnr].current_hunk = idx end
+end
 
 local function set_buffer_content(bufnr, content)
   content = content or ''
@@ -69,7 +91,7 @@ function M.run_actions(actions)
   end
 end
 
-function M.recompute_and_render(bufnr, active_diffs)
+function M.recompute_and_render(bufnr)
   if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then return end
   local git_root = utils.get_project_root()
   local ref = git_root and baseline.get_baseline_ref(git_root) or nil
@@ -80,7 +102,6 @@ function M.recompute_and_render(bufnr, active_diffs)
   local base_content = utils.exec(base_cmd) or ''
   local current_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
   local d = diffmod.compute_diff(base_content, current_content)
-  active_diffs = active_diffs or {}
   if not d or not d.hunks or #d.hunks == 0 then
     -- No more hunks: clear state and visuals
     active_diffs[bufnr] = nil
@@ -95,10 +116,66 @@ function M.recompute_and_render(bufnr, active_diffs)
   return d
 end
 
-function M.apply_plan_and_redraw(bufnr, plan, active_diffs)
+function M.apply_plan_and_redraw(bufnr, plan)
   if not plan or plan.status == 'error' then return nil end
   M.run_actions(plan.actions)
-  return M.recompute_and_render(bufnr, active_diffs)
+  return M.recompute_and_render(bufnr)
+end
+
+function M.close_inline_diff(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  active_diffs[bufnr] = nil
+  local ns_id = vim.api.nvim_create_namespace 'nvim_claude_inline_diff'
+  if vim.api.nvim_buf_is_valid(bufnr) then
+    vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+  end
+end
+
+function M.clear_all_visuals()
+  for b, _ in pairs(active_diffs) do
+    M.close_inline_diff(b)
+  end
+end
+
+-- Show diff for a buffer from explicit old/new content
+function M.show_inline_diff(bufnr, old_content, new_content, opts)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  opts = opts or {}
+  local d = diffmod.compute_diff(old_content or '', new_content or '')
+  if not d or not d.hunks or #d.hunks == 0 then return end
+  active_diffs[bufnr] = { hunks = d.hunks, current_hunk = 1 }
+  render.apply_diff_visualization(bufnr, active_diffs[bufnr])
+  -- Buffer-local keymaps for hunk navigation/actions
+  pcall(vim.keymap.set, 'n', ']h', function() nav.next_hunk(bufnr, active_diffs[bufnr]) end, { buffer = bufnr, silent = true })
+  pcall(vim.keymap.set, 'n', '[h', function() nav.prev_hunk(bufnr, active_diffs[bufnr]) end, { buffer = bufnr, silent = true })
+  pcall(vim.keymap.set, 'n', '<leader>ia', function()
+    local plan = hunks_mod.accept_current_hunk(bufnr)
+    if not plan or plan.status == 'error' then
+      local reason = (plan and plan.info and plan.info.reason) or 'accept_failed'
+      vim.notify('Claude: failed to accept hunk (' .. tostring(reason) .. ')', vim.log.levels.ERROR)
+      return
+    end
+    M.apply_plan_and_redraw(bufnr, plan)
+  end, { buffer = bufnr, silent = true, desc = 'Claude: accept current hunk' })
+  pcall(vim.keymap.set, 'n', '<leader>ir', function()
+    local plan = hunks_mod.reject_current_hunk(bufnr)
+    if not plan or plan.status == 'error' then
+      local reason = (plan and plan.info and plan.info.reason) or 'reject_failed'
+      vim.notify('Claude: failed to reject hunk (' .. tostring(reason) .. ')', vim.log.levels.ERROR)
+      return
+    end
+    M.apply_plan_and_redraw(bufnr, plan)
+  end, { buffer = bufnr, silent = true, desc = 'Claude: reject current hunk' })
+  pcall(vim.keymap.set, 'n', '<leader>iA', function()
+    local plan = hunks_mod.accept_all_hunks_in_file(bufnr)
+    M.apply_plan_and_redraw(bufnr, plan)
+  end, { buffer = bufnr, silent = true, desc = 'Claude: accept all hunks in file' })
+  pcall(vim.keymap.set, 'n', '<leader>iR', function()
+    local plan = hunks_mod.reject_all_hunks_in_file(bufnr)
+    M.apply_plan_and_redraw(bufnr, plan)
+  end, { buffer = bufnr, silent = true, desc = 'Claude: reject all hunks in file' })
+
+  if not opts.preserve_cursor then nav.jump_to_hunk(bufnr, active_diffs[bufnr], 1, true) end
 end
 
 return M

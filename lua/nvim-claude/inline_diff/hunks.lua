@@ -187,8 +187,9 @@ local function compute_manual_reject_content(bufnr, hunk)
 end
 
 -- Public: accept the current hunk for a buffer
-function M.accept_current_hunk(bufnr, active_diffs)
-  local data = active_diffs[bufnr]
+function M.accept_current_hunk(bufnr)
+  local exec = require('nvim-claude.inline_diff.executor')
+  local data = exec.get_diff_state(bufnr)
   if not data then
     return { status = 'error', actions = {}, info = { reason = 'no_diff_data', bufnr = bufnr } }
   end
@@ -201,8 +202,9 @@ function M.accept_current_hunk(bufnr, active_diffs)
 end
 
 -- Public: reject the current hunk for a buffer
-function M.reject_current_hunk(bufnr, active_diffs)
-  local data = active_diffs[bufnr]
+function M.reject_current_hunk(bufnr)
+  local exec = require('nvim-claude.inline_diff.executor')
+  local data = exec.get_diff_state(bufnr)
   if not data then
     return { status = 'error', actions = {}, info = { reason = 'no_diff_data', bufnr = bufnr } }
   end

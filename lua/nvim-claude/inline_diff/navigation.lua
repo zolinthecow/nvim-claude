@@ -241,3 +241,21 @@ function M.prev_file()
   local it = items[prev_idx]
   if it.deleted then show_deleted_view(root, it.rel) else vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. it.rel)) end
 end
+
+-- Helpers to coordinate view switching for deleted-file scratch buffers
+function M.close_current_deleted_view_if_any()
+  local name = vim.api.nvim_buf_get_name(0)
+  local rel = parse_deleted_rel(name)
+  if rel then pcall(vim.api.nvim_buf_delete, 0, { force = true }) end
+  return rel
+end
+
+function M.open_restored_if_was_deleted_view(project_root)
+  local name = vim.api.nvim_buf_get_name(0)
+  local rel = parse_deleted_rel(name)
+  if rel and project_root then
+    local full = project_root .. '/' .. rel
+    pcall(vim.api.nvim_buf_delete, 0, { force = true })
+    vim.schedule(function() vim.cmd('edit ' .. vim.fn.fnameescape(full)) end)
+  end
+end
