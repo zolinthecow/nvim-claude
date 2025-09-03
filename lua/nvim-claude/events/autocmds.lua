@@ -5,6 +5,7 @@ local M = {}
 local utils = require 'nvim-claude.utils'
 local session = require 'nvim-claude.events.session'
 local inline_diff = require 'nvim-claude.inline_diff'
+local diffmod = require 'nvim-claude.inline_diff.diff'
 
 local function show_diff_if_tracked(bufnr)
   if not (bufnr and vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr)) then return end
@@ -28,6 +29,12 @@ local function show_diff_if_tracked(bufnr)
   end
 
   local current_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
+  local d = diffmod.compute_diff(baseline_content, current_content)
+  if not d or not d.hunks or #d.hunks == 0 then
+    -- No actual diff vs baseline; untrack stale entry
+    session.remove_edited_file(git_root, relative)
+    return
+  end
   inline_diff.show_inline_diff(bufnr, baseline_content, current_content, { preserve_cursor = true })
 end
 
@@ -46,4 +53,3 @@ function M.setup()
 end
 
 return M
-

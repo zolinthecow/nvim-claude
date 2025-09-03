@@ -6,7 +6,7 @@ local baseline = require 'nvim-claude.inline_diff.baseline'
 local diffmod = require 'nvim-claude.inline_diff.diff'
 local render = require 'nvim-claude.inline_diff.render'
 local utils = require 'nvim-claude.utils'
-local events = require 'nvim-claude.events'
+local project_state = require 'nvim-claude.project-state'
 
 local function set_buffer_content(bufnr, content)
   content = content or ''
@@ -44,7 +44,9 @@ function M.run_action(action)
   elseif action.type == 'project_untrack_file' then
     local git_root = action.git_root or utils.get_project_root()
     if git_root and action.relative_path then
-      events.remove_edited_file(git_root, action.relative_path)
+      local map = project_state.get(git_root, 'claude_edited_files') or {}
+      map[action.relative_path] = nil
+      project_state.set(git_root, 'claude_edited_files', map)
     end
   elseif action.type == 'worktree_apply_reverse_patch' then
     local git_root = action.git_root or utils.get_project_root()
@@ -74,7 +76,12 @@ function M.recompute_and_render(bufnr, active_diffs)
   local d = diffmod.compute_diff(base_content, current_content)
   active_diffs = active_diffs or {}
   if not d or not d.hunks or #d.hunks == 0 then
+    -- No more hunks: clear state and visuals
     active_diffs[bufnr] = nil
+    local ns_id = vim.api.nvim_create_namespace 'nvim_claude_inline_diff'
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+    end
   else
     active_diffs[bufnr] = { hunks = d.hunks, current_hunk = 1 }
     render.apply_diff_visualization(bufnr, active_diffs[bufnr])

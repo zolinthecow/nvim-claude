@@ -10,7 +10,7 @@ local hunks = require 'nvim-claude.inline_diff.hunks'
 local exec = require 'nvim-claude.inline_diff.executor'
 local nav = require 'nvim-claude.inline_diff.navigation'
 local persist = require 'nvim-claude.inline_diff.persistence'
-local events = require 'nvim-claude.events'
+local project_state = require 'nvim-claude.project-state'
 
 -- Private state: active diffs per buffer
 local active_diffs = {}
@@ -50,6 +50,14 @@ function M.show_inline_diff(bufnr, old_content, new_content, opts)
   if not d or not d.hunks or #d.hunks == 0 then return end
   active_diffs[bufnr] = { hunks = d.hunks, current_hunk = 1 }
   render.apply_diff_visualization(bufnr, active_diffs[bufnr])
+  -- Buffer-local hunk navigation
+  pcall(vim.keymap.set, 'n', ']h', function() M.next_hunk(bufnr) end, { buffer = bufnr, silent = true })
+  pcall(vim.keymap.set, 'n', '[h', function() M.prev_hunk(bufnr) end, { buffer = bufnr, silent = true })
+  -- Buffer-local hunk actions
+  pcall(vim.keymap.set, 'n', '<leader>ia', function() M.accept_current_hunk(bufnr) end, { buffer = bufnr, silent = true, desc = 'Claude: accept current hunk' })
+  pcall(vim.keymap.set, 'n', '<leader>ir', function() M.reject_current_hunk(bufnr) end, { buffer = bufnr, silent = true, desc = 'Claude: reject current hunk' })
+  pcall(vim.keymap.set, 'n', '<leader>iA', function() M.accept_all_hunks(bufnr) end, { buffer = bufnr, silent = true, desc = 'Claude: accept all hunks in file' })
+  pcall(vim.keymap.set, 'n', '<leader>iR', function() M.reject_all_hunks(bufnr) end, { buffer = bufnr, silent = true, desc = 'Claude: reject all hunks in file' })
   if not opts.preserve_cursor then nav.jump_to_hunk(bufnr, active_diffs[bufnr], 1, true) end
 end
 
@@ -97,12 +105,22 @@ end
 function M.accept_current_hunk(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local plan = hunks.accept_current_hunk(bufnr, active_diffs)
+  if not plan or plan.status == 'error' then
+    local reason = (plan and plan.info and plan.info.reason) or 'accept_failed'
+    vim.notify('Claude: failed to accept hunk (' .. tostring(reason) .. ')', vim.log.levels.ERROR)
+    return nil
+  end
   return apply_and_redraw(bufnr, plan)
 end
 
 function M.reject_current_hunk(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local plan = hunks.reject_current_hunk(bufnr, active_diffs)
+  if not plan or plan.status == 'error' then
+    local reason = (plan and plan.info and plan.info.reason) or 'reject_failed'
+    vim.notify('Claude: failed to reject hunk (' .. tostring(reason) .. ')', vim.log.levels.ERROR)
+    return nil
+  end
   return apply_and_redraw(bufnr, plan)
 end
 
@@ -140,8 +158,39 @@ end
 local function project_files_with_diffs()
   local root = utils.get_project_root()
   if not root then return root, {} end
-  local list = events.list_edited_files(root)
-  return root, list
+  local map = project_state.get(root, 'claude_edited_files') or {}
+  local baseline_ref = baseline.get_baseline_ref(root)
+  local kept = {}
+  local changed = false
+  for rel, v in pairs(map) do
+    if v then
+      local full = root .. '/' .. rel
+      if vim.fn.filereadable(full) == 1 then
+        local base_content = ''
+        if baseline_ref and baseline_ref ~= '' then
+          local cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", root, baseline_ref, rel)
+          base_content = utils.exec(cmd) or ''
+          if base_content:match('^fatal:') or base_content:match('^error:') then base_content = '' end
+        end
+        local current = utils.read_file(full) or ''
+        local d = require('nvim-claude.inline_diff.diff').compute_diff(base_content, current)
+        if d and d.hunks and #d.hunks > 0 then
+          table.insert(kept, rel)
+        else
+          -- No diff; prune stale
+          map[rel] = nil
+          changed = true
+        end
+      else
+        -- Missing file; prune
+        map[rel] = nil
+        changed = true
+      end
+    end
+  end
+  if changed then project_state.set(root, 'claude_edited_files', map) end
+  table.sort(kept)
+  return root, kept
 end
 
 local function current_relative_path(project_root)

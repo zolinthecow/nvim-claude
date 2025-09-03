@@ -23,17 +23,19 @@ get_debug_log_file() {
 # Read JSON input from stdin
 INPUT=$(cat)
 
-# Get the current working directory from the JSON input
+# Get the working directory from JSON, then resolve to git root for state lookups
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
-if [ -z "$CWD" ]; then
-    CWD=$(pwd)
-fi
+if [ -z "$CWD" ]; then CWD=$(pwd); fi
 
-# Change to the project directory to ensure correct project state loading
-cd "$CWD" 2>/dev/null || true
+# Resolve project root (git toplevel if available)
+PROJECT_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$PROJECT_ROOT" ]; then PROJECT_ROOT="$CWD"; fi
+
+# Change to the project root to ensure correct project state loading
+cd "$PROJECT_ROOT" 2>/dev/null || true
 
 # Get project-specific debug log file
-DEBUG_LOG=$(get_debug_log_file "$CWD")
+DEBUG_LOG=$(get_debug_log_file "$PROJECT_ROOT")
 
 # Get the path to the MCP environment Python
 MCP_PYTHON="$HOME/.local/share/nvim/nvim-claude/mcp-env/bin/python"
@@ -42,7 +44,7 @@ MCP_PYTHON="$HOME/.local/share/nvim/nvim-claude/mcp-env/bin/python"
 if [ ! -f "$MCP_PYTHON" ]; then
     echo "# ERROR: MCP environment not found at $MCP_PYTHON" >> "$DEBUG_LOG"
     # Allow completion if MCP not installed
-    echo '{"continue": true}'
+    echo '{"decision": "approve"}'
     exit 0
 fi
 
@@ -55,7 +57,7 @@ STATE_FILE="$PROJECT_STATE_DIR/state.json"
 if [ -f "$STATE_FILE" ]; then
     # Use jq to extract session_edited_files for the current project
     # The state file uses project paths as keys
-    SESSION_FILES=$(cat "$STATE_FILE" | jq -r --arg cwd "$CWD" '.[$cwd].session_edited_files // [] | .[]' 2>/dev/null)
+    SESSION_FILES=$(cat "$STATE_FILE" | jq -r --arg cwd "$PROJECT_ROOT" '.[$cwd].session_edited_files // [] | .[]' 2>/dev/null)
     
     # Debug: Log the files we found
     echo "DEBUG: Found session files: $SESSION_FILES" >> "$DEBUG_LOG"
@@ -63,7 +65,7 @@ if [ -f "$STATE_FILE" ]; then
     if [ -z "$SESSION_FILES" ]; then
         echo "# INFO: No session edited files found for project $CWD" >> "$DEBUG_LOG"
         # No files edited, allow completion
-        echo '{"continue": true}'
+        echo '{"decision": "allow"}'
         exit 0
     fi
     
@@ -106,7 +108,7 @@ if [ -f "$STATE_FILE" ]; then
 else
     echo "# INFO: No project state file found" >> "$DEBUG_LOG"
     # No state file, allow completion
-    echo '{"continue": true}'
+    echo '{"decision": "allow"}'
     exit 0
 fi
 
@@ -129,21 +131,17 @@ fi
 
 # Check if we should block - only block on errors, not warnings
 if [ "$ERROR_COUNT" -gt 0 ]; then
-    REASON="Found $ERROR_COUNT errors in edited files. "
-    REASON="${REASON}Please fix these errors before completing. "
-    REASON="${REASON}Use 'mcp__nvim-lsp__get_session_diagnostics' to see details."
+    # Fetch detailed session diagnostics to include in the reason
+    SESSION_JSON=$("$MCP_PYTHON" "$SCRIPT_DIR/../rpc/get-session-diagnostics.py" 2>/dev/null)
+    # Build reason with full diagnostics JSON
+    JSON_REASON=$(printf '%s' "$SESSION_JSON" | jq -Rs .)
     
-    echo "# INFO: Blocking due to $ERROR_COUNT errors, clearing session tracking" >> "$DEBUG_LOG"
-    # Clear session tracking after blocking (so errors don't accumulate)
-    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events").clear_turn_files()' 2>/dev/null || true
+    echo "# INFO: Blocking due to $ERROR_COUNT errors; preserving session_edited_files for visibility" >> "$DEBUG_LOG"
+    # Do NOT clear session tracking on block, so users/tools can inspect diagnostics
+    # It will be cleared on successful validation (allow path) below
     
-    # Return block decision
-    cat <<EOF
-{
-    "decision": "block",
-    "reason": "$REASON"
-}
-EOF
+    # Return block decision (no "continue" field); reason is a proper JSON string
+    echo "{\"decision\":\"block\",\"reason\":$JSON_REASON}"
 else
     # No errors found, allow completion (warnings are okay)
     if [ "$WARNING_COUNT" -gt 0 ]; then
@@ -152,7 +150,7 @@ else
     
     echo "# INFO: No errors found, clearing session tracking and allowing completion" >> "$DEBUG_LOG"
     # Clear session tracking on successful validation
-    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events").clear_turn_files()' 2>/dev/null || true
+    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events").clear_turn_files()' >/dev/null 2>&1 || true
     
-    echo '{"continue": true}'
+    echo '{"decision": "allow"}'
 fi

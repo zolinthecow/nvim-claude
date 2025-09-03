@@ -49,10 +49,12 @@ function M.post_tool_use(file_path)
     session.add_edited_file(git_root, relative)
     add_to_session(file_path)
 
-    -- If buffer is loaded, refresh inline diff via façade
+    -- If buffer is loaded, refresh inline diff via façade (schedule to avoid re-entrancy)
     local bufnr = vim.fn.bufnr(file_path)
     if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-      pcall(require('nvim-claude.inline_diff').refresh_inline_diff, bufnr)
+      vim.schedule(function()
+        pcall(require('nvim-claude.inline_diff').refresh_inline_diff, bufnr)
+      end)
     end
   end
 

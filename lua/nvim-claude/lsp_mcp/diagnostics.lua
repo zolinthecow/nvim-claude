@@ -68,16 +68,19 @@ function M.get_for_files(file_paths)
       end
     end
 
-    -- Trigger LSP attach for each buffer
+    -- Trigger LSP attach for each buffer by simulating common events
     for _, info in ipairs(files_to_check) do
       local b = info.bufnr
       vim.cmd('buffer ' .. b)
       vim.api.nvim_buf_call(b, function()
         vim.cmd('filetype detect')
-        -- Nudge basic events without altering contents
-        vim.api.nvim_exec_autocmds('InsertLeave', { buffer = b })
-        vim.api.nvim_exec_autocmds('TextChanged', { buffer = b })
+        pcall(vim.api.nvim_exec_autocmds, 'BufReadPost', { buffer = b })
+        pcall(vim.api.nvim_exec_autocmds, 'BufEnter', { buffer = b })
+        pcall(vim.api.nvim_exec_autocmds, 'InsertLeave', { buffer = b })
+        pcall(vim.api.nvim_exec_autocmds, 'TextChanged', { buffer = b })
       end)
+      -- Wait briefly for LSP to attach to this buffer
+      vim.wait(500, function() return #vim.lsp.get_clients({ bufnr = b }) > 0 end, 50)
     end
   end
 
@@ -86,10 +89,21 @@ function M.get_for_files(file_paths)
     local log_path = logger.get_mcp_debug_log_file()
     local f = io.open(log_path, 'a')
     if f then
-      f:write(string.format('[%s] lsp_mcp.diag: waiting 3s for diagnostics\n', os.date('%Y-%m-%d %H:%M:%S')))
+      f:write(string.format('[%s] lsp_mcp.diag: buffers=%d, waiting for diagnostics...\n', os.date('%Y-%m-%d %H:%M:%S'), #files_to_check))
       f:close()
     end
-    vim.wait(3000, function() return false end)
+    -- Wait up to ~3s for diagnostics to populate
+    local waited = 0
+    while waited < 3000 do
+      local any = false
+      for _, info in ipairs(files_to_check) do
+        local diags = vim.diagnostic.get(info.bufnr)
+        if diags and #diags > 0 then any = true break end
+      end
+      if any then break end
+      vim.wait(100, function() return false end)
+      waited = waited + 100
+    end
   end
 
   -- Collect diagnostics

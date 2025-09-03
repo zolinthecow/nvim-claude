@@ -82,11 +82,83 @@ function M.install()
   local bash_post = root .. 'claude-hooks/bash-post-hook-wrapper.sh'
   local stop = root .. 'claude-hooks/stop-hook-validator.sh'
 
+  -- Ensure hook scripts are executable
+  local scripts = {
+    pre, post, bash_pre, bash_post, stop,
+    root .. 'claude-hooks/user-prompt-hook-wrapper.sh',
+    root .. 'claude-hooks/hook-common.sh',
+    root .. 'rpc/nvim-rpc.sh',
+  }
+  for _, p in ipairs(scripts) do
+    if vim.fn.filereadable(p) == 1 then
+      pcall(function() utils.exec(string.format('chmod +x %s 2>/dev/null', vim.fn.shellescape(p))) end)
+    end
+  end
+
+  -- Prune legacy script paths from existing settings (moved from scripts/ to claude-hooks/)
+  local function prune_legacy(list)
+    local function keep_entry(e)
+      if not e or not e.hooks then return false end
+      local new_hooks = {}
+      for _, h in ipairs(e.hooks) do
+        if h.command and not h.command:match('/scripts/') then
+          table.insert(new_hooks, h)
+        end
+      end
+      e.hooks = new_hooks
+      return #e.hooks > 0
+    end
+    local out = {}
+    for _, e in ipairs(list or {}) do
+      if e.matcher then
+        if keep_entry(e) then table.insert(out, e) end
+      else
+        if keep_entry(e) then table.insert(out, e) end
+      end
+    end
+    return out
+  end
+  settings.hooks.PreToolUse = prune_legacy(settings.hooks.PreToolUse)
+  settings.hooks.PostToolUse = prune_legacy(settings.hooks.PostToolUse)
+  settings.hooks.Stop = prune_legacy(settings.hooks.Stop)
+
   add_command_to_section(settings.hooks.PreToolUse, pre, 'Edit|Write|MultiEdit')
   add_command_to_section(settings.hooks.PostToolUse, post, 'Edit|Write|MultiEdit')
   add_command_to_section(settings.hooks.PreToolUse, bash_pre, 'Bash')
   add_command_to_section(settings.hooks.PostToolUse, bash_post, 'Bash')
   add_command_to_section(settings.hooks.Stop, stop, nil)
+
+  -- Sanitize stale/invalid permissions from older versions
+  do
+    local perms = settings.permissions or {}
+    local allow = perms.allow or {}
+    local new_allow, seen_bash = {}, false
+    local function valid_bash_pattern(item)
+      if item == 'Bash' then return true end
+      local inner = item:match('^Bash%((.*)%)$')
+      if not inner then return false end
+      inner = inner:gsub('^%s+', ''):gsub('%s+$', '')
+      if inner == '' then return false end
+      -- Reject patterns with quotes or newlines which Claude settings parser treats poorly
+      if inner:match('[\n\r]') or inner:match('"') then return false end
+      -- Drop references to removed scripts/modules
+      if inner:match('nvr%-proxy') or inner:match('mcp%-bridge') or inner:match('nvim%-claude%.hooks') then return false end
+      return true
+    end
+    for _, item in ipairs(allow) do
+      if type(item) == 'string' then
+        if item == 'Bash' then
+          if not seen_bash then table.insert(new_allow, 'Bash'); seen_bash = true end
+        elseif item:match('^Bash%(') and valid_bash_pattern(item) then
+          table.insert(new_allow, item)
+        end
+      end
+    end
+    -- Always ensure plain Bash is allowed to avoid overly strict patterns causing failures
+    if not seen_bash then table.insert(new_allow, 'Bash') end
+    if not settings.permissions then settings.permissions = {} end
+    settings.permissions.allow = new_allow
+  end
 
   local ok, err = utils.write_json(settings_file, settings)
   if not ok then

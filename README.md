@@ -1,4 +1,4 @@
-# nvim-claude
+# nvim-claude - Another test edit
 
 A powerful Neovim plugin for seamless integration with Claude AI. Chat with Claude directly in tmux, review code changes with inline diffs, and deploy background agents for complex tasks - all without leaving your editor. ✨
 
@@ -11,7 +11,7 @@ A powerful Neovim plugin for seamless integration with Claude AI. Chat with Clau
 - **LSP Integration**: Give Claude real-time access to LSP diagnostics via MCP
 - **Smart Selection**: Send buffer content, visual selections, or git hunks to Claude
 
-## Requirements
+## Requirements - Another test edit
 
 ### Required
 - Neovim >= 0.9.0

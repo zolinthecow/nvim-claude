@@ -48,6 +48,8 @@ function M.apply_patch_to_content(content, patch, reverse, target_path)
   local temp_file = temp_dir .. '/' .. target
   local patch_file = temp_dir .. '/patch.patch'
 
+  -- Ensure trailing newline for stable patching semantics
+  if content ~= '' and not content:match('\n$') then content = content .. '\n' end
   if not utils.write_file(temp_file, content) then
     vim.fn.delete(temp_dir, 'rf')
     return nil
