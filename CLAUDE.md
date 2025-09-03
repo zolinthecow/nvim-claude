@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Agent guide
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents such as Claude Code (claude.ai/code) or Codex when working with code in this repository.
 
 ## Development Commands
 
@@ -82,7 +82,7 @@ The plugin maintains several types of state:
 - **Persistence Locations** (all stored globally):
   - Inline diff state: `~/.local/share/nvim/nvim-claude/projects/<path-hash>/inline-diff-state.json`
   - Agent registry: `~/.local/share/nvim/nvim-claude/projects/<path-hash>/agent-registry.json`
-  - Debug logs: `~/.local/share/nvim/nvim-claude/logs/<path-hash>-debug.log`
+  - Debug logs: `~/.local/share/nvim/nvim-claude/logs/<path-hash>/debug.log`
   - Server file: `/tmp/nvim-claude-<path-hash>-server` (or `$XDG_RUNTIME_DIR`)
 - **Checkpoint Data**: Stored as git commits with refs `refs/nvim-claude/checkpoints/*`
 
@@ -323,7 +323,7 @@ For diagnostics: Claude requests diagnostics → MCP server spawns headless Neov
   - Verify MCP venv: `~/.local/share/nvim/nvim-claude/mcp-env/`
   - Check pynvim installed in venv
   - Use `:ClaudeDebugLogs` to find and open logs
-- Stop hook: check the per-project `stop-hook-debug.log` path from `:ClaudeDebugLogs`
+- Stop hook: logs are unified in the same per-project `debug.log` (see `:ClaudeDebugLogs`)
 
 ### Hook Debugging Methodology
 
@@ -331,11 +331,14 @@ When hooks aren't working as expected, follow this step-by-step debugging proces
 
 #### 1. Check the Hook Logs
 ```bash
-# View recent hook activity
-tail -50 ~/.local/share/nvim/nvim-claude-hooks.log
+# Find project-specific debug log path in Neovim
+:ClaudeDebugLogs
+
+# Or tail the log directly (replace <hash>)
+tail -50 ~/.local/share/nvim/nvim-claude/logs/<hash>/debug.log
 
 # Search for specific file or command
-tail -100 ~/.local/share/nvim/nvim-claude-hooks.log | grep -A5 -B5 "filename"
+tail -100 ~/.local/share/nvim/nvim-claude/logs/<hash>/debug.log | grep -A5 -B5 "filename"
 ```
 
 #### 2. Test nvim-rpc Commands Manually
@@ -421,8 +424,8 @@ When debugging complex issues like deletion tracking:
 :source lua/nvim-claude/init.lua
 
 # 3. Create test file through Claude (to trigger pre-hook)
-# 4. Check logs immediately
-tail -20 ~/.local/share/nvim/nvim-claude-hooks.log
+# 4. Check logs immediately (replace <hash>)
+tail -20 ~/.local/share/nvim/nvim-claude/logs/<hash>/debug.log
 
 # 5. Test the specific operation (edit/delete)
 # 6. Verify state changes
@@ -485,7 +488,7 @@ This prevents future developers (including future Claude instances) from repeati
 ## Coding Guidelines
 - Always use single quotes instead of double quotes.
 
-### Important Hints for Claude Code
+### Important Hints
 - Hooks use wrapper scripts that handle base64 encoding before calling nvim-rpc
 - Wrapper scripts live in `claude-hooks/` and the RPC client is `rpc/nvim-rpc.sh`
 - RPC uses Python with pynvim for communication (no nvr dependency)

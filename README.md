@@ -192,7 +192,7 @@ Most inline diff actions are keymaps (listed above). Programmatic control is ava
 - `:ClaudeDebug` - Show tmux pane debug info
 - `:ClaudeDebugAgents` - Debug agent state
 - `:ClaudeDebugRegistry` - Debug agent registry
-- `:ClaudeDebugLogs` - Show log file locations and open them
+- `:ClaudeDebugLogs` - Show project log location and open it
 - `:ClaudeViewLog` - View main debug log file
 - `:ClaudeClearLog` - Clear main debug log file
 
@@ -308,7 +308,7 @@ If you get "MCP install script not found" when running `:ClaudeInstallMCP`:
 The plugin includes comprehensive debug logging for diagnosing issues:
 - **View logs**: `:ClaudeViewLog` - Opens the debug log file
 - **Clear logs**: `:ClaudeClearLog` - Clears the debug log
-- **Log location**: `~/.local/share/nvim/nvim-claude/logs/<project-hash>-debug.log`
+- **Log location**: `~/.local/share/nvim/nvim-claude/logs/<project-hash>/debug.log`
 - **Debug installation/logs**: `:ClaudeDebugLogs` - Shows plugin paths and log locations
 
 See [debugging.md](dev-docs/debugging.md) for detailed debugging information.

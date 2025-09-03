@@ -6,10 +6,10 @@ nvim-claude includes a comprehensive file-based logging system to help diagnose 
 
 ### Log File Location
 
-Debug logs are stored globally per project:
+Debug logs are stored per project:
 
 ```
-~/.local/share/nvim/nvim-claude/logs/<project-hash>-debug.log
+~/.local/share/nvim/nvim-claude/logs/<project-hash>/debug.log
 ```
 
 Where `<project-hash>` is a hash of the project's absolute path.
@@ -117,7 +117,7 @@ If you see files tracked in `inline-diff-state.json` but no baseline reference:
 
 ### Log Rotation
 
-The log file automatically rotates when it exceeds 10MB to prevent disk space issues. The previous log is saved as `debug.log.old`.
+The log file automatically rotates when it exceeds 10MB to prevent disk space issues. The previous log is saved as `debug.log.old` in the same per-project log directory.
 
 ### Privacy Note
 

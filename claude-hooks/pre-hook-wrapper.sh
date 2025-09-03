@@ -2,18 +2,23 @@
 # Pre-hook wrapper for nvim-claude
 # This script is called by Claude Code before file editing tools
 
-LOG_FILE="$HOME/.local/share/nvim/nvim-claude-hooks.log"
-echo "[$(date)] Pre-hook wrapper called" >> "$LOG_FILE"
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source common helpers
+source "$SCRIPT_DIR/hook-common.sh"
 
 # Read the JSON input from stdin
 JSON_INPUT=$(cat)
-echo "[$(date)] JSON input: $JSON_INPUT" >> "$LOG_FILE"
+
+# Switch logging to project-specific debug log
+set_project_log_from_json "$JSON_INPUT"
+
+log "Pre-hook wrapper called"
+log "JSON input: $JSON_INPUT"
 
 # Extract file_path from tool_input.file_path
 FILE_PATH=$(echo "$JSON_INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null || echo "")
-
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Call the proxy script with the file path via events adapter
 if [ -n "$FILE_PATH" ]; then

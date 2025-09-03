@@ -90,8 +90,6 @@ function M.prev_hunk(bufnr, diff_data)
   M.jump_to_hunk(bufnr, diff_data, prev_idx)
 end
 
-return M
-
 -- Below: file-level navigation helpers (edited items, list, next/prev)
 
 local project_state = require 'nvim-claude.project-state'
@@ -259,3 +257,5 @@ function M.open_restored_if_was_deleted_view(project_root)
     vim.schedule(function() vim.cmd('edit ' .. vim.fn.fnameescape(full)) end)
   end
 end
+
+return M

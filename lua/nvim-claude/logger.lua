@@ -28,10 +28,8 @@ end
 -- Get stop-hook debug log file path for bash scripts
 function M.get_stop_hook_log_file()
   local dir = project_log_dir()
-  if dir then
-    return dir .. '/stop-hook-debug.log'
-  end
-  return '/tmp/stop-hook-debug.log'
+  if dir then return dir .. '/debug.log' end
+  return vim.fn.expand '~/.local/share/nvim/nvim-claude-debug.log'
 end
 
 -- Get MCP debug log file path

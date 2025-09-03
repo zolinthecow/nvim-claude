@@ -2,23 +2,15 @@
 # Stop hook validator for nvim-claude
 # Checks for lint errors in edited files and blocks completion if found
 
+#!/bin/bash
+# Stop hook validator for nvim-claude
+# Checks for lint errors in edited files and blocks completion if found
+
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Get project-specific debug log file
-get_debug_log_file() {
-    local project_path="$1"
-    if [ -n "$project_path" ]; then
-        # Use same hashing as logger.lua - project-specific folder structure
-        local key_hash=$(echo -n "$project_path" | shasum -a 256 | cut -d' ' -f1)
-        local short_hash=${key_hash:0:8}
-        local log_dir="$HOME/.local/share/nvim/nvim-claude/logs/$short_hash"
-        mkdir -p "$log_dir"
-        echo "$log_dir/stop-hook-debug.log"
-    else
-        echo "/tmp/stop-hook-debug.log"  # fallback
-    fi
-}
+# Source shared logging utilities (per-project debug.log)
+source "$SCRIPT_DIR/hook-common.sh"
 
 # Read JSON input from stdin
 INPUT=$(cat)
@@ -27,22 +19,18 @@ INPUT=$(cat)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 if [ -z "$CWD" ]; then CWD=$(pwd); fi
 
-# Resolve project root (git toplevel if available)
+# Set project log from the JSON and derive project root
+set_project_log_from_json "$INPUT"
 PROJECT_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
 if [ -z "$PROJECT_ROOT" ]; then PROJECT_ROOT="$CWD"; fi
-
-# Change to the project root to ensure correct project state loading
 cd "$PROJECT_ROOT" 2>/dev/null || true
-
-# Get project-specific debug log file
-DEBUG_LOG=$(get_debug_log_file "$PROJECT_ROOT")
 
 # Get the path to the MCP environment Python
 MCP_PYTHON="$HOME/.local/share/nvim/nvim-claude/mcp-env/bin/python"
 
 # Check if the MCP environment exists
 if [ ! -f "$MCP_PYTHON" ]; then
-    echo "# ERROR: MCP environment not found at $MCP_PYTHON" >> "$DEBUG_LOG"
+    log "# ERROR: MCP environment not found at $MCP_PYTHON"
     # Approve completion if MCP not installed
     echo '{"decision": "approve"}'
     exit 0
@@ -60,10 +48,10 @@ if [ -f "$STATE_FILE" ]; then
     SESSION_FILES=$(cat "$STATE_FILE" | jq -r --arg cwd "$PROJECT_ROOT" '.[$cwd].session_edited_files // [] | .[]' 2>/dev/null)
     
     # Debug: Log the files we found
-    echo "DEBUG: Found session files: $SESSION_FILES" >> "$DEBUG_LOG"
+    log "DEBUG: Found session files: $SESSION_FILES"
     
     if [ -z "$SESSION_FILES" ]; then
-        echo "# INFO: No session edited files found for project $CWD" >> "$DEBUG_LOG"
+        log "# INFO: No session edited files found for project $CWD"
         # No files edited, approve completion
         echo '{"decision": "approve"}'
         exit 0
@@ -90,9 +78,9 @@ if [ -f "$STATE_FILE" ]; then
                 BATCH_ARGS="$BATCH_ARGS \"${FILE_LIST[j]}\""
             done
             
-            echo "DEBUG: Batch $((i/BATCH_SIZE + 1)): $MCP_PYTHON $SCRIPT_DIR/../rpc/check-diagnostics.py $BATCH_ARGS" >> "$DEBUG_LOG"
+            log "DEBUG: Batch $((i/BATCH_SIZE + 1)): $MCP_PYTHON $SCRIPT_DIR/../rpc/check-diagnostics.py $BATCH_ARGS"
             BATCH_JSON=$(eval "$MCP_PYTHON" "$SCRIPT_DIR/../rpc/check-diagnostics.py" $BATCH_ARGS 2>/dev/null)
-            echo "DEBUG: Batch result: $BATCH_JSON" >> "$DEBUG_LOG"
+            log "DEBUG: Batch result: $BATCH_JSON"
             
             # Parse batch results and add to totals
             BATCH_ERRORS=$(echo "$BATCH_JSON" | jq -r '.errors // 0')
@@ -106,14 +94,14 @@ if [ -f "$STATE_FILE" ]; then
         DIAGNOSTIC_JSON='{"errors":0,"warnings":0}'
     fi
 else
-    echo "# INFO: No project state file found" >> "$DEBUG_LOG"
+    log "# INFO: No project state file found"
     # No state file, approve completion
     echo '{"decision": "approve"}'
     exit 0
 fi
 
 # Debug: Log what we got from check-diagnostics.py
-echo "DEBUG: check-diagnostics.py returned: $DIAGNOSTIC_JSON" >> "$DEBUG_LOG"
+log "DEBUG: check-diagnostics.py returned: $DIAGNOSTIC_JSON"
 
 # Parse diagnostic counts
 ERROR_COUNT=$(echo "$DIAGNOSTIC_JSON" | jq -r '.errors // 0')
@@ -136,7 +124,7 @@ if [ "$ERROR_COUNT" -gt 0 ]; then
     # Build reason with full diagnostics JSON
     JSON_REASON=$(printf '%s' "$SESSION_JSON" | jq -Rs .)
     
-    echo "# INFO: Blocking due to $ERROR_COUNT errors; preserving session_edited_files for visibility" >> "$DEBUG_LOG"
+    log "# INFO: Blocking due to $ERROR_COUNT errors; preserving session_edited_files for visibility"
     # Do NOT clear session tracking on block, so users/tools can inspect diagnostics
     # It will be cleared on successful validation (approve path) below
     
@@ -145,10 +133,10 @@ if [ "$ERROR_COUNT" -gt 0 ]; then
 else
     # No errors found, approve completion (warnings are okay)
     if [ "$WARNING_COUNT" -gt 0 ]; then
-        echo "# INFO: Found $WARNING_COUNT warnings but approving completion" >> "$DEBUG_LOG"
+        log "# INFO: Found $WARNING_COUNT warnings but approving completion"
     fi
     
-    echo "# INFO: No errors found, clearing session tracking and aproving completion" >> "$DEBUG_LOG"
+    log "# INFO: No errors found, clearing session tracking and aproving completion"
     # Clear session tracking on successful validation
     TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr 'v:lua.require("nvim-claude.events").clear_turn_files()' >/dev/null 2>&1 || true
     
