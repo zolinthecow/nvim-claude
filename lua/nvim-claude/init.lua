@@ -172,12 +172,15 @@ function M.setup(user_config)
   M.git = M.utils.git
   M.commands = require 'nvim-claude.commands'
   M.events = require 'nvim-claude.events'
+  M.agent_provider = require 'nvim-claude.agent_provider'
   M.settings_updater = require 'nvim-claude.settings-updater'
   M.background_agent = require 'nvim-claude.background_agent'
 
   -- Initialize submodules with config
   M.tmux.setup(M.config.tmux)
   M.git.setup(M.config.agents)
+  -- Initialize provider system (Claude-only for now)
+  M.agent_provider.setup({ provider = 'claude' })
   M.background_agent.registry_setup(M.config.agents)
   M.events.setup()
 
