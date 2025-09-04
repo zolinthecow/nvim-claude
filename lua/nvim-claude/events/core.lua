@@ -104,10 +104,29 @@ end
 function M.user_prompt_submit(prompt)
   local checkpoint = require('nvim-claude.checkpoint')
   local logger = require('nvim-claude.logger')
-  if checkpoint.is_preview_mode() then
-    checkpoint.accept_checkpoint()
+  -- Try to scope operations to the project implied by TARGET_FILE (set by hook wrapper)
+  local target = vim.fn.getenv('TARGET_FILE')
+  local git_root_override = nil
+  if target and target ~= '' and target ~= vim.NIL then
+    local uv = vim.loop
+    local stat = (uv and uv.fs_stat) and uv.fs_stat(target) or nil
+    if stat and stat.type == 'directory' then
+      local cmd = string.format('cd %s && git rev-parse --show-toplevel 2>/dev/null', vim.fn.shellescape(target))
+      local out = vim.fn.system(cmd)
+      if vim.v.shell_error == 0 and out and out ~= '' then
+        git_root_override = out:gsub('%s+$', '')
+      else
+        git_root_override = target
+      end
+    else
+      git_root_override = require('nvim-claude.utils').get_project_root_for_file(target)
+    end
   end
-  local id = checkpoint.create_checkpoint(prompt)
+  -- If preview mode is active for this project, accept it first
+  if checkpoint.is_preview_mode(git_root_override) then
+    checkpoint.accept_checkpoint(git_root_override)
+  end
+  local id = checkpoint.create_checkpoint(prompt, git_root_override)
   if id then
     local preview = (prompt or ''):gsub('\n',' '):sub(1,50)
     logger.info('user_prompt_submit_hook', 'Created checkpoint', { checkpoint_id = id, prompt_preview = preview })

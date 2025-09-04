@@ -6,6 +6,24 @@ local utils = require('nvim-claude.utils')
 local logger = require('nvim-claude.logger')
 local project_state = require('nvim-claude.project-state')
 
+-- Resolve the git root for checkpoint operations.
+-- Priority:
+-- 1) explicit git_root override if provided
+-- 2) current buffer's file path (more reliable across mixed projects)
+-- 3) fallback to process cwd via utils.get_project_root()
+local function resolve_git_root(git_root_override)
+  if git_root_override and git_root_override ~= '' then
+    return git_root_override
+  end
+  local current_file = ''
+  pcall(function() current_file = vim.api.nvim_buf_get_name(0) or '' end)
+  if current_file and current_file ~= '' then
+    local root = utils.get_project_root_for_file(current_file)
+    if root and root ~= '' then return root end
+  end
+  return utils.get_project_root()
+end
+
 -- Generate checkpoint ID from timestamp
 local function generate_checkpoint_id()
   return 'cp_' .. os.time() .. '_' .. math.random(1000, 9999)
@@ -17,8 +35,8 @@ local function get_checkpoint_ref(checkpoint_id)
 end
 
 -- Create a checkpoint commit with all current changes
-function M.create_checkpoint(prompt_text)
-  local git_root = utils.get_project_root()
+function M.create_checkpoint(prompt_text, git_root)
+  git_root = resolve_git_root(git_root)
   if not git_root then
     logger.error('checkpoint.create_checkpoint', 'No git repository found')
     return nil
@@ -104,7 +122,7 @@ end
 
 -- List all checkpoints
 function M.list_checkpoints()
-  local git_root = utils.get_project_root()
+  local git_root = resolve_git_root(nil)
   if not git_root then
     return {}
   end
@@ -138,13 +156,13 @@ function M.get_current_checkpoint()
   return nil
 end
 
-function M.is_preview_mode()
-  local state = M.load_state()
+function M.is_preview_mode(git_root)
+  local state = M.load_state(git_root)
   return state and state.mode == 'preview'
 end
 
-function M.load_state()
-  local git_root = utils.get_project_root()
+function M.load_state(git_root)
+  git_root = resolve_git_root(git_root)
   if not git_root then return nil end
   local state = project_state.get(git_root, 'checkpoint_state')
   if state and next(state) ~= nil then return state end
@@ -161,8 +179,8 @@ function M.load_state()
   return legacy
 end
 
-function M.save_state(state)
-  local git_root = utils.get_project_root()
+function M.save_state(state, git_root)
+  git_root = resolve_git_root(git_root)
   if not git_root then return false end
   local ok = project_state.set(git_root, 'checkpoint_state', state or {})
   if not ok then
@@ -172,14 +190,14 @@ function M.save_state(state)
   return true
 end
 
-function M.enter_preview_mode(checkpoint_id)
+function M.enter_preview_mode(checkpoint_id, git_root)
   logger.info('checkpoint.enter_preview_mode', 'Called with checkpoint_id', { checkpoint_id = checkpoint_id })
-  local git_root = utils.get_project_root()
+  git_root = resolve_git_root(git_root)
   if not git_root then
     vim.notify('No git repository found', vim.log.levels.ERROR)
     return false
   end
-  local current_state = M.load_state()
+  local current_state = M.load_state(git_root)
   if current_state and current_state.mode == 'preview' then
     vim.notify('Another Neovim instance is browsing checkpoints', vim.log.levels.ERROR)
     return false
@@ -229,18 +247,18 @@ function M.enter_preview_mode(checkpoint_id)
     return false
   end
   local state = { mode = 'preview', preview_checkpoint = checkpoint_id, original_ref = original_ref, preview_stash = preview_stash, entered_at = os.time() }
-  M.save_state(state)
+  M.save_state(state, git_root)
   vim.notify('Entered preview mode for checkpoint: ' .. checkpoint_id, vim.log.levels.INFO)
   return true
 end
 
-function M.exit_preview_mode()
-  local state = M.load_state()
+function M.exit_preview_mode(git_root)
+  local state = M.load_state(git_root)
   if not state or state.mode ~= 'preview' then
     vim.notify('Not in preview mode', vim.log.levels.WARN)
     return false
   end
-  local git_root = utils.get_project_root()
+  git_root = resolve_git_root(git_root)
   if not git_root then return false end
   local checkout_cmd = string.format('cd "%s" && git checkout %s', git_root, state.original_ref)
   local _, checkout_err = utils.exec(checkout_cmd)
@@ -259,31 +277,31 @@ function M.exit_preview_mode()
       utils.exec(drop_cmd)
     end
   end
-  M.save_state({})
+  M.save_state({}, git_root)
   vim.notify('Exited preview mode', vim.log.levels.INFO)
   return true
 end
 
-function M.accept_checkpoint()
-  local state = M.load_state()
+function M.accept_checkpoint(git_root)
+  local state = M.load_state(git_root)
   if not state or state.mode ~= 'preview' then
     vim.notify('Not in preview mode', vim.log.levels.WARN)
     return false
   end
   if state.preview_stash then
-    local git_root = utils.get_project_root()
-    if git_root then
-      local drop_cmd = string.format('cd "%s" && git stash drop %s', git_root, state.preview_stash)
+    local root_for_stash = resolve_git_root(git_root)
+    if root_for_stash then
+      local drop_cmd = string.format('cd "%s" && git stash drop %s', root_for_stash, state.preview_stash)
       utils.exec(drop_cmd)
     end
   end
   local inline_diff = require('nvim-claude.inline_diff')
   local events = require('nvim-claude.events')
-  local git_root = utils.get_project_root()
-  if git_root then
-    inline_diff.clear_baseline_ref(git_root)
-    events.clear_edited_files(git_root)
-    inline_diff.clear_persistence(git_root)
+  local root = resolve_git_root(git_root)
+  if root then
+    inline_diff.clear_baseline_ref(root)
+    events.clear_edited_files(root)
+    inline_diff.clear_persistence(root)
   else
     inline_diff.clear_baseline_ref()
     inline_diff.clear_persistence()
@@ -293,7 +311,7 @@ function M.accept_checkpoint()
       inline_diff.close_inline_diff(bufnr)
     end
   end
-  local git_root2 = utils.get_project_root()
+  local git_root2 = resolve_git_root(git_root)
   if git_root2 then
     local current_sha_cmd = string.format('cd "%s" && git rev-parse HEAD', git_root2)
     local current_sha, _ = utils.exec(current_sha_cmd)
@@ -328,7 +346,7 @@ function M.accept_checkpoint()
       end
     end
   end
-  M.save_state({})
+  M.save_state({}, git_root2)
   vim.notify('Accepted checkpoint: ' .. state.preview_checkpoint, vim.log.levels.INFO)
   return true
 end
@@ -337,7 +355,7 @@ function M.restore_checkpoint(checkpoint_id, opts)
   opts = opts or {}
   logger.info('checkpoint.restore_checkpoint', 'Called with checkpoint_id', { checkpoint_id = checkpoint_id })
   if M.is_preview_mode() then
-    local git_root = utils.get_project_root()
+    local git_root = resolve_git_root(nil)
     if not git_root then return false end
     local checkpoint_ref = get_checkpoint_ref(checkpoint_id)
     local sha_cmd = string.format('cd "%s" && git rev-parse %s', git_root, checkpoint_ref)
@@ -353,9 +371,9 @@ function M.restore_checkpoint(checkpoint_id, opts)
       vim.notify('Failed to checkout checkpoint: ' .. checkout_err, vim.log.levels.ERROR)
       return false
     end
-    local state = M.load_state()
+    local state = M.load_state(git_root)
     state.preview_checkpoint = checkpoint_id
-    M.save_state(state)
+    M.save_state(state, git_root)
     vim.notify('Switched to checkpoint: ' .. checkpoint_id, vim.log.levels.INFO)
     return true
   else
@@ -364,4 +382,3 @@ function M.restore_checkpoint(checkpoint_id, opts)
 end
 
 return M
-
