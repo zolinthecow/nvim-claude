@@ -86,30 +86,113 @@ function M.get_for_files(file_paths)
 
   -- Simple bounded wait like existing, to let diagnostics populate
   if #files_to_check > 0 then
-    local log_path = logger.get_mcp_debug_log_file()
-    local f = io.open(log_path, 'a')
-    if f then
-      f:write(string.format('[%s] lsp_mcp.diag: buffers=%d, waiting for diagnostics...\n', os.date('%Y-%m-%d %H:%M:%S'), #files_to_check))
-      f:close()
+    logger.debug('lsp_mcp.diagnostics', string.format('Starting diagnostic collection for %d buffers', #files_to_check))
+    
+    -- Collect all unique LSP clients across all buffers
+    local all_clients = {}
+    local client_names_by_buffer = {}
+    for _, info in ipairs(files_to_check) do
+      local clients = vim.lsp.get_clients({ bufnr = info.bufnr })
+      client_names_by_buffer[info.bufnr] = {}
+      for _, client in ipairs(clients) do
+        all_clients[client.name] = true
+        client_names_by_buffer[info.bufnr][client.name] = true
+        logger.debug('lsp_mcp.diagnostics', string.format('Buffer %d (%s) has client: %s', 
+          info.bufnr, vim.fn.fnamemodify(info.path, ':t'), client.name))
+      end
     end
-    -- Wait up to ~3s for diagnostics to populate
+    
+    local total_clients = vim.tbl_count(all_clients)
+    logger.debug('lsp_mcp.diagnostics', string.format('Total unique LSP clients: %d', total_clients), {
+      clients = vim.tbl_keys(all_clients)
+    })
+    
+    -- Wait for diagnostics from all clients or timeout
     local waited = 0
     while waited < 3000 do
-      local any = false
+      -- Collect all diagnostic sources we've seen so far
+      local seen_sources = {}
+      local has_any_diagnostics = false
+      
       for _, info in ipairs(files_to_check) do
         local diags = vim.diagnostic.get(info.bufnr)
-        if diags and #diags > 0 then any = true break end
+        if diags and #diags > 0 then
+          has_any_diagnostics = true
+          for _, d in ipairs(diags) do
+            if d.source then
+              seen_sources[d.source] = true
+            end
+          end
+        end
       end
-      if any then break end
+      
+      -- Check if we've heard from all clients
+      -- Note: Some LSP client names don't match their diagnostic source names exactly
+      -- Common mappings: typescript-tools -> tsserver, biome -> biome
+      local mapped_sources = {}
+      for source, _ in pairs(seen_sources) do
+        mapped_sources[source] = true
+        -- Handle common name mappings
+        if source == 'tsserver' then
+          mapped_sources['typescript-tools'] = true
+        elseif source == 'typescript-tools' then
+          mapped_sources['tsserver'] = true
+        end
+      end
+      
+      local all_responded = true
+      local missing_clients = {}
+      if total_clients > 0 then
+        -- Check if we have diagnostics from all expected clients
+        for client_name, _ in pairs(all_clients) do
+          -- Some clients might not produce diagnostics if there are no issues
+          -- So we check if either:
+          -- 1. We've seen diagnostics from this source, OR
+          -- 2. We've waited the full 3 seconds (gives TypeScript time in large projects)
+          if not mapped_sources[client_name] and waited < 3000 then
+            all_responded = false
+            table.insert(missing_clients, client_name)
+          end
+        end
+      end
+      
+      if waited % 200 == 0 then  -- Log every 200ms for less spam
+        logger.debug('lsp_mcp.diagnostics', string.format('Wait %dms: sources seen: %s, missing: %s', 
+          waited, vim.inspect(vim.tbl_keys(seen_sources)), vim.inspect(missing_clients)))
+      end
+      
+      -- Stop if all clients responded or we've waited reasonable time
+      if all_responded then
+        logger.debug('lsp_mcp.diagnostics', 'All clients responded')
+        break
+      end
+      
       vim.wait(100, function() return false end)
       waited = waited + 100
     end
+    
+    logger.debug('lsp_mcp.diagnostics', string.format('Finished waiting after %dms', waited))
   end
 
   -- Collect diagnostics
   local out = {}
   for _, info in ipairs(files_to_check) do
     local diags = vim.diagnostic.get(info.bufnr)
+    local diag_details = {}
+    if diags and #diags > 0 then
+      for _, d in ipairs(diags) do
+        table.insert(diag_details, {
+          line = (d.lnum or 0) + 1,
+          severity = vim.diagnostic.severity[d.severity] or 'INFO',
+          message = d.message or '',
+          source = d.source or 'unknown'
+        })
+      end
+    end
+    logger.debug('lsp_mcp.diagnostics', string.format('Buffer %d (%s): %d diagnostics found', 
+      info.bufnr, vim.fn.fnamemodify(info.path, ':~:.'), #(diags or {})), 
+      { diagnostics = diag_details })
+    
     if diags and #diags > 0 then
       local display = vim.fn.fnamemodify(info.path, ':~:.')
       out[display] = format_diagnostics(diags)
