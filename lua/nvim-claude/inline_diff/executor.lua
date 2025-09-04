@@ -99,7 +99,10 @@ function M.recompute_and_render(bufnr)
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
   local base_cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, ref, relative_path)
-  local base_content = utils.exec(base_cmd) or ''
+  local base_content, err = utils.exec(base_cmd)
+  if err or not base_content or base_content:match('^fatal:') or base_content:match('^error:') then
+    base_content = ''
+  end
   local current_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
   local d = diffmod.compute_diff(base_content, current_content)
   if not d or not d.hunks or #d.hunks == 0 then
