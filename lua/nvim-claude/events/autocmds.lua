@@ -57,8 +57,19 @@ function M.setup_file_open_autocmd()
   })
 end
 
+function M.setup_save_autocmd()
+  local group = vim.api.nvim_create_augroup('NvimClaudeSave', { clear = true })
+  vim.api.nvim_create_autocmd('BufWritePost', {
+    group = group,
+    callback = function(args)
+      pcall(show_diff_if_tracked, args.buf)
+    end,
+  })
+end
+
 function M.setup()
   M.setup_file_open_autocmd()
+  M.setup_save_autocmd()
 end
 
 return M

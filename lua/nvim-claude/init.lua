@@ -150,7 +150,6 @@ function M.setup(user_config)
   if vim.g.headless_mode then
     -- Load the LSP/MCP modules for headless operation
     M.lsp_mcp = require 'nvim-claude.lsp_mcp'
-    M.mcp_bridge = require 'nvim-claude.lsp_mcp.bridge'
     M.logger = require 'nvim-claude.logger'
     return
   end

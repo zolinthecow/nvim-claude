@@ -210,7 +210,22 @@ function M.list_files()
     if not choice or not idx then return end
     local rel, deleted = idx_to_rel[idx], idx_deleted[idx]
     local full = utils.get_project_root() .. '/' .. rel
-    if deleted then show_deleted_view(root, rel) else vim.cmd('edit ' .. vim.fn.fnameescape(full)) end
+    if deleted then 
+      show_deleted_view(root, rel) 
+    else 
+      vim.cmd('edit ' .. vim.fn.fnameescape(full))
+      -- Jump to first hunk after opening file
+      vim.schedule(function()
+        local bufnr = vim.fn.bufnr(full)
+        if bufnr ~= -1 then
+          local exec = require('nvim-claude.inline_diff.executor')
+          local diff_data = exec.get_diff_state(bufnr)
+          if diff_data and diff_data.hunks and #diff_data.hunks > 0 then
+            M.jump_to_hunk(bufnr, diff_data, 1, true)
+          end
+        end
+      end)
+    end
   end)
 end
 
@@ -224,7 +239,22 @@ function M.next_file()
   for i, it in ipairs(items) do if it.rel == rel_cur then idx = i break end end
   local next_idx = (idx % #items) + 1
   local it = items[next_idx]
-  if it.deleted then show_deleted_view(root, it.rel) else vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. it.rel)) end
+  if it.deleted then 
+    show_deleted_view(root, it.rel) 
+  else 
+    vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. it.rel))
+    -- Jump to first hunk after opening file
+    vim.schedule(function()
+      local bufnr = vim.fn.bufnr(root .. '/' .. it.rel)
+      if bufnr ~= -1 then
+        local exec = require('nvim-claude.inline_diff.executor')
+        local diff_data = exec.get_diff_state(bufnr)
+        if diff_data and diff_data.hunks and #diff_data.hunks > 0 then
+          M.jump_to_hunk(bufnr, diff_data, 1, true)
+        end
+      end
+    end)
+  end
 end
 
 function M.prev_file()
@@ -237,7 +267,22 @@ function M.prev_file()
   for i, it in ipairs(items) do if it.rel == rel_cur then idx = i break end end
   local prev_idx = (idx - 2) % #items + 1
   local it = items[prev_idx]
-  if it.deleted then show_deleted_view(root, it.rel) else vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. it.rel)) end
+  if it.deleted then 
+    show_deleted_view(root, it.rel) 
+  else 
+    vim.cmd('edit ' .. vim.fn.fnameescape(root .. '/' .. it.rel))
+    -- Jump to first hunk after opening file
+    vim.schedule(function()
+      local bufnr = vim.fn.bufnr(root .. '/' .. it.rel)
+      if bufnr ~= -1 then
+        local exec = require('nvim-claude.inline_diff.executor')
+        local diff_data = exec.get_diff_state(bufnr)
+        if diff_data and diff_data.hunks and #diff_data.hunks > 0 then
+          M.jump_to_hunk(bufnr, diff_data, 1, true)
+        end
+      end
+    end)
+  end
 end
 
 -- Helpers to coordinate view switching for deleted-file scratch buffers
