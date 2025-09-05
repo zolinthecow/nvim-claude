@@ -69,8 +69,16 @@ init.lua (entry point)
 ├── rpc/ (nvim-rpc.sh, helpers)
 ├── background_agent/ (agents + registry)
 ├── checkpoint/ (checkpoints)
+├── agent_provider/
+│   └── providers/
+│       └── claude/
+│           ├── init.lua (provider façade)
+│           ├── hooks.lua (installer)
+│           ├── chat.lua (pane send)
+│           ├── background.lua (agent pane launch)
+│           ├── config.lua (spawn, pane title)
+│           └── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
 ├── logger.lua, project-state.lua, mappings.lua, statusline.lua
-└── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
 ```
 
 #### 3. State Management

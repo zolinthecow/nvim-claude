@@ -256,10 +256,10 @@ The plugin can automatically create baselines and track changes when Claude edit
 This creates a `.claude/settings.local.json` file in your project that integrates with Claude Code's hook system. This file is developer-specific and should not be committed to version control.
 
 What gets installed:
-- Pre/Post hooks for `Edit|Write|MultiEdit` → `claude-hooks/pre-hook-wrapper.sh` and `claude-hooks/post-hook-wrapper.sh`
-- Bash pre/post hooks for `Bash` → `claude-hooks/bash-hook-wrapper.sh` and `claude-hooks/bash-post-hook-wrapper.sh`
-- Stop hook validator → `claude-hooks/stop-hook-validator.sh` (blocks completion on LSP errors in this turn)
-- User prompt hook → `claude-hooks/user-prompt-hook-wrapper.sh` (creates checkpoints)
+- Pre/Post hooks for `Edit|Write|MultiEdit` → `agent_provider/providers/claude/claude-hooks/pre-hook-wrapper.sh` and `.../post-hook-wrapper.sh`
+- Bash pre/post hooks for `Bash` → `agent_provider/providers/claude/claude-hooks/bash-hook-wrapper.sh` and `.../bash-post-hook-wrapper.sh`
+- Stop hook validator → `agent_provider/providers/claude/claude-hooks/stop-hook-validator.sh` (blocks completion on LSP errors in this turn)
+- User prompt hook → `agent_provider/providers/claude/claude-hooks/user-prompt-hook-wrapper.sh` (creates checkpoints)
 
 The wrappers call the plugin RPC client (`rpc/nvim-rpc.sh`) to reach the running Neovim and only ever use the public events facade `require('nvim-claude.events')` via `events.adapter`.
 

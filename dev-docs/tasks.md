@@ -1,7 +1,7 @@
 # nvim-claude Debug Tasks
 
 Note on module names: this document references legacy files from a pre-refactor layout. The current equivalents are:
-- `hooks.lua` → `events/*` (Lua) and `claude-hooks/*.sh` (wrappers)
+- `hooks.lua` → provider installer (Lua) and `agent_provider/providers/claude/claude-hooks/*.sh` (wrappers)
 - `inline-diff.lua` → `inline_diff/*` (facade in `inline_diff/init.lua`, logic in `hunks.lua`, `navigation.lua`, `render.lua`, etc.)
 - `inline-diff-persistence.lua` → `inline_diff/persistence.lua` + `inline_diff/baseline.lua`
 
@@ -79,7 +79,7 @@ end
 
 #### 3. Race Conditions in Hook System
 **Priority**: High  
-**Files (legacy)**: `hooks.lua`, `pre-hook-wrapper.sh` → now `events/core.lua` and `claude-hooks/pre-hook-wrapper.sh`
+**Files (legacy)**: `hooks.lua`, `pre-hook-wrapper.sh` → now `events/core.lua` and `agent_provider/providers/claude/claude-hooks/pre-hook-wrapper.sh`
 
 **Problem**: Pre-hook and post-hook can execute concurrently or in unexpected order, leading to state inconsistencies.
 

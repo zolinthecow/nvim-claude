@@ -60,7 +60,7 @@ we read/write from project-state and recompute when needed.
 ### Module layout (updated)
 - Facades: `utils/` (`require('nvim-claude.utils')`), `events/` (`require('nvim-claude.events')`), `inline_diff/` (`require('nvim-claude.inline_diff')`), `lsp_mcp/`, `rpc/`
 - Inline diff internals: `inline_diff/baseline.lua`, `diff.lua`, `render.lua`, `executor.lua`, `hunks.lua`, `navigation.lua`, `persistence.lua`
-- Hooks: wrapper scripts in `claude-hooks/` installed into `.claude/settings.local.json` via `events/installer.lua`
+- Hooks: wrapper scripts in `agent_provider/providers/claude/claude-hooks/` installed into `.claude/settings.local.json` via provider installer
 
 ### Facade pattern rules
 - Keep facades thin: expose public API only; avoid business logic in `init.lua` files.

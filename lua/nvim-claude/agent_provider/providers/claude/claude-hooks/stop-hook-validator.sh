@@ -85,7 +85,8 @@ if [ -f "$STATE_FILE" ]; then
                 BATCH_ARGS="$BATCH_ARGS \"${FILE_LIST[j]}\""
             done
 
-            BATCH_JSON=$(eval "$MCP_PYTHON" "$SCRIPT_DIR/../rpc/check-diagnostics.py" $BATCH_ARGS 2>/dev/null)
+            PLUGIN_ROOT="$(get_plugin_root)"
+            BATCH_JSON=$(eval "$MCP_PYTHON" "$PLUGIN_ROOT/rpc/check-diagnostics.py" $BATCH_ARGS 2>/dev/null)
 
             # Parse batch results and add to totals
             BATCH_ERRORS=$(echo "$BATCH_JSON" | jq -r '.errors // 0')
@@ -124,7 +125,8 @@ fi
 # Check if we should block - only block on errors, not warnings
 if [ "$ERROR_COUNT" -gt 0 ]; then
     # Fetch detailed session diagnostics to include in the reason
-    SESSION_JSON=$("$MCP_PYTHON" "$SCRIPT_DIR/../rpc/get-session-diagnostics.py" 2>/dev/null)
+    PLUGIN_ROOT="$(get_plugin_root)"
+    SESSION_JSON=$("$MCP_PYTHON" "$PLUGIN_ROOT/rpc/get-session-diagnostics.py" 2>/dev/null)
     # Build reason with full diagnostics JSON
     JSON_REASON=$(printf '%s' "$SESSION_JSON" | jq -Rs .)
     
@@ -145,7 +147,8 @@ else
 
     # Clear session tracking for the exact project using base64-encoded TARGET_FILE via adapter
     TARGET_FILE_B64=$(echo -n "$TARGET_FILE" | base64)
-    TARGET_FILE="$TARGET_FILE" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').clear_turn_files_for_path_b64('$TARGET_FILE_B64')\")" >/dev/null 2>&1 || true
+    PLUGIN_ROOT="$(get_plugin_root)"
+    TARGET_FILE="$TARGET_FILE" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').clear_turn_files_for_path_b64('$TARGET_FILE_B64')\")" >/dev/null 2>&1 || true
 
     POST_SESSION_COUNT=$(cat "$STATE_FILE" | jq -r --arg cwd "$PROJECT_ROOT_KEY" '(.[$cwd].session_edited_files // []) | length' 2>/dev/null)
     
