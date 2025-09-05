@@ -36,7 +36,7 @@ function M.register(claude)
   define('ClaudeSendBuffer', function()
     if not tmux.validate() then return end
     local pane = agent_provider.chat.ensure_pane()
-    if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
+    if not pane then vim.notify('Failed to find or create chat pane', vim.log.levels.ERROR); return end
     local filename = vim.fn.expand('%:t')
     local filetype = vim.bo.filetype
     local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
@@ -51,7 +51,7 @@ function M.register(claude)
   define('ClaudeSendSelection', function(args)
     if not tmux.validate() then return end
     local pane = agent_provider.chat.ensure_pane()
-    if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
+    if not pane then vim.notify('Failed to find or create chat pane', vim.log.levels.ERROR); return end
     local l1, l2 = args.line1, args.line2
     local sel = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
     local git_root = utils.get_project_root()
@@ -70,7 +70,7 @@ function M.register(claude)
   define('ClaudeSendWithDiagnostics', function(args)
     if not tmux.validate() then return end
     local pane = agent_provider.chat.ensure_pane()
-    if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
+    if not pane then vim.notify('Failed to find or create chat pane', vim.log.levels.ERROR); return end
     local l1, l2 = args.line1, args.line2
     local sel = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
     local code = table.concat(sel, '\n')
@@ -98,7 +98,7 @@ function M.register(claude)
   define('ClaudeSendHunk', function()
     if not tmux.validate() then return end
     local pane = agent_provider.chat.ensure_pane()
-    if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
+    if not pane then vim.notify('Failed to find or create chat pane', vim.log.levels.ERROR); return end
 
     local cursor_pos = vim.api.nvim_win_get_cursor(0)
     local current_line = cursor_pos[1]

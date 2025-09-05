@@ -57,7 +57,7 @@ function M.register(claude)
     vim.api.nvim_win_set_option(win, 'winhl', 'Normal:Normal,FloatBorder:Comment')
     vim.keymap.set('n', 'q', '<cmd>close<CR>', { buffer = buf, silent = true })
     vim.keymap.set('n', '<Esc>', '<cmd>close<CR>', { buffer = buf, silent = true })
-  end, { desc = 'Debug Claude pane detection' })
+  end, { desc = 'Debug chat pane detection' })
 
   -- Debug agents (summary)
   define('ClaudeDebugAgents', function()

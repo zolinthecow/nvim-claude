@@ -38,11 +38,11 @@ end
 
 -- Create new tmux pane for Claude (or return existing)
 function M.create_pane(command)
-  local existing = M.find_claude_pane()
+  local existing = M.find_chat_pane()
   if existing then
     local _, err = utils.exec('tmux select-pane -t ' .. existing)
     if err then
-      vim.notify('Claude pane no longer exists, creating new one', vim.log.levels.INFO)
+      vim.notify('Chat pane no longer exists, creating new one', vim.log.levels.INFO)
     else
       return existing
     end
