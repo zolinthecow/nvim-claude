@@ -110,4 +110,20 @@ function M.background.launch_agent_pane(window_id, cwd, initial_text)
   return nil
 end
 
+function M.background.generate_window_name()
+  local impl = ensure_current()
+  if impl and impl.background and impl.background.generate_window_name then
+    return impl.background.generate_window_name()
+  end
+  return 'agent-' .. (vim.loop and vim.loop.hrtime() or os.time())
+end
+
+function M.background.append_to_context(agent_dir)
+  local impl = ensure_current()
+  if impl and impl.background and impl.background.append_to_context then
+    return impl.background.append_to_context(agent_dir)
+  end
+  return false
+end
+
 return M

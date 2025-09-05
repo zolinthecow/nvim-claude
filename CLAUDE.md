@@ -529,5 +529,3 @@ This prevents future developers (including future Claude instances) from repeati
   - Good: `require('nvim-claude.events')`, `require('nvim-claude.inline_diff')`, `require('nvim-claude.utils')`
   - Bad: `require('nvim-claude.events.session')` or `require('nvim-claude.inline_diff.hunks')` from another feature
 - Internal modules may import other internals within the same feature.
-
-```
