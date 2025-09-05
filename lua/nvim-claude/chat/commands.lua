@@ -24,7 +24,7 @@ function M.register(claude)
   -- ClaudeChat: open pane
   define('ClaudeChat', function()
     if not tmux.validate() then return end
-    local pane_id = agent_provider.chat.ensure_pane()
+    local pane_id = agent_provider.chat.ensure_pane() or tmux.create_pane('claude')
     if pane_id then
       vim.notify('Claude chat opened in pane ' .. pane_id, vim.log.levels.INFO)
     else
@@ -35,7 +35,7 @@ function M.register(claude)
   -- ClaudeSendBuffer: send whole buffer
   define('ClaudeSendBuffer', function()
     if not tmux.validate() then return end
-    local pane = agent_provider.chat.ensure_pane()
+    local pane = agent_provider.chat.ensure_pane() or tmux.create_pane('claude')
     if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
     local filename = vim.fn.expand('%:t')
     local filetype = vim.bo.filetype
@@ -50,7 +50,7 @@ function M.register(claude)
   -- ClaudeSendSelection: send selected range
   define('ClaudeSendSelection', function(args)
     if not tmux.validate() then return end
-    local pane = agent_provider.chat.ensure_pane()
+    local pane = agent_provider.chat.ensure_pane() or tmux.create_pane('claude')
     if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
     local l1, l2 = args.line1, args.line2
     local sel = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
@@ -69,7 +69,7 @@ function M.register(claude)
   -- ClaudeSendWithDiagnostics: selection plus diagnostics
   define('ClaudeSendWithDiagnostics', function(args)
     if not tmux.validate() then return end
-    local pane = agent_provider.chat.ensure_pane()
+    local pane = agent_provider.chat.ensure_pane() or tmux.create_pane('claude')
     if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
     local l1, l2 = args.line1, args.line2
     local sel = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
@@ -97,7 +97,7 @@ function M.register(claude)
   -- ClaudeSendHunk: send git hunk under cursor
   define('ClaudeSendHunk', function()
     if not tmux.validate() then return end
-    local pane = agent_provider.chat.ensure_pane()
+    local pane = agent_provider.chat.ensure_pane() or tmux.create_pane('claude')
     if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
 
     local cursor_pos = vim.api.nvim_win_get_cursor(0)

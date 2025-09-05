@@ -192,14 +192,9 @@ The file `mission.log` contains additional details about this agent's creation a
 
   -- Launch in tmux panes
   tmux.send_to_window(window_id, 'nvim .')
-  local pane_claude = tmux.split_window(window_id, 'h', 40)
-  if pane_claude then
-    tmux.send_to_pane(pane_claude, 'cd ' .. agent_dir)
-    tmux.send_to_pane(pane_claude, 'claude --dangerously-skip-permissions')
-    vim.wait(1000)
-    local formatted_task = format_task_sections(task)
-    tmux.send_text_to_pane(pane_claude, formatted_task)
-  end
+  local formatted_task = format_task_sections(task)
+  local agent_provider = require('nvim-claude.agent_provider')
+  agent_provider.background.launch_agent_pane(window_id, agent_dir, formatted_task)
 
   vim.notify(string.format('Background agent started\nID: %s\nTask: %s\nWorkspace: %s\nWindow: %s\n%s', agent_id, task, agent_dir, window_name, base_info), vim.log.levels.INFO)
   return true, agent_id

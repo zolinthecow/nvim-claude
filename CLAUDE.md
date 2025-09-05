@@ -488,6 +488,27 @@ This prevents future developers (including future Claude instances) from repeati
 ## Coding Guidelines
 - Always use single quotes instead of double quotes.
 
+### Lua Code Style
+- Requires at Top: Put `require(...)` at the top of the file by default. This makes dependencies easy to audit and fails fast if something is missing.
+- Exceptions for In‑Function Requires: Use `require` inside functions only when it:
+  - Breaks a circular dependency on load order
+  - Defers a heavy/optional dependency to a rare path (keeps startup fast)
+  - Avoids side effects that must not run at module load time
+  - Depends on runtime‑specific context (e.g., UI‑only code vs headless)
+- Performance Note: `require` is cached via `package.loaded`, so calling it inside functions is cheap but still avoid doing so in hot loops.
+
+### Facade Pattern (Imports and Exports)
+- Import via Facades: Cross‑feature imports must go through the public `init.lua` facade of that feature.
+  - Good: `require('nvim-claude.events')`, `require('nvim-claude.inline_diff')`, `require('nvim-claude.utils')`
+  - Bad: `require('nvim-claude.events.session')` from outside the events feature
+- Explicit Exports: Each facade should export a minimal, explicit API. Do not return raw internal tables.
+  - Example: In providers, export `chat = { ensure_pane = fn, send_text = fn }` instead of `chat = internal_module`.
+- Internal Structure: Features may have internal modules (`core.lua`, `hooks.lua`, etc.) that are not imported cross‑feature.
+
+### Provider Modules
+- Structure provider implementations under `agent_provider/providers/<name>/` with submodules like `hooks.lua`, `chat.lua`, `background.lua`, and an `init.lua` that composes explicit exports.
+- Keep provider APIs consistent across implementations so callers depend only on the façade (`agent_provider`).
+
 ### Important Hints
 - Hooks use wrapper scripts that handle base64 encoding before calling nvim-rpc
 - Wrapper scripts live in `claude-hooks/` and the RPC client is `rpc/nvim-rpc.sh`
