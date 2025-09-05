@@ -179,7 +179,29 @@ The file `mission.log` contains additional details about this agent's creation a
   utils.write_file(agent_dir .. '/agent-instructions.md', agent_context)
 
   -- Provider-specific context injection (e.g., CLAUDE.md import)
-  pcall(agent_provider.background.append_to_context, agent_dir)
+  local logger = require('nvim-claude.logger')
+  logger.debug('background_agent.create', 'calling provider.append_to_context', { dir = agent_dir })
+  local ok_append, err_append = pcall(agent_provider.background.append_to_context, agent_dir)
+  logger.debug('background_agent.create', 'provider.append_to_context returned', { ok = ok_append, err = err_append })
+  do
+    local md_path = agent_dir .. '/CLAUDE.md'
+    local content = utils.read_file(md_path) or ''
+    local has_marker = content:match('@import%s+agent%-instructions%.md') or content:match('See%s+@agent%-instructions%.md')
+    logger.debug('background_agent.create', 'CLAUDE.md after append', {
+      path = md_path,
+      exists = utils.file_exists(md_path),
+      length = #content,
+      head = content:sub(1, 120),
+      has_marker = has_marker and true or false,
+    })
+    if not has_marker then
+      -- Fallback: ensure the import marker exists by prepending it
+      local marker = '@import agent-instructions.md\n\n'
+      local new_content = marker .. content
+      local ok_write = utils.write_file(md_path, new_content)
+      logger.debug('background_agent.create', 'Fallback write of import marker', { path = md_path, ok = ok_write })
+    end
+  end
 
   -- Launch in tmux panes
   tmux.send_to_window(window_id, 'nvim .')

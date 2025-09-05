@@ -20,6 +20,17 @@ load_provider = function(name)
   if providers[name] then return providers[name] end
   if name == 'claude' or name == 'claude_code' then
     -- Prefer new claude provider module; keep legacy alias for compatibility
+    -- Force reload provider modules so changes during development are picked up
+    for _, mod in ipairs({
+      'nvim-claude.agent_provider.providers.claude',
+      'nvim-claude.agent_provider.providers.claude.init',
+      'nvim-claude.agent_provider.providers.claude.hooks',
+      'nvim-claude.agent_provider.providers.claude.chat',
+      'nvim-claude.agent_provider.providers.claude.background',
+      'nvim-claude.agent_provider.providers.claude.config',
+    }) do
+      package.loaded[mod] = nil
+    end
     local ok, impl = pcall(require, 'nvim-claude.agent_provider.providers.claude')
     if ok then
       providers['claude'] = impl
@@ -56,6 +67,8 @@ end
 
 -- Public: set provider explicitly (future-proof)
 function M.set_provider(name)
+  -- Clear cached provider entry for a fresh load
+  providers[name] = nil
   local impl = load_provider(name)
   if impl then current = impl end
   return current ~= nil
@@ -124,6 +137,14 @@ function M.background.append_to_context(agent_dir)
     return impl.background.append_to_context(agent_dir)
   end
   return false
+end
+
+-- Force reload the current provider implementation (development helper)
+function M.reload(name)
+  name = name or (M.name() or 'claude')
+  providers = {}
+  current = nil
+  return M.set_provider(name)
 end
 
 return M
