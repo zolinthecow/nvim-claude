@@ -9,12 +9,15 @@ end
 function M.register(claude)
   local utils = require('nvim-claude.utils')
   local logger = require('nvim-claude.logger')
+  local agent_provider = require('nvim-claude.agent_provider')
 
   -- ClaudeDebug: pane inspection
   define('ClaudeDebug', function()
     local cmd = "tmux list-panes -F '#{pane_id}:#{pane_pid}:#{pane_title}:#{pane_current_command}'"
     local result = utils.exec(cmd)
-    local lines = { 'Claude Pane Debug Info:', '' }
+    local lines = { 'Agent Provider Debug Info:', '' }
+    table.insert(lines, 'Provider: ' .. (agent_provider.name() or 'unknown'))
+    table.insert(lines, '')
     if result and result ~= '' then
       table.insert(lines, 'All panes:')
       for line in result:gmatch('[^\n]+') do
@@ -27,8 +30,12 @@ function M.register(claude)
       table.insert(lines, 'No panes found')
     end
     table.insert(lines, '')
-    local detected = require('nvim-claude.utils').tmux.find_claude_pane()
-    table.insert(lines, detected and ('Detected Claude pane: ' .. detected) or 'No Claude pane detected')
+    local pane = agent_provider.chat.ensure_pane()
+    if pane then
+      table.insert(lines, 'Detected provider chat pane: ' .. pane)
+    else
+      table.insert(lines, 'No provider chat pane detected')
+    end
 
     local buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
