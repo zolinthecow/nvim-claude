@@ -2,19 +2,19 @@
 
 local M = {}
 
-local installer = require 'nvim-claude.events.installer'
+local agent_provider = require 'nvim-claude.agent_provider'
 local autocmds = require 'nvim-claude.events.autocmds'
 
 function M.setup()
-  -- Install hooks
+  -- Install hooks (via provider)
   vim.api.nvim_create_user_command('ClaudeInstallHooks', function()
-    installer.install()
-  end, { desc = 'Install Claude Code hooks for this project' })
+    agent_provider.install_hooks()
+  end, { desc = 'Install hooks for current provider (Claude)' })
 
-  -- Uninstall hooks
+  -- Uninstall hooks (via provider)
   vim.api.nvim_create_user_command('ClaudeUninstallHooks', function()
-    installer.uninstall()
-  end, { desc = 'Uninstall Claude Code hooks for this project' })
+    agent_provider.uninstall_hooks()
+  end, { desc = 'Uninstall hooks for current provider (Claude)' })
 
   -- Enable/refresh autocmds
   vim.api.nvim_create_user_command('ClaudeEventsEnable', function()
@@ -24,4 +24,3 @@ function M.setup()
 end
 
 return M
-

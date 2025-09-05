@@ -16,7 +16,19 @@ function M.register(claude)
     local cmd = "tmux list-panes -F '#{pane_id}:#{pane_pid}:#{pane_title}:#{pane_current_command}'"
     local result = utils.exec(cmd)
     local lines = { 'Agent Provider Debug Info:', '' }
-    table.insert(lines, 'Provider: ' .. (agent_provider.name() or 'unknown'))
+    local provider_name = agent_provider.name() or 'unknown'
+    table.insert(lines, 'Provider: ' .. provider_name)
+    -- Attempt to print provider config details if available
+    local details = {}
+    if provider_name == 'claude' then
+      local ok, cfg = pcall(require, 'nvim-claude.agent_provider.providers.claude.config')
+      if ok and cfg then
+        table.insert(details, 'spawn_command=' .. tostring(cfg.spawn_command))
+        table.insert(details, 'background_spawn=' .. tostring(cfg.background_spawn))
+        table.insert(details, 'pane_title=' .. tostring(cfg.pane_title))
+      end
+    end
+    if #details > 0 then table.insert(lines, 'Config: ' .. table.concat(details, ', ')) end
     table.insert(lines, '')
     if result and result ~= '' then
       table.insert(lines, 'All panes:')
