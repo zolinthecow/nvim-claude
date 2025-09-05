@@ -26,9 +26,9 @@ function M.register(claude)
     if not tmux.validate() then return end
     local pane_id = agent_provider.chat.ensure_pane()
     if pane_id then
-      vim.notify('Claude chat opened in pane ' .. pane_id, vim.log.levels.INFO)
+      vim.notify('Chat opened (provider: ' .. (agent_provider.name() or 'unknown') .. ') in pane ' .. pane_id, vim.log.levels.INFO)
     else
-      vim.notify('Failed to create Claude pane', vim.log.levels.ERROR)
+      vim.notify('Failed to create chat pane', vim.log.levels.ERROR)
     end
   end, { desc = 'Open Claude in a tmux pane' })
 
@@ -63,7 +63,7 @@ function M.register(claude)
     table.insert(parts, '```')
     agent_provider.chat.send_text(table.concat(parts, '\n'))
     utils.exec('tmux select-pane -t ' .. pane)
-    vim.notify('Selection sent to Claude', vim.log.levels.INFO)
+    vim.notify('Selection sent to chat', vim.log.levels.INFO)
   end, { desc = 'Send selected text to Claude', range = true })
 
   -- ClaudeSendWithDiagnostics: selection plus diagnostics
@@ -91,7 +91,7 @@ function M.register(claude)
     )
     agent_provider.chat.send_text(message)
     utils.exec('tmux select-pane -t ' .. pane)
-    vim.notify('Selection with diagnostics sent to Claude', vim.log.levels.INFO)
+    vim.notify('Selection with diagnostics sent', vim.log.levels.INFO)
   end, { desc = 'Send selected text with diagnostics to Claude', range = true })
 
   -- ClaudeSendHunk: send git hunk under cursor
@@ -132,7 +132,7 @@ function M.register(claude)
     for _, l in ipairs(hunk_lines) do table.insert(parts, l) end
     table.insert(parts, '```')
     agent_provider.chat.send_text(table.concat(parts, '\n'))
-    vim.notify('Git hunk sent to Claude', vim.log.levels.INFO)
+    vim.notify('Git hunk sent to chat', vim.log.levels.INFO)
   end, { desc = 'Send git hunk under cursor to Claude' })
 end
 

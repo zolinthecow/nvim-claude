@@ -7,7 +7,7 @@ local tmux = utils.tmux
 local M = {}
 
 local function ensure_pane()
-  local pane = tmux.find_claude_pane()
+  local pane = tmux.find_chat_pane()
   if not pane then
     pane = tmux.create_pane(cfg.spawn_command or 'claude')
   end

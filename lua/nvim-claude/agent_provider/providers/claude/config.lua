@@ -4,6 +4,7 @@ local M = {
   spawn_command = 'claude',
   background_spawn = 'claude --dangerously-skip-permissions',
   pane_title = 'claude-chat',
+  process_pattern = '(claude|claude-code)',
 }
 
 function M.setup(opts)
@@ -20,6 +21,13 @@ function M.setup(opts)
     local ok, utils = pcall(require, 'nvim-claude.utils')
     if ok and utils and utils.tmux and utils.tmux.config then
       utils.tmux.config.pane_title = M.pane_title
+    end
+  end
+  if type(opts.process_pattern) == 'string' and opts.process_pattern ~= '' then
+    M.process_pattern = opts.process_pattern
+    local ok, utils = pcall(require, 'nvim-claude.utils')
+    if ok and utils and utils.tmux and utils.tmux.config then
+      utils.tmux.config.process_pattern = M.process_pattern
     end
   end
 end
