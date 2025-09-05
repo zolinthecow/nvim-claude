@@ -6,12 +6,6 @@ local function define(name, fn, opts)
   pcall(vim.api.nvim_create_user_command, name, fn, opts or {})
 end
 
-local function ensure_pane(tmux)
-  local pane = tmux.find_claude_pane()
-  if not pane then pane = tmux.create_pane('claude') end
-  return pane
-end
-
 local function format_diagnostics_list(diags)
   if not diags or #diags == 0 then return 'No diagnostics in selected range' end
   local lines = {}
@@ -25,19 +19,23 @@ end
 function M.register(claude)
   local utils = require('nvim-claude.utils')
   local tmux = utils.tmux
+  local agent_provider = require('nvim-claude.agent_provider')
 
   -- ClaudeChat: open pane
   define('ClaudeChat', function()
     if not tmux.validate() then return end
-    local pane_id = tmux.create_pane('claude')
-    if pane_id then vim.notify('Claude chat opened in pane ' .. pane_id, vim.log.levels.INFO)
-    else vim.notify('Failed to create Claude pane', vim.log.levels.ERROR) end
+    local pane_id = agent_provider.chat.ensure_pane()
+    if pane_id then
+      vim.notify('Claude chat opened in pane ' .. pane_id, vim.log.levels.INFO)
+    else
+      vim.notify('Failed to create Claude pane', vim.log.levels.ERROR)
+    end
   end, { desc = 'Open Claude in a tmux pane' })
 
   -- ClaudeSendBuffer: send whole buffer
   define('ClaudeSendBuffer', function()
     if not tmux.validate() then return end
-    local pane = ensure_pane(tmux)
+    local pane = agent_provider.chat.ensure_pane()
     if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
     local filename = vim.fn.expand('%:t')
     local filetype = vim.bo.filetype
@@ -45,14 +43,14 @@ function M.register(claude)
     local parts = { string.format('Here is `%s` (%s):', filename, filetype), '```' .. (filetype ~= '' and filetype or '') }
     for _, l in ipairs(lines) do table.insert(parts, l) end
     table.insert(parts, '```')
-    tmux.send_text_to_pane(pane, table.concat(parts, '\n'))
+    agent_provider.chat.send_text(table.concat(parts, '\n'))
     vim.notify('Buffer sent to Claude', vim.log.levels.INFO)
   end, { desc = 'Send current buffer to Claude' })
 
   -- ClaudeSendSelection: send selected range
   define('ClaudeSendSelection', function(args)
     if not tmux.validate() then return end
-    local pane = ensure_pane(tmux)
+    local pane = agent_provider.chat.ensure_pane()
     if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
     local l1, l2 = args.line1, args.line2
     local sel = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
@@ -63,7 +61,7 @@ function M.register(claude)
     local parts = { string.format('Selection from `%s` (lines %d-%d):', rel, l1, l2), '```' .. (ft ~= '' and ft or '') }
     for _, l in ipairs(sel) do table.insert(parts, l) end
     table.insert(parts, '```')
-    tmux.send_text_to_pane(pane, table.concat(parts, '\n'))
+    agent_provider.chat.send_text(table.concat(parts, '\n'))
     utils.exec('tmux select-pane -t ' .. pane)
     vim.notify('Selection sent to Claude', vim.log.levels.INFO)
   end, { desc = 'Send selected text to Claude', range = true })
@@ -71,7 +69,7 @@ function M.register(claude)
   -- ClaudeSendWithDiagnostics: selection plus diagnostics
   define('ClaudeSendWithDiagnostics', function(args)
     if not tmux.validate() then return end
-    local pane = ensure_pane(tmux)
+    local pane = agent_provider.chat.ensure_pane()
     if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
     local l1, l2 = args.line1, args.line2
     local sel = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
@@ -82,8 +80,16 @@ function M.register(claude)
     local in_range = {}
     for _, d in ipairs(vim.diagnostic.get(0)) do if d.lnum >= l1 - 1 and d.lnum <= l2 - 1 then table.insert(in_range, d) end end
     local ft = vim.bo.filetype
-    local message = string.format([[\nI have a code snippet with LSP diagnostics that need to be fixed:\n\nFile: %s\nLines: %d-%d\n\n```%s\n%s\n```\n\nLSP Diagnostics:\n%s\n\nPlease help me fix these issues.]], file, l1, l2, (ft ~= '' and ft or ''), code, format_diagnostics_list(in_range))
-    tmux.send_text_to_pane(pane, message)
+    local message = string.format(
+      "\nI have a code snippet with LSP diagnostics that need to be fixed:" ..
+      "\n\nFile: %s" ..
+      "\nLines: %d-%d" ..
+      "\n\n```%s\n%s\n```" ..
+      "\n\nLSP Diagnostics:\n%s" ..
+      "\n\nPlease help me fix these issues.",
+      file, l1, l2, (ft ~= '' and ft or ''), code, format_diagnostics_list(in_range)
+    )
+    agent_provider.chat.send_text(message)
     utils.exec('tmux select-pane -t ' .. pane)
     vim.notify('Selection with diagnostics sent to Claude', vim.log.levels.INFO)
   end, { desc = 'Send selected text with diagnostics to Claude', range = true })
@@ -91,7 +97,7 @@ function M.register(claude)
   -- ClaudeSendHunk: send git hunk under cursor
   define('ClaudeSendHunk', function()
     if not tmux.validate() then return end
-    local pane = ensure_pane(tmux)
+    local pane = agent_provider.chat.ensure_pane()
     if not pane then vim.notify('Failed to find or create Claude pane', vim.log.levels.ERROR); return end
 
     local cursor_pos = vim.api.nvim_win_get_cursor(0)
@@ -125,7 +131,7 @@ function M.register(claude)
     local parts = { string.format('Git hunk from `%s` (around line %d):', relative_filename, current_line), '```diff' }
     for _, l in ipairs(hunk_lines) do table.insert(parts, l) end
     table.insert(parts, '```')
-    tmux.send_text_to_pane(pane, table.concat(parts, '\n'))
+    agent_provider.chat.send_text(table.concat(parts, '\n'))
     vim.notify('Git hunk sent to Claude', vim.log.levels.INFO)
   end, { desc = 'Send git hunk under cursor to Claude' })
 end
