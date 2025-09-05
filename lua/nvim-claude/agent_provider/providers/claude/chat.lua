@@ -1,5 +1,6 @@
 -- Claude provider: chat transport via tmux
 
+local cfg = require('nvim-claude.agent_provider.providers.claude.config')
 local utils = require 'nvim-claude.utils'
 local tmux = utils.tmux
 
@@ -8,7 +9,7 @@ local M = {}
 local function ensure_pane()
   local pane = tmux.find_claude_pane()
   if not pane then
-    pane = tmux.create_pane 'claude'
+    pane = tmux.create_pane(cfg.spawn_command or 'claude')
   end
   return pane
 end

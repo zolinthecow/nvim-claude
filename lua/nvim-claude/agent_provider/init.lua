@@ -46,6 +46,11 @@ function M.setup(opts)
     -- Fallback to Claude if invalid name
     impl = load_provider('claude')
   end
+  -- Pass provider-specific options to implementation if supported
+  if impl and impl.setup then
+    local provider_opts = opts[name] or {}
+    pcall(impl.setup, provider_opts)
+  end
   current = impl
 end
 

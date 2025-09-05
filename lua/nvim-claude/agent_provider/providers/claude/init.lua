@@ -4,9 +4,14 @@ local M = {}
 
 M.name = 'claude'
 
+local cfg = require('nvim-claude.agent_provider.providers.claude.config')
 local hooks = require('nvim-claude.agent_provider.providers.claude.hooks')
 local chat = require('nvim-claude.agent_provider.providers.claude.chat')
 local background = require('nvim-claude.agent_provider.providers.claude.background')
+
+function M.setup(opts)
+  cfg.setup(opts)
+end
 
 M.install_hooks = hooks.install
 M.uninstall_hooks = hooks.uninstall
