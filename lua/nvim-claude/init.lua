@@ -88,10 +88,9 @@ local function validate_config(config)
       table.insert(errors, 'provider.name must be a string')
       ok = false
     end
-    -- Only 'claude' is supported for now
     local name = config.provider.name or 'claude'
-    if name ~= 'claude' then
-      table.insert(errors, "provider.name must be 'claude' (only provider supported right now)")
+    if name ~= 'claude' and name ~= 'codex' then
+      table.insert(errors, "provider.name must be 'claude' or 'codex'")
       ok = false
     end
     local opts = config.provider[name]

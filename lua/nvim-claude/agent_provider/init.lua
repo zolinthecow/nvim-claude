@@ -45,6 +45,23 @@ load_provider = function(name)
       return impl2
     end
   end
+  if name == 'codex' then
+    for _, mod in ipairs({
+      'nvim-claude.agent_provider.providers.codex',
+      'nvim-claude.agent_provider.providers.codex.init',
+      'nvim-claude.agent_provider.providers.codex.hooks',
+      'nvim-claude.agent_provider.providers.codex.chat',
+      'nvim-claude.agent_provider.providers.codex.background',
+      'nvim-claude.agent_provider.providers.codex.config',
+    }) do
+      package.loaded[mod] = nil
+    end
+    local ok, impl = pcall(require, 'nvim-claude.agent_provider.providers.codex')
+    if ok then
+      providers['codex'] = impl
+      return impl
+    end
+  end
   return nil
 end
 
