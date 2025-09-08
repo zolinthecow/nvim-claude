@@ -71,13 +71,20 @@ init.lua (entry point)
 ├── checkpoint/ (checkpoints)
 ├── agent_provider/
 │   └── providers/
-│       └── claude/
+│       ├── claude/
+│       │   ├── init.lua (provider façade)
+│       │   ├── hooks.lua (installer)
+│       │   ├── chat.lua (pane send)
+│       │   ├── background.lua (agent pane launch)
+│       │   ├── config.lua (spawn, pane title)
+│       │   └── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
+│       └── codex/
 │           ├── init.lua (provider façade)
-│           ├── hooks.lua (installer)
+│           ├── hooks.lua (installer: writes shell-only rules to ~/.codex/config.toml and [mcp_servers.nvim-lsp])
 │           ├── chat.lua (pane send)
-│           ├── background.lua (agent pane launch)
+│           ├── background.lua (agent pane launch; CODEX_HOME cloned + hooks stripped; --full-auto with task)
 │           ├── config.lua (spawn, pane title)
-│           └── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
+│           └── codex-hooks/ (shell-only wrappers)
 ├── logger.lua, project-state.lua, mappings.lua, statusline.lua
 ```
 
@@ -100,7 +107,8 @@ State cleanup happens when:
 - Project deleted → Use `:ClaudeCleanupProjects` to remove orphaned state
 
 #### 4. Hook System Integration
-The plugin integrates with Claude Code's hook system via `.claude/settings.local.json`:
+Claude Code hooks are installed via `.claude/settings.local.json`.
+Codex hooks are shell-only and installed to `~/.codex/config.toml` using per-rule entries; we parse `apply_patch` patches to pre-touch per-file baselines and mark edits precisely; read-only commands (rg/sed/ls) are ignored; rm/git rm targets are tracked.
 
 ```json
 {
@@ -130,6 +138,24 @@ The plugin integrates with Claude Code's hook system via `.claude/settings.local
 ```
 
 Wrappers call `rpc/nvim-rpc.sh` (Python-based RPC client using pynvim) to communicate with the running Neovim instance via the public events facade.
+
+### Codex Setup (submodule)
+This plugin vendors the Codex fork as a submodule for compatibility with the stable hook payloads.
+
+```bash
+git submodule update --init --recursive lua/nvim-claude/agent_provider/providers/codex/codex
+```
+
+Build/install the Codex CLI from the submodule (or ensure your PATH points to it), then select the provider and install hooks:
+
+```vim
+lua << EOF
+require('nvim-claude').setup({ provider = { name = 'codex' } })
+EOF
+:ClaudeInstallHooks
+```
+
+This writes shell-only rules to `~/.codex/config.toml` and registers `[mcp_servers.nvim-lsp]` for diagnostics.
 
 ### Key Implementation Details
 
