@@ -11,7 +11,7 @@ function M.generate_window_name()
   return 'codex-' .. utils.timestamp()
 end
 
--- For Codex, inject @import into AGENTS.md instead of CLAUDE.md
+-- For Codex, inline the agent instructions into AGENTS.md (no @import)
 function M.append_to_context(agent_dir)
   if not agent_dir or agent_dir == '' then return false end
   local agents_md_path = agent_dir .. '/AGENTS.md'
@@ -21,25 +21,29 @@ function M.append_to_context(agent_dir)
     exists = utils.file_exists(agents_md_path),
     length = #content,
   })
-  local import_line = '@import agent-instructions.md'
-  local has_import = content:match('@import%s+agent%-instructions%.md') ~= nil
-  local has_see = content:match('See%s+@agent%-instructions%.md') ~= nil
-  if not (has_import or has_see) then
+  -- Read generated instructions (created by background_agent.create)
+  local instr_path = agent_dir .. '/agent-instructions.md'
+  local instr = utils.file_exists(instr_path) and (utils.read_file(instr_path) or '') or ''
+  if instr ~= '' then
     local new_content
     if content == '' then
-      new_content = import_line .. '\n'
+      new_content = instr
     else
       if not content:match('\n$') then content = content .. '\n' end
-      new_content = content .. '\n' .. import_line .. '\n'
+      new_content = content .. '\n' .. instr
     end
     local ok = utils.write_file(agents_md_path, new_content)
-    if not ok then
-      local f = io.open(agents_md_path, content == '' and 'w' or 'a')
-      if f then
-        if content == '' then f:write(import_line .. '\n') else f:write('\n\n' .. import_line .. '\n') end
-        f:close()
-      end
+    if ok then
+      -- Remove the standalone instructions file; Codex reads AGENTS.md directly
+      pcall(vim.fn.delete, instr_path)
+      logger.info('provider.codex.background', 'append_to_context: appended instructions into AGENTS.md and removed agent-instructions.md', {
+        agents_md = agents_md_path
+      })
+    else
+      logger.warn('provider.codex.background', 'append_to_context: failed to write AGENTS.md; keeping agent-instructions.md')
     end
+  else
+    logger.debug('provider.codex.background', 'append_to_context: no agent-instructions.md to inline')
   end
   return true
 end
@@ -49,14 +53,66 @@ function M.launch_agent_pane(window_id, cwd, initial_text)
   local pane_id = tmux.split_window(window_id, 'h', 40)
   if not pane_id then return nil end
   tmux.send_to_pane(pane_id, 'cd ' .. cwd)
-  tmux.send_to_pane(pane_id, cfg.background_spawn or 'codex')
-  vim.defer_fn(function()
-    if initial_text and initial_text ~= '' then
-      tmux.send_text_to_pane(pane_id, initial_text)
+  -- Prepare isolated Codex HOME for the agent: copy user's ~/.codex then strip hooks
+  local user_codex = vim.fn.expand('~/.codex')
+  local agent_codex = cwd .. '/.codex'
+  pcall(function()
+    if vim.fn.isdirectory(user_codex) == 1 then
+      -- Copy only if agent dir missing or empty
+      if vim.fn.isdirectory(agent_codex) == 0 or vim.fn.glob(agent_codex .. '/*') == '' then
+        utils.ensure_dir(agent_codex)
+        utils.exec(string.format('cp -R %s/ %s 2>/dev/null', vim.fn.shellescape(user_codex), vim.fn.shellescape(agent_codex)))
+      end
+      -- Strip hooks from agent config.toml to prevent background hooks from running
+      local cfg_path = agent_codex .. '/config.toml'
+      if vim.fn.filereadable(cfg_path) == 1 then
+        local content = utils.read_file(cfg_path) or ''
+        if content ~= '' then
+          local lines = {}
+          for l in (content .. '\n'):gmatch('([^\n]*)\n') do table.insert(lines, l) end
+          local start_idx, end_idx = nil, nil
+          local in_hooks = false
+          for i, l in ipairs(lines) do
+            local is_header = l:match('^%s*%[') ~= nil
+            local is_hooks_header = l:match('^%s*%[%[?hooks') ~= nil
+            if is_header and is_hooks_header then
+              if not in_hooks then start_idx = i; in_hooks = true end
+            elseif is_header and in_hooks and (not is_hooks_header) then
+              end_idx = i; break
+            end
+          end
+          if in_hooks and not end_idx then end_idx = #lines + 1 end
+          local new_content = content
+          if start_idx then
+            local before = table.concat(vim.list_slice(lines, 1, start_idx - 1), '\n')
+            local after = table.concat(vim.list_slice(lines, end_idx, #lines), '\n')
+            new_content = ''
+            if before ~= '' then new_content = before .. '\n' end
+            if after ~= '' then new_content = new_content .. after .. '\n' end
+          end
+          utils.write_file(cfg_path, new_content)
+        end
+      end
     end
-  end, 1000)
+  end)
+
+  -- Build a single command that includes the task with preserved newlines.
+  -- Use ANSI-C quoting $'..' so \n is interpreted as newline within a single argument.
+  local task = initial_text or ''
+  local function ansi_c_quote(s)
+    s = s:gsub('\\', '\\\\')    -- escape backslashes first
+           :gsub("'", [[\']])      -- escape single quotes
+           :gsub('\n', [[\n]])     -- turn newlines into \n
+    return "$'" .. s .. "'"
+  end
+  local quoted = ansi_c_quote(task)
+  -- Isolate Codex config so background agents do NOT trigger hooks
+  local codex_home = agent_codex
+  utils.ensure_dir(codex_home)
+  local env_prefix = 'CODEX_HOME=' .. vim.fn.shellescape(codex_home) .. ' '
+  local cmd = env_prefix .. (cfg.background_spawn or 'codex --full-auto') .. ' ' .. quoted
+  tmux.send_to_pane(pane_id, cmd)
   return pane_id
 end
 
 return M
-

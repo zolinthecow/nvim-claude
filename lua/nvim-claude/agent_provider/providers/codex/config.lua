@@ -2,7 +2,7 @@
 
 local M = {
   spawn_command = 'codex',
-  background_spawn = 'codex',
+  background_spawn = 'codex --full-auto',
   pane_title = 'codex',
   process_pattern = 'codex',
 }
@@ -30,4 +30,3 @@ function M.setup(opts)
 end
 
 return M
-

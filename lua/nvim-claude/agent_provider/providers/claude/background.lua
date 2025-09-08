@@ -95,11 +95,12 @@ function M.launch_agent_pane(window_id, cwd, initial_text)
   end
   tmux.send_to_pane(pane_id, 'cd ' .. cwd)
   tmux.send_to_pane(pane_id, cfg.background_spawn or 'claude --dangerously-skip-permissions')
+  -- Give the TUI time to initialize before pasting the task
   vim.defer_fn(function()
     if initial_text and initial_text ~= '' then
       tmux.send_text_to_pane(pane_id, initial_text)
     end
-  end, 1000)
+  end, 2000)
   return pane_id
 end
 
