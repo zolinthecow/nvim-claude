@@ -67,11 +67,40 @@ elif [[ "$CMD" =~ ^rm[[:space:]] ]]; then
   log "[codex shell-pre] rm targets tracked: $COUNT"
 fi
 
-# Ensure baseline exists for shell edits as well (use git_root/cwd)
+# For shell apply_patch invoked via command string, parse targets and pre-touch baseline per file
 GIT_ROOT=$(echo "$JSON_INPUT" | jq -r '.git_root // empty' 2>/dev/null)
 if [ -z "$GIT_ROOT" ] || [ "$GIT_ROOT" = "null" ]; then GIT_ROOT="$CWD"; fi
-PLUGIN_ROOT="$(get_plugin_root)"
-TARGET_FILE="$GIT_ROOT" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval('require(\"nvim-claude.events.adapter\").pre_tool_use_b64()')" >/dev/null 2>&1
+if [[ "$CMD" == apply_patch* ]]; then
+  PATCH_TEXT="${CMD#apply_patch }"
+  PLUGIN_ROOT="$(get_plugin_root)"
+  COUNT_AP=0
+  # Persist per-call absolute target list for post hook
+  TMP_BASE="${TMPDIR:-/tmp}/nvim-claude-codex-hooks"
+  mkdir -p "$TMP_BASE/calls" 2>/dev/null || true
+  CALL_FILE="$TMP_BASE/calls/${SUB_ID:-0}-${CALL_ID}.files"
+  : > "$CALL_FILE"
+  while IFS= read -r line; do
+    case "$line" in
+      "*** Update File: "*) rel=${line#*** Update File: };;
+      "*** Add File: "*) rel=${line#*** Add File: };;
+      "*** Delete File: "*) rel=${line#*** Delete File: };;
+      *) rel="";;
+    esac
+    if [ -n "$rel" ]; then
+      abs="$GIT_ROOT/$rel"
+      # normalize
+      if command -v realpath >/dev/null 2>&1; then abs=$(realpath "$abs" 2>/dev/null || echo "$abs"); fi
+      printf '%s\n' "$abs" >> "$CALL_FILE"
+      b64=$(printf '%s' "$abs" | base64)
+      log "[codex shell-pre] apply_patch target: $abs"
+      TARGET_FILE="$abs" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').pre_tool_use_b64('$b64')\")" >/dev/null 2>&1
+      COUNT_AP=$((COUNT_AP+1))
+    fi
+  done < <(printf '%s\n' "$PATCH_TEXT")
+  # Dedup list
+  if [ -f "$CALL_FILE" ]; then sort -u "$CALL_FILE" -o "$CALL_FILE"; fi
+  log "[codex shell-pre] apply_patch targets pre-touched: $COUNT_AP (saved: $CALL_FILE)"
+fi
 
 echo "[codex shell-pre] done" >> "$LOG_FILE"
 exit 0

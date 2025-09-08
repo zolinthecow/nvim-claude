@@ -12,9 +12,13 @@ log "[codex shell-post] called"
 TOOL=$(echo "$JSON_INPUT" | jq -r '.tool // empty' 2>/dev/null)
 RAW=$(echo "$JSON_INPUT" | jq -r '.arguments.raw // empty' 2>/dev/null)
 ARGSTR=$(echo "$JSON_INPUT" | jq -r 'if (.arguments|type)=="string" then .arguments else "" end' 2>/dev/null)
+ARGVSTR=$(echo "$JSON_INPUT" | jq -r '(.arguments.argv // []) | join(" ")' 2>/dev/null)
+CMDARG=$(echo "$JSON_INPUT" | jq -r '.arguments.command // empty' 2>/dev/null)
 CMD=$(echo "$JSON_INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+if [ -z "$CMD" ]; then CMD="$CMDARG"; fi
 if [ -z "$CMD" ]; then CMD="$RAW"; fi
 if [ -z "$CMD" ]; then CMD="$ARGSTR"; fi
+if [ -z "$CMD" ]; then CMD="$ARGVSTR"; fi
 SUCCESS=$(echo "$JSON_INPUT" | jq -r '.success // empty' 2>/dev/null)
 OUTPUT_HEAD=$(echo "$JSON_INPUT" | jq -r '.output // empty' 2>/dev/null)
 OUTPUT_HEAD="${OUTPUT_HEAD:0:120}"
@@ -24,7 +28,9 @@ CWD=$(echo "$JSON_INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 GIT_ROOT=$(echo "$JSON_INPUT" | jq -r '.git_root // empty' 2>/dev/null)
 if [ -z "$CWD" ]; then CWD=$(pwd); fi
 if [ -z "$GIT_ROOT" ] || [ "$GIT_ROOT" = "null" ]; then GIT_ROOT="$CWD"; fi
-log "[codex shell-post] tool=$TOOL cmd=${CMD:0:200} success=$SUCCESS out=${OUTPUT_HEAD}"
+ARGTYPE=$(echo "$JSON_INPUT" | jq -r '(.arguments|type) // empty' 2>/dev/null)
+ARGKEYS=$(echo "$JSON_INPUT" | jq -r '(.arguments|keys // []) | join(",")' 2>/dev/null)
+log "[codex shell-post] tool=$TOOL argtype=$ARGTYPE argkeys=$ARGKEYS cmd=${CMD:0:200} success=$SUCCESS out=${OUTPUT_HEAD}"
 PAYLOAD_DELETED=$(echo "$JSON_INPUT" | jq -r '.deleted[]? // empty' 2>/dev/null)
 if [ -n "$PAYLOAD_DELETED" ]; then
   # Deleted list provided; nothing to untrack (successful deletions). Optionally log
@@ -49,24 +55,48 @@ elif [[ "$CMD" =~ ^rm[[:space:]] ]]; then
   log "[codex shell-post] rm still-present files: $CNT"
 fi
 
-# If not an rm command, scope modified files since pre using sentinel and mark as edited
-if ! [[ "$CMD" =~ ^rm[[:space:]] ]]; then
-  TMP_BASE="${TMPDIR:-/tmp}/nvim-claude-codex-hooks"
-  TS_FILE="$TMP_BASE/calls/${SUB_ID:-0}-${CALL_ID}.ts"
-  if [ -f "$TS_FILE" ]; then
-    CHANGED=$(find "$CWD" -type f -newer "$TS_FILE" 2>/dev/null)
+# If not an rm command, and no payload lists, mark edits only when this shell call is an apply_patch
+if [ -z "$PAYLOAD_DELETED" ] && ! [[ "$CMD" =~ ^rm[[:space:]] ]]; then
+  if [[ "$CMD" == apply_patch* ]]; then
+    PATCH_TEXT="${CMD#apply_patch }"
     PLUGIN_ROOT="$(get_plugin_root)"
     N=0
-    while IFS= read -r ABS; do
-      [ -z "$ABS" ] && continue
-      if command -v realpath >/dev/null 2>&1; then ABS=$(realpath "$ABS" 2>/dev/null || echo "$ABS"); fi
-      PATH_B64=$(printf '%s' "$ABS" | base64)
-      log "[codex shell-post] marking edited (since pre): $ABS"
-      TARGET_FILE="$GIT_ROOT" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').post_tool_use_b64('$PATH_B64')\")" >/dev/null 2>&1
-      N=$((N+1))
-    done <<< "$CHANGED"
-    log "[codex shell-post] since-pre edited count: $N"
-    rm -f "$TS_FILE" 2>/dev/null || true
+    while IFS= read -r line; do
+      case "$line" in
+        "*** Update File: "*) rel=${line#*** Update File: };;
+        "*** Add File: "*) rel=${line#*** Add File: };;
+        "*** Delete File: "*) rel=${line#*** Delete File: };;
+        *) rel="";;
+      esac
+      if [ -n "$rel" ]; then
+        ABS="$GIT_ROOT/$rel"
+        if command -v realpath >/dev/null 2>&1; then ABS=$(realpath "$ABS" 2>/dev/null || echo "$ABS"); fi
+        PATH_B64=$(printf '%s' "$ABS" | base64)
+        log "[codex shell-post] marking edited (apply_patch cmd): $ABS"
+        TARGET_FILE="$GIT_ROOT" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').post_tool_use_b64('$PATH_B64')\")" >/dev/null 2>&1
+        N=$((N+1))
+      fi
+    done < <(printf '%s\n' "$PATCH_TEXT")
+    log "[codex shell-post] apply_patch edited count: $N"
+  else
+    # Fallback: if pre saved a per-call file list, mark those edits
+    TMP_BASE="${TMPDIR:-/tmp}/nvim-claude-codex-hooks"
+    CALL_FILE="$TMP_BASE/calls/${SUB_ID:-0}-${CALL_ID}.files"
+    if [ -f "$CALL_FILE" ]; then
+      PLUGIN_ROOT="$(get_plugin_root)"
+      N=0
+      while IFS= read -r ABS; do
+        [ -z "$ABS" ] && continue
+        PATH_B64=$(printf '%s' "$ABS" | base64)
+        log "[codex shell-post] marking edited (call-file): $ABS"
+        TARGET_FILE="$GIT_ROOT" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').post_tool_use_b64('$PATH_B64')\")" >/dev/null 2>&1
+        N=$((N+1))
+      done < "$CALL_FILE"
+      rm -f "$CALL_FILE" 2>/dev/null || true
+      log "[codex shell-post] call-file edited count: $N"
+    else
+      log "[codex shell-post] non-edit shell command; not marking edits"
+    fi
   fi
 fi
 
