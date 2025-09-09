@@ -76,9 +76,9 @@ function M.clear_baseline_ref(git_root)
 end
 
 -- Create a new baseline commit from a snapshot of working dir (without HEAD move)
-function M.create_baseline(message)
+function M.create_baseline(message, git_root)
   local logger = require('nvim-claude.logger')
-  local git_root = project_root_or_nil()
+  git_root = git_root or project_root_or_nil()
   if not git_root then 
     logger.warn('baseline', 'No git root found for baseline creation')
     return nil 

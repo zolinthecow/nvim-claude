@@ -95,7 +95,8 @@ end
 local project_state = require 'nvim-claude.project-state'
 
 local function get_edited_items()
-  local root = utils.get_project_root()
+  local cur = vim.api.nvim_buf_get_name(0)
+  local root = (cur and cur ~= '' and utils.get_project_root_for_file(cur)) or utils.get_project_root()
   if not root then return root, {} end
   local map = project_state.get(root, 'claude_edited_files') or {}
   local baseline_ref = baseline.get_baseline_ref(root)
@@ -209,7 +210,7 @@ function M.list_files()
   vim.ui.select(display, { prompt = 'Claude-edited files' }, function(choice, idx)
     if not choice or not idx then return end
     local rel, deleted = idx_to_rel[idx], idx_deleted[idx]
-    local full = utils.get_project_root() .. '/' .. rel
+    local full = root .. '/' .. rel
     if deleted then 
       show_deleted_view(root, rel) 
     else 

@@ -21,8 +21,8 @@ end
 function M.clear_baseline_ref(git_root)
   return baseline.clear_baseline_ref(git_root)
 end
-function M.create_baseline(message)
-  return baseline.create_baseline(message)
+function M.create_baseline(message, git_root)
+  return baseline.create_baseline(message, git_root)
 end
 
 -- Update a single file's content inside the current baseline commit

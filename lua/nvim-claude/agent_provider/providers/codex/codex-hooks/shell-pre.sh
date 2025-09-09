@@ -70,8 +70,9 @@ fi
 # For shell apply_patch invoked via command string, parse targets and pre-touch baseline per file
 GIT_ROOT=$(echo "$JSON_INPUT" | jq -r '.git_root // empty' 2>/dev/null)
 if [ -z "$GIT_ROOT" ] || [ "$GIT_ROOT" = "null" ]; then GIT_ROOT="$CWD"; fi
-if [[ "$CMD" == apply_patch* ]]; then
-  PATCH_TEXT="${CMD#apply_patch }"
+if echo "$CMD" | grep -q "\*\*\* Begin Patch"; then
+  # Extract the patch body starting at *** Begin Patch (handles both apply_patch and applypatch heredocs)
+  PATCH_TEXT=$(printf '%s\n' "$CMD" | sed -n '/^\*\*\* Begin Patch/,$p')
   PLUGIN_ROOT="$(get_plugin_root)"
   COUNT_AP=0
   # Persist per-call absolute target list for post hook

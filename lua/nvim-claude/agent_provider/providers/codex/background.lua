@@ -52,7 +52,8 @@ function M.launch_agent_pane(window_id, cwd, initial_text)
   if not window_id then return nil end
   local pane_id = tmux.split_window(window_id, 'h', 40)
   if not pane_id then return nil end
-  tmux.send_to_pane(pane_id, 'cd ' .. cwd)
+  -- Use shell-escaped cd to handle spaces/special chars in paths
+  tmux.send_to_pane(pane_id, 'cd ' .. vim.fn.shellescape(cwd))
   -- Prepare isolated Codex HOME for the agent: copy user's ~/.codex then strip hooks
   local user_codex = vim.fn.expand('~/.codex')
   local agent_codex = cwd .. '/.codex'
@@ -96,22 +97,20 @@ function M.launch_agent_pane(window_id, cwd, initial_text)
     end
   end)
 
-  -- Build a single command that includes the task with preserved newlines.
-  -- Use ANSI-C quoting $'..' so \n is interpreted as newline within a single argument.
+  -- Prepare task text via a temp file to avoid quoting issues with special characters/newlines
   local task = initial_text or ''
-  local function ansi_c_quote(s)
-    s = s:gsub('\\', '\\\\')    -- escape backslashes first
-           :gsub("'", [[\']])      -- escape single quotes
-           :gsub('\n', [[\n]])     -- turn newlines into \n
-    return "$'" .. s .. "'"
-  end
-  local quoted = ansi_c_quote(task)
+  local task_file = cwd .. '/.codex-task.txt'
+  utils.write_file(task_file, task)
+
   -- Isolate Codex config so background agents do NOT trigger hooks
   local codex_home = agent_codex
   utils.ensure_dir(codex_home)
   local env_prefix = 'CODEX_HOME=' .. vim.fn.shellescape(codex_home) .. ' '
-  local cmd = env_prefix .. (cfg.background_spawn or 'codex --full-auto') .. ' ' .. quoted
-  tmux.send_to_pane(pane_id, cmd)
+  local spawn = (cfg.background_spawn or 'codex --full-auto')
+  -- Pass the task as a single argv using command substitution; quoting preserves whitespace/newlines
+  local cmd = env_prefix .. spawn .. ' ' .. '"$(cat ' .. vim.fn.shellescape(task_file) .. ')"'
+  -- Use tmux buffer paste to avoid key interpretation/quoting issues
+  tmux.send_text_to_pane(pane_id, cmd)
   return pane_id
 end
 

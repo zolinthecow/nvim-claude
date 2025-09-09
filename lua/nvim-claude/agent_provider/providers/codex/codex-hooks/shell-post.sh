@@ -57,8 +57,8 @@ fi
 
 # If not an rm command, and no payload lists, mark edits only when this shell call is an apply_patch
 if [ -z "$PAYLOAD_DELETED" ] && ! [[ "$CMD" =~ ^rm[[:space:]] ]]; then
-  if [[ "$CMD" == apply_patch* ]]; then
-    PATCH_TEXT="${CMD#apply_patch }"
+  if printf '%s' "$CMD" | grep -q "\*\*\* Begin Patch"; then
+    PATCH_TEXT=$(printf '%s\n' "$CMD" | sed -n '/^\*\*\* Begin Patch/,$p')
     PLUGIN_ROOT="$(get_plugin_root)"
     N=0
     while IFS= read -r line; do
