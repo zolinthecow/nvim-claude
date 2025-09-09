@@ -290,6 +290,27 @@ This is a Neovim plugin that integrates with Claude Code (the CLI tool). It trac
 <leader>if              # Manual refresh diff
 ```
 
+### Testing Strategy & Coverage
+
+- Scope: We prioritize fast, integration‑heavy tests that validate end‑to‑end flows, with a small unit suite for inline diff contracts.
+- Fast E2E (default): `./scripts/run_e2e_tests.sh`
+  - Covers events façade pre/post flows, baseline creation/updates, inline diff rendering, and executor accept/reject, including new‑file paths.
+  - Tests live in `tests/e2e_spec.lua` and use temp git repos; no external CLIs or hooks.
+- Unit (inline diff): `./scripts/run_tests.sh` also runs `tests/inline_diff_unit_spec.lua`
+  - Validates hunks plan generation and executor action contracts via the public facades.
+- Optional hooks simulation: `scripts/e2e-hooks-sim.sh`
+  - Starts a headless Neovim server, runs the real Codex shell pre/post hooks with a JSON payload, applies a patch, then inspects Neovim state via RPC.
+  - Useful as a separate CI job; not required for fast iteration.
+
+Interfaces under E2E contract
+- `lua/nvim-claude/events/init.lua` façade: pre_tool_use, post_tool_use, deletion tracking, and session helpers.
+- `lua/nvim-claude/inline_diff/init.lua` façade: refresh/show, accept/reject current/all, and diff state helpers.
+
+Guideline for contributors and agents
+- E2E tests exercise the public facades. Any change to these façade APIs or their semantics must update the E2E tests accordingly.
+- Internal refactors are welcome as long as the façade contracts remain stable and E2E tests continue to pass.
+
+
 #### 6. Debugging Commands
 ```vim
 " Check tracked files

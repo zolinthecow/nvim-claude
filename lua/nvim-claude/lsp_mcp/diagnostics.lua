@@ -109,6 +109,13 @@ function M.get_for_files(file_paths)
     
     -- Wait for diagnostics from all clients or timeout
     local waited = 0
+    local function wait_threshold_for_client(name)
+      local lower = string.lower(name or '')
+      if lower == 'bashls' or lower == 'bash-language-server' then
+        return 1600
+      end
+      return 3000
+    end
     while waited < 3000 do
       -- Collect all diagnostic sources we've seen so far
       local seen_sources = {}
@@ -143,6 +150,21 @@ function M.get_for_files(file_paths)
         elseif lower == 'pyright' then
           mapped_sources['Pyright'] = true
           mapped_sources['pyright'] = true
+        elseif lower == 'lua diagnostics.' or lower == 'lua diagnostics' then
+          -- lua_ls reports diagnostics with source 'Lua Diagnostics.'
+          mapped_sources['lua_ls'] = true
+          mapped_sources['sumneko_lua'] = true
+        elseif lower == 'lua_ls' or lower == 'sumneko_lua' or lower == 'sumneko' then
+          mapped_sources['Lua Diagnostics.'] = true
+          mapped_sources['lua diagnostics.'] = true
+        elseif lower == 'bash-language-server' then
+          mapped_sources['bashls'] = true
+        elseif lower == 'bashls' then
+          mapped_sources['bash-language-server'] = true
+          -- Some setups surface shell diagnostics as 'shellcheck'
+          mapped_sources['shellcheck'] = true
+        elseif lower == 'shellcheck' then
+          mapped_sources['bashls'] = true
         end
       end
       
@@ -155,11 +177,10 @@ function M.get_for_files(file_paths)
           if mapped_sources[client_name] or mapped_sources[string.lower(client_name)] then
             -- ok
           else
-          -- Some clients might not produce diagnostics if there are no issues
-          -- So we check if either:
-          -- 1. We've seen diagnostics from this source, OR
-          -- 2. We've waited the full 3 seconds (gives TypeScript time in large projects)
-            if waited < 3000 then
+            -- Some clients might not produce diagnostics if there are no issues.
+            -- Use per-client thresholds to avoid unnecessary waits.
+            local thr = wait_threshold_for_client(client_name)
+            if waited < thr then
               all_responded = false
               table.insert(missing_clients, client_name)
             end

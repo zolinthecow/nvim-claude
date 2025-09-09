@@ -11,3 +11,5 @@
 .claude/settings.local.json
 
 **/__pycache__
+
+.nvimlog

@@ -22,7 +22,9 @@ if ! nvim --headless -u tests/minimal_init.lua +"lua require('plenary')" +qa! >/
 fi
 
 nvim --headless -u tests/minimal_init.lua \
-  -c "PlenaryBustedFile tests/hunks_spec.lua" \
+  -c "PlenaryBustedFile tests/inline_diff_unit_spec.lua" \
+  -c "PlenaryBustedFile tests/events_spec.lua" \
+  -c "PlenaryBustedFile tests/e2e_spec.lua" \
   -c "qa!"
 
 echo "✅ Tests finished"
