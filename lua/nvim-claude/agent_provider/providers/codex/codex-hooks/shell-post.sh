@@ -27,7 +27,10 @@ CALL_ID=$(echo "$JSON_INPUT" | jq -r '.call_id // empty' 2>/dev/null)
 CWD=$(echo "$JSON_INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 GIT_ROOT=$(echo "$JSON_INPUT" | jq -r '.git_root // empty' 2>/dev/null)
 if [ -z "$CWD" ]; then CWD=$(pwd); fi
-if [ -z "$GIT_ROOT" ] || [ "$GIT_ROOT" = "null" ]; then GIT_ROOT="$CWD"; fi
+if [ -z "$GIT_ROOT" ] || [ "$GIT_ROOT" = "null" ]; then
+  root=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
+  if [ -n "$root" ]; then GIT_ROOT="$root"; else GIT_ROOT="$CWD"; fi
+fi
 ARGTYPE=$(echo "$JSON_INPUT" | jq -r '(.arguments|type) // empty' 2>/dev/null)
 ARGKEYS=$(echo "$JSON_INPUT" | jq -r '(.arguments|keys // []) | join(",")' 2>/dev/null)
 log "[codex shell-post] tool=$TOOL argtype=$ARGTYPE argkeys=$ARGKEYS cmd=${CMD:0:200} success=$SUCCESS out=${OUTPUT_HEAD}"
@@ -58,7 +61,7 @@ fi
 # If not an rm command, and no payload lists, mark edits only when this shell call is an apply_patch
 if [ -z "$PAYLOAD_DELETED" ] && ! [[ "$CMD" =~ ^rm[[:space:]] ]]; then
   if printf '%s' "$CMD" | grep -q "\*\*\* Begin Patch"; then
-    PATCH_TEXT=$(printf '%s\n' "$CMD" | sed -n '/^\*\*\* Begin Patch/,$p')
+    PATCH_TEXT=$(printf '%s\n' "$CMD" | sed -n '/\*\*\* Begin Patch/,$p')
     PLUGIN_ROOT="$(get_plugin_root)"
     N=0
     while IFS= read -r line; do
