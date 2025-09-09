@@ -29,6 +29,13 @@ M.config = {
     auto_install = true, -- Automatically install MCP server on first use
     install_path = vim.fn.stdpath 'data' .. '/nvim-claude/mcp-env',
   },
+  provider = {
+    name = 'claude',
+    claude = {
+      spawn_command = 'claude',
+      background_spawn = 'claude --dangerously-skip-permissions',
+    },
+  },
 }
 
 -- Validate configuration
@@ -71,6 +78,24 @@ local function validate_config(config)
   if config.mappings then
     if config.mappings.prefix and type(config.mappings.prefix) ~= 'string' then
       table.insert(errors, 'mappings.prefix must be a string')
+      ok = false
+    end
+  end
+
+  -- Validate provider config
+  if config.provider then
+    if config.provider.name and type(config.provider.name) ~= 'string' then
+      table.insert(errors, 'provider.name must be a string')
+      ok = false
+    end
+    local name = config.provider.name or 'claude'
+    if name ~= 'claude' and name ~= 'codex' then
+      table.insert(errors, "provider.name must be 'claude' or 'codex'")
+      ok = false
+    end
+    local opts = config.provider[name]
+    if opts and type(opts) ~= 'table' then
+      table.insert(errors, string.format("provider.%s must be a table", name))
       ok = false
     end
   end
@@ -172,12 +197,22 @@ function M.setup(user_config)
   M.git = M.utils.git
   M.commands = require 'nvim-claude.commands'
   M.events = require 'nvim-claude.events'
+  M.agent_provider = require 'nvim-claude.agent_provider'
   M.settings_updater = require 'nvim-claude.settings-updater'
   M.background_agent = require 'nvim-claude.background_agent'
 
   -- Initialize submodules with config
   M.tmux.setup(M.config.tmux)
   M.git.setup(M.config.agents)
+  -- Initialize provider system (Claude-only for now); thread provider-specific options
+  do
+    local prov = M.config.provider or {}
+    local name = prov.name or 'claude'
+    local prov_opts = prov[name] or {}
+    local opts = { provider = name }
+    opts[name] = prov_opts
+    M.agent_provider.setup(opts)
+  end
   M.background_agent.registry_setup(M.config.agents)
   M.events.setup()
 

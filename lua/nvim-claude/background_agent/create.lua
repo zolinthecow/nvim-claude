@@ -85,8 +85,9 @@ function M.create(task, fork_from, setup_commands)
     return false, string.format('Agent limit reached (%d/%d)', active_count, cfg.max_agents)
   end
 
-  -- tmux window
-  local window_name = 'claude-' .. utils.timestamp()
+  -- tmux window (provider-specific name)
+  local agent_provider = require('nvim-claude.agent_provider')
+  local window_name = agent_provider.background.generate_window_name()
   local window_id = tmux.create_agent_window(window_name, agent_dir)
   if not window_id then
     return false, 'Failed to create agent tmux window'
@@ -177,29 +178,35 @@ The file `mission.log` contains additional details about this agent's creation a
 
   utils.write_file(agent_dir .. '/agent-instructions.md', agent_context)
 
-  -- CLAUDE.md import
-  local claude_md_path = agent_dir .. '/CLAUDE.md'
-  local claude_md_content = utils.file_exists(claude_md_path) and (utils.read_file(claude_md_path) or '') or ''
-  local import_line = 'See @agent-instructions.md for more instructions'
-  if not claude_md_content:match '@import agent%-instructions%.md' then
-    if claude_md_content ~= '' then
-      claude_md_content = claude_md_content .. '\n\n' .. import_line
-    else
-      claude_md_content = import_line
+  -- Provider-specific context injection (e.g., CLAUDE.md import)
+  local logger = require('nvim-claude.logger')
+  logger.debug('background_agent.create', 'calling provider.append_to_context', { dir = agent_dir })
+  local ok_append, err_append = pcall(agent_provider.background.append_to_context, agent_dir)
+  logger.debug('background_agent.create', 'provider.append_to_context returned', { ok = ok_append, err = err_append })
+  do
+    local md_path = agent_dir .. '/CLAUDE.md'
+    local content = utils.read_file(md_path) or ''
+    local has_marker = content:match('@import%s+agent%-instructions%.md') or content:match('See%s+@agent%-instructions%.md')
+    logger.debug('background_agent.create', 'CLAUDE.md after append', {
+      path = md_path,
+      exists = utils.file_exists(md_path),
+      length = #content,
+      head = content:sub(1, 120),
+      has_marker = has_marker and true or false,
+    })
+    if not has_marker then
+      -- Fallback: ensure the import marker exists by prepending it
+      local marker = '@import agent-instructions.md\n\n'
+      local new_content = marker .. content
+      local ok_write = utils.write_file(md_path, new_content)
+      logger.debug('background_agent.create', 'Fallback write of import marker', { path = md_path, ok = ok_write })
     end
-    utils.write_file(claude_md_path, claude_md_content)
   end
 
   -- Launch in tmux panes
   tmux.send_to_window(window_id, 'nvim .')
-  local pane_claude = tmux.split_window(window_id, 'h', 40)
-  if pane_claude then
-    tmux.send_to_pane(pane_claude, 'cd ' .. agent_dir)
-    tmux.send_to_pane(pane_claude, 'claude --dangerously-skip-permissions')
-    vim.wait(1000)
-    local formatted_task = format_task_sections(task)
-    tmux.send_text_to_pane(pane_claude, formatted_task)
-  end
+  local formatted_task = format_task_sections(task)
+  agent_provider.background.launch_agent_pane(window_id, agent_dir, formatted_task)
 
   vim.notify(string.format('Background agent started\nID: %s\nTask: %s\nWorkspace: %s\nWindow: %s\n%s', agent_id, task, agent_dir, window_name, base_info), vim.log.levels.INFO)
   return true, agent_id

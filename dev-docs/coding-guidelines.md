@@ -20,7 +20,7 @@ This project uses a strict facade pattern with clear module boundaries. Follow t
 
 ## Hooks & Shell
 
-- Shell wrappers live under `claude-hooks/` and call the public events facade via `rpc/nvim-rpc.sh` → `events.adapter`.
+- Shell wrappers live under `agent_provider/providers/claude/claude-hooks/` and call the public events facade via `rpc/nvim-rpc.sh` → `events.adapter`.
 - Never call internal Lua modules from shell directly; only the facade/endpoints in `events`.
 - The Stop hook should output only `{ "decision": "approve" | "block" }` and include a stringified JSON `reason` when blocking.
 
@@ -43,4 +43,3 @@ This project uses a strict facade pattern with clear module boundaries. Follow t
 - Avoid adding new globals; keep modules returning tables with functions.
 - Keep façade modules thin: route, validate, and re‑export only.
 - Keep changes focused; don’t fix unrelated issues in the same patch.
-

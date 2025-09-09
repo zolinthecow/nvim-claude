@@ -2,6 +2,7 @@ local M = {}
 local utils = require 'nvim-claude.utils'
 local logger = require 'nvim-claude.logger'
 local project_state = require 'nvim-claude.project-state'
+local agent_provider = require 'nvim-claude.agent_provider'
 
 local function project_server_file(project_root)
   if not project_root or project_root == '' then return nil end
@@ -55,8 +56,8 @@ function M.update_claude_settings()
     os.remove(old_server_file)
   end
 
-  -- Install/update Claude Code hook settings via events installer
-  require('nvim-claude.events').install_hooks()
+  -- Install/update provider hook settings (Claude-only for now)
+  agent_provider.install_hooks()
 end
 
 -- Setup autocmds to update settings

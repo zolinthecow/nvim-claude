@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+#!/usr/bin/env bash
+
 # Common utilities for nvim-claude hooks
 
 # No default global log file. Will be set per-project.
@@ -84,4 +86,26 @@ tee_to_log() {
 
 escape_for_lua() {
     echo "$1" | sed "s/'/\\\\'/g"
+}
+
+# Compute plugin root path relative to this script location
+# New layout: lua/nvim-claude/agent_provider/providers/claude/claude-hooks/
+get_plugin_root() {
+  local here="$SCRIPT_DIR"
+  local candidate="$here/../../../../../../"
+  candidate="$(cd "$candidate" 2>/dev/null && pwd || echo '')"
+  if [ -n "$candidate" ] && [ -f "$candidate/rpc/nvim-rpc.sh" ]; then
+    echo "$candidate"
+    return
+  fi
+  # Fallback: ascend until rpc/nvim-rpc.sh found
+  local dir="$here"
+  while [ "$dir" != "/" ]; do
+    if [ -f "$dir/rpc/nvim-rpc.sh" ]; then
+      echo "$dir"
+      return
+    fi
+    dir="$(dirname "$dir")"
+  done
+  echo "$here"
 }

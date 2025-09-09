@@ -6,10 +6,13 @@ M.config = {}
 
 function M.setup(config)
   M.config = config or {}
+  -- Defaults for generic chat pane detection
+  if M.config.pane_title == nil then M.config.pane_title = 'claude-chat' end
+  if M.config.process_pattern == nil then M.config.process_pattern = '(claude|claude-code)' end
 end
 
--- Find Claude pane by checking running command
-function M.find_claude_pane()
+-- Find chat pane by tmux title or process pattern
+function M.find_chat_pane()
   local cmd = "tmux list-panes -F '#{pane_id}:#{pane_pid}:#{pane_title}:#{pane_current_command}'"
   local result = utils.exec(cmd)
   if result and result ~= '' then
@@ -17,9 +20,9 @@ function M.find_claude_pane()
       local pane_id, pane_pid, pane_title, pane_cmd = line:match('^([^:]+):([^:]+):([^:]*):(.*)$')
       if pane_id and pane_pid then
         if pane_title and pane_title == (M.config.pane_title or 'claude-chat') then return pane_id end
-        if pane_title and (pane_title:match('✳') or pane_title:match('[Cc]laude')) then return pane_id end
-        if pane_cmd and pane_cmd:match('claude') then return pane_id end
-        local check_cmd = string.format("ps -ef | awk '$3 == %s' | grep -c -E '(claude|claude-code)' 2>/dev/null", pane_pid)
+        local pattern = M.config.process_pattern or '(claude|claude-code)'
+        if pane_cmd and pane_cmd:match(pattern) then return pane_id end
+        local check_cmd = string.format("ps -ef | awk '$3 == %s' | grep -c -E %q 2>/dev/null", pane_pid, pattern)
         local count_result = utils.exec(check_cmd)
         if count_result and tonumber(count_result) and tonumber(count_result) > 0 then return pane_id end
       end
@@ -28,13 +31,18 @@ function M.find_claude_pane()
   return nil
 end
 
+-- Legacy alias (backward compatibility)
+function M.find_claude_pane()
+  return M.find_chat_pane()
+end
+
 -- Create new tmux pane for Claude (or return existing)
 function M.create_pane(command)
-  local existing = M.find_claude_pane()
+  local existing = M.find_chat_pane()
   if existing then
     local _, err = utils.exec('tmux select-pane -t ' .. existing)
     if err then
-      vim.notify('Claude pane no longer exists, creating new one', vim.log.levels.INFO)
+      vim.notify('Chat pane no longer exists, creating new one', vim.log.levels.INFO)
     else
       return existing
     end
@@ -175,4 +183,3 @@ function M.split_window(window_id, direction, size_percent)
 end
 
 return M
-

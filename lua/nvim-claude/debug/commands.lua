@@ -9,12 +9,27 @@ end
 function M.register(claude)
   local utils = require('nvim-claude.utils')
   local logger = require('nvim-claude.logger')
+  local agent_provider = require('nvim-claude.agent_provider')
 
   -- ClaudeDebug: pane inspection
   define('ClaudeDebug', function()
     local cmd = "tmux list-panes -F '#{pane_id}:#{pane_pid}:#{pane_title}:#{pane_current_command}'"
     local result = utils.exec(cmd)
-    local lines = { 'Claude Pane Debug Info:', '' }
+    local lines = { 'Agent Provider Debug Info:', '' }
+    local provider_name = agent_provider.name() or 'unknown'
+    table.insert(lines, 'Provider: ' .. provider_name)
+    -- Attempt to print provider config details if available
+    local details = {}
+    if provider_name == 'claude' then
+      local ok, cfg = pcall(require, 'nvim-claude.agent_provider.providers.claude.config')
+      if ok and cfg then
+        table.insert(details, 'spawn_command=' .. tostring(cfg.spawn_command))
+        table.insert(details, 'background_spawn=' .. tostring(cfg.background_spawn))
+        table.insert(details, 'pane_title=' .. tostring(cfg.pane_title))
+      end
+    end
+    if #details > 0 then table.insert(lines, 'Config: ' .. table.concat(details, ', ')) end
+    table.insert(lines, '')
     if result and result ~= '' then
       table.insert(lines, 'All panes:')
       for line in result:gmatch('[^\n]+') do
@@ -27,8 +42,12 @@ function M.register(claude)
       table.insert(lines, 'No panes found')
     end
     table.insert(lines, '')
-    local detected = require('nvim-claude.utils').tmux.find_claude_pane()
-    table.insert(lines, detected and ('Detected Claude pane: ' .. detected) or 'No Claude pane detected')
+    local pane = agent_provider.chat.ensure_pane()
+    if pane then
+      table.insert(lines, 'Detected provider chat pane: ' .. pane)
+    else
+      table.insert(lines, 'No provider chat pane detected')
+    end
 
     local buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -38,7 +57,7 @@ function M.register(claude)
     vim.api.nvim_win_set_option(win, 'winhl', 'Normal:Normal,FloatBorder:Comment')
     vim.keymap.set('n', 'q', '<cmd>close<CR>', { buffer = buf, silent = true })
     vim.keymap.set('n', '<Esc>', '<cmd>close<CR>', { buffer = buf, silent = true })
-  end, { desc = 'Debug Claude pane detection' })
+  end, { desc = 'Debug chat pane detection' })
 
   -- Debug agents (summary)
   define('ClaudeDebugAgents', function()

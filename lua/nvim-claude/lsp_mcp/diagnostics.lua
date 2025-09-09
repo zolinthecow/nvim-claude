@@ -132,11 +132,17 @@ function M.get_for_files(file_paths)
       local mapped_sources = {}
       for source, _ in pairs(seen_sources) do
         mapped_sources[source] = true
+        -- Normalize case and map common aliases
+        local lower = string.lower(source)
+        mapped_sources[lower] = true
         -- Handle common name mappings
-        if source == 'tsserver' then
+        if lower == 'tsserver' then
           mapped_sources['typescript-tools'] = true
-        elseif source == 'typescript-tools' then
+        elseif lower == 'typescript-tools' then
           mapped_sources['tsserver'] = true
+        elseif lower == 'pyright' then
+          mapped_sources['Pyright'] = true
+          mapped_sources['pyright'] = true
         end
       end
       
@@ -145,13 +151,18 @@ function M.get_for_files(file_paths)
       if total_clients > 0 then
         -- Check if we have diagnostics from all expected clients
         for client_name, _ in pairs(all_clients) do
+          local client_key = client_name
+          if mapped_sources[client_name] or mapped_sources[string.lower(client_name)] then
+            -- ok
+          else
           -- Some clients might not produce diagnostics if there are no issues
           -- So we check if either:
           -- 1. We've seen diagnostics from this source, OR
           -- 2. We've waited the full 3 seconds (gives TypeScript time in large projects)
-          if not mapped_sources[client_name] and waited < 3000 then
-            all_responded = false
-            table.insert(missing_clients, client_name)
+            if waited < 3000 then
+              all_responded = false
+              table.insert(missing_clients, client_name)
+            end
           end
         end
       end

@@ -48,21 +48,23 @@ def main():
 
     target_file = os.environ.get('TARGET_FILE')
     if target_file:
-        file_dir = Path(target_file).parent
+        p = Path(target_file).resolve()
+        # If TARGET_FILE is a directory, use it directly; otherwise use its parent
+        work_dir = p if p.is_dir() else p.parent
         try:
             import subprocess
             result = subprocess.run(
                 ['git', 'rev-parse', '--show-toplevel'],
-                cwd=file_dir,
+                cwd=work_dir,
                 capture_output=True,
                 text=True
             )
             if result.returncode == 0:
                 project_root = result.stdout.strip()
             else:
-                project_root = find_project_root(file_dir)
+                project_root = find_project_root(work_dir)
         except Exception:
-            project_root = find_project_root(file_dir)
+            project_root = find_project_root(work_dir)
     else:
         project_root = find_project_root()
 
@@ -106,4 +108,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

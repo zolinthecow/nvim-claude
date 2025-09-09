@@ -53,7 +53,17 @@ A powerful Neovim plugin for seamless integration with Claude AI. Chat with Clau
 
 After installation:
 1. **Automatic Setup**: The plugin automatically installs required components on first use
-2. **Claude Code Hooks**: Run `:ClaudeInstallHooks` in your project to enable automatic diff tracking
+2. **Hooks**
+   - Claude Code (default): Run `:ClaudeInstallHooks` in your project to enable automatic diff tracking
+   - Codex (optional): Add the Codex submodule and switch provider
+     ```bash
+     git submodule update --init --recursive lua/nvim-claude/agent_provider/providers/codex/codex
+     ```
+     In your config:
+     ```lua
+     require('nvim-claude').setup({ provider = { name = 'codex' } })
+     ```
+     Then run `:ClaudeInstallHooks` to install shell‑only hooks to `~/.codex/config.toml` and register the MCP server.
 3. **Manual Installation** (if needed):
    - `:ClaudeInstallRPC` - Install the Python RPC client for hook communication
    - `:ClaudeInstallMCP` - Install the MCP server for LSP diagnostics
@@ -256,10 +266,10 @@ The plugin can automatically create baselines and track changes when Claude edit
 This creates a `.claude/settings.local.json` file in your project that integrates with Claude Code's hook system. This file is developer-specific and should not be committed to version control.
 
 What gets installed:
-- Pre/Post hooks for `Edit|Write|MultiEdit` → `claude-hooks/pre-hook-wrapper.sh` and `claude-hooks/post-hook-wrapper.sh`
-- Bash pre/post hooks for `Bash` → `claude-hooks/bash-hook-wrapper.sh` and `claude-hooks/bash-post-hook-wrapper.sh`
-- Stop hook validator → `claude-hooks/stop-hook-validator.sh` (blocks completion on LSP errors in this turn)
-- User prompt hook → `claude-hooks/user-prompt-hook-wrapper.sh` (creates checkpoints)
+- Pre/Post hooks for `Edit|Write|MultiEdit` → `agent_provider/providers/claude/claude-hooks/pre-hook-wrapper.sh` and `.../post-hook-wrapper.sh`
+- Bash pre/post hooks for `Bash` → `agent_provider/providers/claude/claude-hooks/bash-hook-wrapper.sh` and `.../bash-post-hook-wrapper.sh`
+- Stop hook validator → `agent_provider/providers/claude/claude-hooks/stop-hook-validator.sh` (blocks completion on LSP errors in this turn)
+- User prompt hook → `agent_provider/providers/claude/claude-hooks/user-prompt-hook-wrapper.sh` (creates checkpoints)
 
 The wrappers call the plugin RPC client (`rpc/nvim-rpc.sh`) to reach the running Neovim and only ever use the public events facade `require('nvim-claude.events')` via `events.adapter`.
 

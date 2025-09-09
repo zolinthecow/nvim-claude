@@ -23,9 +23,11 @@ FILE_PATH=$(echo "$JSON_INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/n
 # Call the proxy script with the file path via events adapter
 if [ -n "$FILE_PATH" ]; then
     FILE_PATH_B64=$(printf '%s' "$FILE_PATH" | base64)
-    TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').pre_tool_use_b64('$FILE_PATH_B64')\")"
+    PLUGIN_ROOT="$(get_plugin_root)"
+    TARGET_FILE="$FILE_PATH" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').pre_tool_use_b64('$FILE_PATH_B64')\")"
 else
-    "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr "luaeval('require(\"nvim-claude.events.adapter\").pre_tool_use_b64()')"
+    PLUGIN_ROOT="$(get_plugin_root)"
+    "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval('require(\"nvim-claude.events.adapter\").pre_tool_use_b64()')"
 fi
 
 # Return the exit code from nvim-rpc

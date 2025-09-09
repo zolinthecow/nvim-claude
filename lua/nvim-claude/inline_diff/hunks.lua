@@ -84,8 +84,8 @@ end
 
 -- Accept a single hunk: patch the baseline commit tree for just this hunk
 function M.accept_hunk_for_file(bufnr, hunk)
-  local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
+  local git_root = utils.get_project_root_for_file(file_path)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
 
   -- Generate hunk patch using the actual relative path
@@ -145,8 +145,8 @@ end
 
 -- Rejection for existing file: build actions to apply reverse patch to worktree and reload
 local function reject_hunk_in_worktree_actions(bufnr, hunk)
-  local git_root = utils.get_project_root()
   local file_path = vim.api.nvim_buf_get_name(bufnr)
+  local git_root = utils.get_project_root_for_file(file_path)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
 
   -- Build reverse patch
@@ -214,7 +214,7 @@ function M.reject_current_hunk(bufnr)
     return { status = 'error', actions = {}, info = { reason = 'no_hunk', bufnr = bufnr } }
   end
 
-  local git_root = utils.get_project_root()
+  local git_root = utils.get_project_root_for_file(vim.api.nvim_buf_get_name(bufnr))
   local file_path = vim.api.nvim_buf_get_name(bufnr)
   local relative_path = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
 
@@ -256,7 +256,7 @@ end
 
 -- Accept all hunks in current file by updating baseline to match buffer
 function M.accept_all_hunks_in_file(bufnr)
-  local git_root = utils.get_project_root()
+  local git_root = utils.get_project_root_for_file(vim.api.nvim_buf_get_name(bufnr))
   if not git_root then
     return { status = 'error', actions = {}, info = { reason = 'no_root' } }
   end
@@ -297,7 +297,7 @@ end
 
 -- Reject all hunks in current file by restoring buffer to baseline content (or deleting new file)
 function M.reject_all_hunks_in_file(bufnr)
-  local git_root = utils.get_project_root()
+  local git_root = utils.get_project_root_for_file(vim.api.nvim_buf_get_name(bufnr))
   if not git_root then
     return { status = 'error', actions = {}, info = { reason = 'no_root' } }
   end

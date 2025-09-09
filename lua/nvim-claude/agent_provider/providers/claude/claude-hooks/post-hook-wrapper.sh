@@ -21,7 +21,9 @@ log "Extracted FILE_PATH: $FILE_PATH"
 
 if [ -n "$FILE_PATH" ]; then
     FILE_PATH_B64=$(printf '%s' "$FILE_PATH" | base64)
-    RESULT=$(TARGET_FILE="$FILE_PATH" "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').post_tool_use_b64('$FILE_PATH_B64')\")" 2>&1)
+    PLUGIN_ROOT="$(get_plugin_root)"
+    RESULT=$(TARGET_FILE="$FILE_PATH" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval(\"require('nvim-claude.events.adapter').post_tool_use_b64('$FILE_PATH_B64')\")" 2>&1)
 else
-    "$SCRIPT_DIR/../rpc/nvim-rpc.sh" --remote-expr "luaeval('require(\"nvim-claude.events.adapter\").post_tool_use_b64()')"
+    PLUGIN_ROOT="$(get_plugin_root)"
+    "$PLUGIN_ROOT/rpc/nvim-rpc.sh" --remote-expr "luaeval('require(\"nvim-claude.events.adapter\").post_tool_use_b64()')"
 fi

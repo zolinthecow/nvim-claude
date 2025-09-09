@@ -70,7 +70,10 @@ init.lua (entry point)
 ├── background_agent/ (agents + registry)
 ├── checkpoint/ (checkpoints)
 ├── logger.lua, project-state.lua, mappings.lua, statusline.lua
-└── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
+├── agent_provider/
+│   └── providers/
+│       └── claude/
+│           └── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
 ```
 
 #### 3. State Management

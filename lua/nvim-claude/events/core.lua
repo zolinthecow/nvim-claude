@@ -22,7 +22,7 @@ function M.pre_tool_use(file_path)
 
   -- Create baseline if missing
   if not inline_diff.get_baseline_ref(git_root) then
-    local ref = inline_diff.create_baseline('nvim-claude: baseline ' .. os.date('%Y-%m-%d %H:%M:%S'))
+    local ref = inline_diff.create_baseline('nvim-claude: baseline ' .. os.date('%Y-%m-%d %H:%M:%S'), git_root)
     if not ref then return true end
   end
 
@@ -69,7 +69,7 @@ function M.track_deleted_file(file_path)
 
   -- Ensure baseline exists
   if not inline_diff.get_baseline_ref(git_root) then
-    local _ = inline_diff.create_baseline('nvim-claude: baseline (pre-delete)')
+    local _ = inline_diff.create_baseline('nvim-claude: baseline (pre-delete)', git_root)
   end
 
   -- If file still exists, update its content in baseline
