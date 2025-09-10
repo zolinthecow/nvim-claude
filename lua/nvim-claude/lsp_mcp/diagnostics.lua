@@ -79,9 +79,16 @@ function M.get_for_files(file_paths)
         pcall(vim.api.nvim_exec_autocmds, 'InsertLeave', { buffer = b })
         pcall(vim.api.nvim_exec_autocmds, 'TextChanged', { buffer = b })
       end)
-      -- Wait briefly for LSP to attach to this buffer
-      vim.wait(500, function() return #vim.lsp.get_clients({ bufnr = b }) > 0 end, 50)
     end
+    -- Single aggregated wait for all buffers to get at least one client
+    local function all_attached()
+      for _, info in ipairs(files_to_check) do
+        if #vim.lsp.get_clients({ bufnr = info.bufnr }) == 0 then return false end
+      end
+      return true
+    end
+    -- Keep short to avoid long per-buffer waits; diagnostics wait below handles slower servers
+    vim.wait(600, all_attached, 50)
   end
 
   -- Simple bounded wait like existing, to let diagnostics populate
@@ -113,6 +120,10 @@ function M.get_for_files(file_paths)
       local lower = string.lower(name or '')
       if lower == 'bashls' or lower == 'bash-language-server' then
         return 1600
+      elseif lower == 'biome' then
+        return 1600
+      elseif lower == 'typescript-tools' or lower == 'tsserver' then
+        return 2500
       end
       return 3000
     end

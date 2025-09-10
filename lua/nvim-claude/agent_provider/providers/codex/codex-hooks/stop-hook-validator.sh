@@ -55,26 +55,15 @@ if [ -f "$STATE_FILE" ]; then
   fi
   FILE_LIST=()
   while IFS= read -r f; do [ -n "$f" ] && FILE_LIST+=("$f"); done <<< "$SESSION_FILES"
-  TOTAL_ERRORS=0; TOTAL_WARNINGS=0; BATCH_SIZE=10
   START_TS=$(date +%s)
-  log "[codex stop] checking diagnostics for ${#FILE_LIST[@]} files (batch=$BATCH_SIZE)"
-  for ((i=0; i<${#FILE_LIST[@]}; i+=BATCH_SIZE)); do
-    BATCH_ARGS=()
-    for ((j=i; j<i+BATCH_SIZE && j<${#FILE_LIST[@]}; j++)); do BATCH_ARGS+=("${FILE_LIST[j]}"); done
-    PLUGIN_ROOT="$(get_plugin_root)"
-    BATCH_JSON=$("$MCP_PYTHON" "$PLUGIN_ROOT/rpc/check-diagnostics.py" "${BATCH_ARGS[@]}" 2>/dev/null)
-    BATCH_ERRORS=$(echo "$BATCH_JSON" | jq -r '.errors // 0')
-    BATCH_WARNINGS=$(echo "$BATCH_JSON" | jq -r '.warnings // 0')
-    TOTAL_ERRORS=$((TOTAL_ERRORS + BATCH_ERRORS))
-    TOTAL_WARNINGS=$((TOTAL_WARNINGS + BATCH_WARNINGS))
-    NOW=$(date +%s)
-    ELAPSED=$((NOW - START_TS))
-    log "[codex stop] batch done i=$i errors=$TOTAL_ERRORS warnings=$TOTAL_WARNINGS elapsed=${ELAPSED}s"
-    if [ $ELAPSED -ge 9 ]; then
-      log "[codex stop] time budget exceeded; breaking early"
-      break
-    fi
-  done
+  log "[codex stop] checking diagnostics for ${#FILE_LIST[@]} files (single session)"
+  PLUGIN_ROOT="$(get_plugin_root)"
+  RESULT_JSON=$("$MCP_PYTHON" "$PLUGIN_ROOT/rpc/check-diagnostics.py" "${FILE_LIST[@]}" 2>/dev/null)
+  TOTAL_ERRORS=$(echo "$RESULT_JSON" | jq -r '.errors // 0')
+  TOTAL_WARNINGS=$(echo "$RESULT_JSON" | jq -r '.warnings // 0')
+  NOW=$(date +%s)
+  ELAPSED=$((NOW - START_TS))
+  log "[codex stop] diagnostics done errors=$TOTAL_ERRORS warnings=$TOTAL_WARNINGS elapsed=${ELAPSED}s"
   if [ "$TOTAL_ERRORS" -gt 0 ]; then
     SESSION_JSON=$("$MCP_PYTHON" "$PLUGIN_ROOT/rpc/get-session-diagnostics.py" 2>/dev/null)
     JSON_REASON=$(printf '%s' "$SESSION_JSON" | jq -Rs .)

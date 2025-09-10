@@ -32,11 +32,19 @@ function M.get_project_root_for_file(file_path)
     return M.get_project_root()
   end
 
-  -- Get the directory of the file
-  local file_dir = vim.fn.fnamemodify(file_path, ':h')
+  -- Determine working directory: if given path is a directory, use it directly;
+  -- otherwise use the file's parent directory. This prevents ascending one level
+  -- when callers intentionally pass a project directory (e.g., stop hook clear).
+  local stat = vim.loop.fs_stat(file_path)
+  local file_dir
+  if stat and stat.type == 'directory' then
+    file_dir = file_path
+  else
+    file_dir = vim.fn.fnamemodify(file_path, ':h')
+  end
 
-  -- Run git command from the file's directory
-  local cmd = string.format('cd "%s" && git rev-parse --show-toplevel 2>/dev/null', file_dir)
+  -- Run git command from the chosen directory
+  local cmd = string.format('cd %s && git rev-parse --show-toplevel 2>/dev/null', vim.fn.shellescape(file_dir))
   local handle = io.popen(cmd)
   if handle then
     local root = handle:read('*a'):gsub('\n', '')
@@ -185,4 +193,3 @@ function M.read_json(path)
 end
 
 return M
-
