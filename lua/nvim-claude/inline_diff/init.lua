@@ -1,4 +1,6 @@
 -- Facade for inline diff functionality (modular API)
+-- NOTE (tests): This façade is covered by E2E tests.
+-- Any interface or behavior changes here should be reflected in tests/e2e_spec.lua.
 
 local M = {}
 

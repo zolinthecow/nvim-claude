@@ -19,7 +19,7 @@ do
   end
 end
 local baseline = require('nvim-claude.inline_diff.baseline')
-local diffmod = require('nvim-claude.inline_diff.diff')
+local inline = require('nvim-claude.inline_diff')
 local hunks = require('nvim-claude.inline_diff.hunks')
 
 local function tmpdir()
@@ -82,19 +82,12 @@ describe('inline_diff.hunks action plans', function()
     write_lines(path, mod)
 
     local bufnr = open_buf(path)
-
-    -- Build active_diffs with one hunk
-    local base_content = git(string.format("git show %s:'%s'", baseline.get_baseline_ref(root), 'file.txt'), root)
-    local current_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
-    local d = diffmod.compute_diff(base_content, current_content)
-    assert.is_table(d)
-    assert.truthy(#d.hunks >= 1)
-
-    local active_diffs = {}
-    active_diffs[bufnr] = { hunks = d.hunks, current_hunk = 1 }
+    inline.refresh_inline_diff(bufnr)
+    local state = inline.get_diff_state(bufnr)
+    assert.truthy(state and #state.hunks >= 1)
 
     -- Accept the only hunk; plan should include baseline update + untrack
-    local plan = hunks.accept_current_hunk(bufnr, active_diffs)
+    local plan = hunks.accept_current_hunk(bufnr)
     eq('ok', plan.status)
     truthy(#plan.actions >= 1)
     eq('baseline_update_file', plan.actions[1].type)
@@ -118,14 +111,11 @@ describe('inline_diff.hunks action plans', function()
     mod[5] = 'MODIFIED line 5'
     write_lines(path, mod)
     local bufnr = open_buf(path)
+    inline.refresh_inline_diff(bufnr)
+    local state = inline.get_diff_state(bufnr)
+    assert.truthy(state and #state.hunks >= 1)
 
-    local base = git(string.format("git show %s:'%s'", baseline.get_baseline_ref(root), 'file.txt'), root)
-    local cur = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
-    local d = diffmod.compute_diff(base, cur)
-    local active = {}
-    active[bufnr] = { hunks = d.hunks, current_hunk = 1 }
-
-    local plan = hunks.reject_current_hunk(bufnr, active)
+    local plan = hunks.reject_current_hunk(bufnr)
     eq('ok', plan.status)
     -- Should plan to set buffer content and write
     local seen_set, seen_write = false, false
@@ -145,13 +135,11 @@ describe('inline_diff.hunks action plans', function()
     local bufnr = open_buf(path)
 
     -- Diff vs empty baseline
-    local base = ''
-    local cur = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
-    local d = diffmod.compute_diff(base, cur)
-    local active = {}
-    active[bufnr] = { hunks = d.hunks, current_hunk = 1 }
+    inline.refresh_inline_diff(bufnr)
+    local state = inline.get_diff_state(bufnr)
+    assert.truthy(state and #state.hunks >= 1)
 
-    local plan = hunks.reject_current_hunk(bufnr, active)
+    local plan = hunks.reject_current_hunk(bufnr)
     eq('ok', plan.status)
     local have_delete, have_close, have_untrack = false, false, false
     for _, a in ipairs(plan.actions) do
@@ -222,15 +210,11 @@ describe('inline_diff.hunks action plans', function()
     local b1 = open_buf(p1)
     local b2 = open_buf(p2)
 
+    inline.refresh_inline_diff(b1)
+    inline.refresh_inline_diff(b2)
     local active = {}
-    local function build_active(bufnr, path)
-      local base = git(string.format("git show %s:'%s'", baseline.get_baseline_ref(root), vim.fn.fnamemodify(path, ':t')), root)
-      local cur = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
-      local d = diffmod.compute_diff(base, cur)
-      active[bufnr] = { hunks = d.hunks, current_hunk = 1 }
-    end
-    build_active(b1, p1)
-    build_active(b2, p2)
+    active[b1] = inline.get_diff_state(b1)
+    active[b2] = inline.get_diff_state(b2)
 
     local planA = hunks.accept_all_hunks_in_all_files(active)
     eq('ok', planA.status)

@@ -1,6 +1,25 @@
 -- Minimal init for running tests
 vim.cmd [[set runtimepath+=.]]
 
+-- Disable persistent writes that may fail in CI sandboxes
+vim.o.undofile = false
+vim.o.swapfile = false
+vim.o.backup = false
+vim.o.writebackup = false
+-- Ensure a writable undodir in case something enables undofile
+local undodir = '/tmp/nvim-claude-test-undodir'
+pcall(vim.fn.mkdir, undodir, 'p')
+vim.opt.undodir = undodir
+
+-- As an extra guard, disable undofile right before any buffer write
+pcall(vim.api.nvim_create_autocmd, { 'BufWritePre' }, {
+  callback = function(args)
+    pcall(function()
+      vim.bo[args.buf].undofile = false
+    end)
+  end,
+})
+
 -- Add plenary to runtimepath
 local plenary_path = vim.fn.stdpath('data') .. '/site/pack/packer/start/plenary.nvim'
 if vim.fn.isdirectory(plenary_path) == 0 then

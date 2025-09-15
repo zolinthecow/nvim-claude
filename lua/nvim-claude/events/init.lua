@@ -1,4 +1,6 @@
 -- Events facade: small, public API for event handling
+-- NOTE (tests): This façade is covered by E2E tests.
+-- Changing these public function signatures or semantics requires updating tests/e2e_spec.lua.
 
 local M = {}
 
