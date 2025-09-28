@@ -1,8 +1,8 @@
 -- Codex provider configuration
 
 local M = {
-  spawn_command = 'codex --search --model=gpt-5-codex -c model_reasoning_effort="high" --sandbox workspace-write -c sandbox_workspace_write.network_access=true',
-  background_spawn = 'codex --search --model=gpt-5-codex -c model_reasoning_effort="high" --sandbox workspace-write -c sandbox_workspace_write.network_access=true --full-auto',
+  spawn_command = 'codex',
+  background_spawn = 'codex --full-auto',
   pane_title = 'codex',
   process_pattern = 'codex',
   targeted_spawn_command = nil,
