@@ -129,6 +129,30 @@ function M.chat.send_text(text)
   return false
 end
 
+function M.chat.ensure_targeted_pane(initial_text)
+  local impl = ensure_current()
+  if impl and impl.chat and impl.chat.ensure_targeted_pane then
+    return impl.chat.ensure_targeted_pane(initial_text)
+  end
+  return nil
+end
+
+function M.chat.send_targeted_text(text)
+  local impl = ensure_current()
+  if impl and impl.chat and impl.chat.send_targeted_text then
+    return impl.chat.send_targeted_text(text)
+  end
+  return false
+end
+
+function M.chat.get_targeted_pane()
+  local impl = ensure_current()
+  if impl and impl.chat and impl.chat.get_targeted_pane then
+    return impl.chat.get_targeted_pane()
+  end
+  return nil
+end
+
 -- Background agent helpers (provider-specific launch)
 M.background = {}
 

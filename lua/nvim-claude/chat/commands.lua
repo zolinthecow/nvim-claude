@@ -20,6 +20,7 @@ function M.register(claude)
   local utils = require('nvim-claude.utils')
   local tmux = utils.tmux
   local agent_provider = require('nvim-claude.agent_provider')
+  local selection = require('nvim-claude.chat.selection')
 
   -- ClaudeChat: open pane
   define('ClaudeChat', function()
@@ -52,17 +53,9 @@ function M.register(claude)
     if not tmux.validate() then return end
     local pane = agent_provider.chat.ensure_pane()
     if not pane then vim.notify('Failed to find or create chat pane', vim.log.levels.ERROR); return end
-    local l1, l2 = args.line1, args.line2
-    local sel = vim.api.nvim_buf_get_lines(0, l1 - 1, l2, false)
-    local git_root = utils.get_project_root()
-    local file_path = vim.fn.expand('%:p')
-    local rel = git_root and file_path:gsub('^' .. vim.pesc(git_root) .. '/', '') or vim.fn.expand('%:t')
-    local ft = vim.bo.filetype
-    local parts = { string.format('Selection from `%s` (lines %d-%d):', rel, l1, l2), '```' .. (ft ~= '' and ft or '') }
-    for _, l in ipairs(sel) do table.insert(parts, l) end
-    table.insert(parts, '```')
-    agent_provider.chat.send_text(table.concat(parts, '\n'))
-    utils.exec('tmux select-pane -t ' .. pane)
+    local payload = selection.format_selection(0, args.line1, args.line2)
+    agent_provider.chat.send_text(payload.message)
+    tmux.select_pane(pane)
     vim.notify('Selection sent to chat', vim.log.levels.INFO)
   end, { desc = 'Send selected text to Claude', range = true })
 
@@ -90,7 +83,7 @@ function M.register(claude)
       file, l1, l2, (ft ~= '' and ft or ''), code, format_diagnostics_list(in_range)
     )
     agent_provider.chat.send_text(message)
-    utils.exec('tmux select-pane -t ' .. pane)
+    tmux.select_pane(pane)
     vim.notify('Selection with diagnostics sent', vim.log.levels.INFO)
   end, { desc = 'Send selected text with diagnostics to Claude', range = true })
 
@@ -134,6 +127,36 @@ function M.register(claude)
     agent_provider.chat.send_text(table.concat(parts, '\n'))
     vim.notify('Git hunk sent to chat', vim.log.levels.INFO)
   end, { desc = 'Send git hunk under cursor to Claude' })
+
+  define('ClaudeTargetedEdit', function(args)
+    if not tmux.validate() then return end
+    local l1, l2 = args.line1, args.line2
+    local selection_payload = selection.format_selection(0, l1, l2)
+    local prefill = claude and claude.config and claude.config.chat and claude.config.chat.targeted_prefill
+    local parts = {}
+    if type(prefill) == 'string' and prefill ~= '' then
+      table.insert(parts, prefill)
+    end
+    table.insert(parts, selection_payload.message)
+    table.insert(parts, '')
+    local combined = table.concat(parts, '\n')
+    local ensure_targeted = agent_provider.chat.ensure_targeted_pane
+    local pane
+    if type(ensure_targeted) == 'function' then
+      pane = ensure_targeted(combined)
+    else
+      pane = agent_provider.chat.ensure_pane()
+      if pane then
+        tmux.send_text_to_pane(pane, combined)
+      end
+    end
+    if not pane then
+      vim.notify('Failed to start targeted edit pane', vim.log.levels.ERROR)
+      return
+    end
+    tmux.select_pane(pane)
+    vim.notify('Targeted edit request sent', vim.log.levels.INFO)
+  end, { desc = 'Send selection to targeted edit pane', range = true })
 end
 
 return M

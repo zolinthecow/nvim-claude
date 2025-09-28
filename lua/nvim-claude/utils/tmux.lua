@@ -79,6 +79,72 @@ function M.create_pane(command)
   return pane_id
 end
 
+-- Check if a pane id is still valid
+function M.pane_exists(pane_id)
+  if not pane_id or pane_id == '' then
+    return false
+  end
+  local cmd = "tmux list-panes -a -F '#{pane_id}'"
+  local result = utils.exec(cmd)
+  if not result or result == '' then
+    return false
+  end
+  for line in result:gmatch('[^\n]+') do
+    if line == pane_id then
+      return true
+    end
+  end
+  return false
+end
+
+function M.select_pane(pane_id)
+  if not pane_id then
+    return false
+  end
+  local cmd = 'tmux select-pane -t ' .. pane_id
+  local _, err = utils.exec(cmd)
+  return err == nil
+end
+
+function M.set_pane_title(pane_id, title)
+  if not pane_id or not title then
+    return false
+  end
+  title = title:gsub("'", "'\"'\"'")
+  local cmd = string.format("tmux select-pane -t %s -T '%s'", pane_id, title)
+  local _, err = utils.exec(cmd)
+  return err == nil
+end
+
+function M.split_pane(pane_id, direction, size_percent)
+  if not pane_id then
+    return nil
+  end
+  direction = direction == 'h' and '-h' or '-v'
+  local size_opt = ''
+  if size_percent and tonumber(size_percent) then
+    local size = tonumber(size_percent)
+    if utils.tmux_supports_length_percent() then
+      size_opt = string.format('-l %s%%', size)
+    else
+      size_opt = string.format('-p %s', size)
+    end
+  end
+  local parts = { 'tmux', 'split-window', direction }
+  if size_opt ~= '' then
+    table.insert(parts, size_opt)
+  end
+  table.insert(parts, "-P -F '#{pane_id}'")
+  table.insert(parts, '-t ' .. pane_id)
+  local cmd = table.concat(parts, ' ')
+  local new_pane, err = utils.exec(cmd)
+  if err or not new_pane or new_pane == '' then
+    vim.notify('nvim-claude: tmux split-window failed: ' .. (err or new_pane or 'unknown'), vim.log.levels.ERROR)
+    return nil
+  end
+  return new_pane:gsub('\n', '')
+end
+
 -- Send keys to a pane (single line with Enter)
 function M.send_to_pane(pane_id, text)
   if not pane_id then return false end

@@ -24,6 +24,15 @@ M.chat = {
   send_text = function(text)
     return chat.send_text(text)
   end,
+  ensure_targeted_pane = function(initial_text)
+    return chat.ensure_targeted_pane(initial_text)
+  end,
+  send_targeted_text = function(text)
+    return chat.send_targeted_text(text)
+  end,
+  get_targeted_pane = function()
+    return chat.get_targeted_pane()
+  end,
 }
 
 -- Explicitly export background helpers

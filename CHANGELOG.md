@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Ensures clean slate after checkpoint acceptance since there should be no diffs
 
 ### Added
+- Targeted edit workflow for visual selections
+  - New `:ClaudeTargetedEdit` command spawns a dedicated tmux pane under the chat pane
+  - Visual mapping `<leader>ck` preloads the selection into the targeted pane so you can finish typing the request there
+  - Optional prefill (`chat.targeted_prefill`) and tmux spawn options for the targeted pane, with a longer default delay so Claude Code has time to start before receiving the selection
 - Automatic MCP server registration during installation
   - Install script now attempts to run `claude mcp add` automatically
   - Properly registers from project root for correct project isolation

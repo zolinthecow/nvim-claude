@@ -44,6 +44,11 @@ function M.setup(config, commands)
     desc = 'Kill agent',
     silent = true
   })
+ 
+  vim.keymap.set('v', prefix .. 'k', ':ClaudeTargetedEdit<CR>', {
+    desc = 'Targeted edit with Claude',
+    silent = true
+  })
   
   vim.keymap.set('n', prefix .. 'x', ':ClaudeClean<CR>', {
     desc = 'Clean old agents',

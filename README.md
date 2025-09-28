@@ -9,7 +9,7 @@ A powerful Neovim plugin for seamless integration with Claude AI. Chat with Clau
 - **Background Agents**: Create isolated worktrees for complex tasks with guided setup
 - **Checkpoint System**: Automatically save and restore codebase state at any point in chat history
 - **LSP Integration**: Give Claude real-time access to LSP diagnostics via MCP
-- **Smart Selection**: Send buffer content, visual selections, or git hunks to Claude
+- **Smart Selection**: Send buffer content, visual selections, targeted edits, or git hunks to Claude
 
 ## Requirements
 
@@ -119,6 +119,32 @@ Default values are shown above. All configuration options are optional.
 - `<leader>cv` - Send visual selection to Claude (visual mode)
 - `<leader>cd` - Send selection with diagnostics to Claude (visual mode)
 - `<leader>ch` - Send git hunk at cursor to Claude
+- `<leader>ck` - Targeted edit workflow (visual mode)
+
+#### Targeted Edit Workflow (Cmd-K style)
+- Visually select code and press `<leader>ck` to open a focused tmux pane beneath the main chat
+- The selection is prefilled in that pane so you can finish typing the request directly in Claude
+- Claude responds in this secondary pane, leaving the main chat free for conversation
+- Reuse the same pane for additional selections; it is only created once per session
+
+Configuration knobs:
+```lua
+require('nvim-claude').setup({
+  chat = {
+    targeted_prefill = nil, -- optional text to send before the selection (e.g. "Briefly describe the edit below:")
+  },
+  provider = {
+    name = 'claude',
+    claude = {
+      targeted_spawn_command = 'claude --dangerously-skip-permissions',
+      targeted_pane_title = 'claude-targeted',
+      targeted_split_direction = 'v', -- 'v' for below, 'h' for side-by-side
+      targeted_split_size = 35,       -- percentage of the chat pane to allocate
+      targeted_init_delay_ms = 1500,  -- delay before pasting selection into the pane
+    },
+  },
+})
+```
 
 ### Background Agent Management
 - `<leader>cb` - Create a new background agent
@@ -163,6 +189,7 @@ All commands below can be accessed via Ex commands. Those with keybindings are n
 - `:ClaudeSendSelection` - Send visual selection (mapped to `<leader>cv`)
 - `:ClaudeSendWithDiagnostics` - Send with diagnostics (mapped to `<leader>cd`)
 - `:ClaudeSendHunk` - Send git hunk at cursor (mapped to `<leader>ch`)
+- `:ClaudeTargetedEdit` - Spawn targeted edit pane beneath chat (mapped to `<leader>ck` in visual mode)
 
 ### Background Agent Commands
 - `:ClaudeBg [task]` - Create new background agent (mapped to `<leader>cb`)

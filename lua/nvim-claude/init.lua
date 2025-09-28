@@ -21,6 +21,9 @@ M.config = {
     telescope_preview = true,
     status_line = true,
   },
+  chat = {
+    targeted_prefill = nil,
+  },
   mappings = {
     prefix = '<leader>c',
     quick_prefix = '<C-c>',
@@ -78,6 +81,13 @@ local function validate_config(config)
   if config.mappings then
     if config.mappings.prefix and type(config.mappings.prefix) ~= 'string' then
       table.insert(errors, 'mappings.prefix must be a string')
+      ok = false
+    end
+  end
+
+  if config.chat then
+    if config.chat.targeted_prefill ~= nil and type(config.chat.targeted_prefill) ~= 'string' then
+      table.insert(errors, 'chat.targeted_prefill must be a string if provided')
       ok = false
     end
   end

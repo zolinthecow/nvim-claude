@@ -9,6 +9,34 @@ local persistence = require 'nvim-claude.inline_diff.persistence'
 -- Simple in-process cache keyed by project root
 local cache = {}
 
+local function sanitize_ref(ref)
+  if not ref then return nil end
+  if type(ref) ~= 'string' then ref = tostring(ref) end
+  ref = ref:gsub('%s+', '')
+  if ref == '' then return nil end
+  if not ref:match('^[a-f0-9]+$') then return nil end
+  return ref
+end
+
+local function clear_persisted_ref(git_root, raw_ref, source)
+  local logger = require('nvim-claude.logger')
+  logger.warn('baseline', 'Clearing invalid baseline ref', {
+    git_root = git_root,
+    ref = raw_ref,
+    source = source,
+  })
+  cache[git_root] = nil
+  local state = persistence.get_state(git_root) or {}
+  if state.baseline_ref or state.stash_ref then
+    state.baseline_ref = nil
+    state.stash_ref = nil
+    persistence.set_state(git_root, state)
+  end
+  if source == 'git_ref' then
+    utils.exec(string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root))
+  end
+end
+
 local function project_root_or_nil()
   local ok, root = pcall(utils.get_project_root)
   if ok and root and root ~= '' then return root end
@@ -20,23 +48,36 @@ function M.get_baseline_ref(git_root)
   git_root = git_root or project_root_or_nil()
   if not git_root then return nil end
 
-  if cache[git_root] then return cache[git_root] end
+  if cache[git_root] then
+    local cached = sanitize_ref(cache[git_root])
+    if cached then
+      cache[git_root] = cached
+      return cached
+    end
+    cache[git_root] = nil
+  end
 
   local state = persistence.get_state(git_root)
   if state and (state.baseline_ref or state.stash_ref) then
-    local ref = state.baseline_ref or state.stash_ref
-    cache[git_root] = ref
-    return ref
+    local persisted_raw = state.baseline_ref or state.stash_ref
+    local persisted = sanitize_ref(persisted_raw)
+    if persisted then
+      cache[git_root] = persisted
+      return persisted
+    end
+    clear_persisted_ref(git_root, persisted_raw, 'persistence')
   end
 
   local ref_cmd = string.format('cd "%s" && git rev-parse refs/nvim-claude/baseline 2>/dev/null', git_root)
   local ref, err = utils.exec(ref_cmd)
   if ref and not err then
-    ref = ref:gsub('%s+', '')
-    if ref ~= '' and ref:match('^[a-f0-9]+$') then
-      cache[git_root] = ref
-      return ref
+    local sanitized = sanitize_ref(ref)
+    if sanitized then
+      cache[git_root] = sanitized
+      persistence.save_state({ baseline_ref = sanitized })
+      return sanitized
     end
+    clear_persisted_ref(git_root, ref, 'git_ref')
   end
   return nil
 end
@@ -53,7 +94,7 @@ function M.set_baseline_ref(git_root, ref)
     return
   end
 
-  cache[git_root] = ref
+  cache[git_root] = sanitize_ref(ref)
 
   if ref and ref:match('^[a-f0-9]+$') then
     local cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, ref)
