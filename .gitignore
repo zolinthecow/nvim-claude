@@ -13,3 +13,7 @@
 **/__pycache__
 
 .nvimlog
+
+# shim build artifacts
+shim/target/
+shim/fs_shim_sidecar.pyc

@@ -72,8 +72,12 @@ init.lua (entry point)
 ├── logger.lua, project-state.lua, mappings.lua, statusline.lua
 ├── agent_provider/
 │   └── providers/
-│       └── claude/
-│           └── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
+│       ├── claude/
+│       │   └── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
+│       └── codex/
+│           ├── hooks.lua (writes `[otel]` + `[mcp_servers.nvim-lsp]` to ~/.codex/config.toml)
+│           ├── config.lua (spawn command + OTEL settings)
+│           └── otel_listener.lua (embedded OTLP/HTTP server)
 ```
 
 #### 3. State Management
@@ -125,6 +129,10 @@ The plugin integrates with Claude Code's hook system via `.claude/settings.local
 ```
 
 Wrappers call `rpc/nvim-rpc.sh` (Python-based RPC client using pynvim) to communicate with the running Neovim instance via the public events facade.
+
+Codex relies on the CLI's OpenTelemetry exporter instead of shell hooks. `:ClaudeInstallHooks` writes an `[otel]` block that points to the embedded listener (default `http://127.0.0.1:4318/v1/logs`, `protocol = "json"`). `otel_listener.lua` listens for `codex.tool_decision`, `codex.tool_result`, and `codex.user_prompt` events, then calls the same `events.core` APIs to keep baselines, edited file tracking, and checkpoints in sync.
+
+Prompts are logged by default (`otel_log_user_prompt = true`) so checkpoints include the real text; set it to `false` in your provider config if you prefer redaction.
 
 ### Key Implementation Details
 

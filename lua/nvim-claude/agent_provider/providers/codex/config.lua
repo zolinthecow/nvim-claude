@@ -10,6 +10,9 @@ local M = {
   targeted_split_direction = 'v',
   targeted_split_size = 35,
   targeted_init_delay_ms = 1500,
+  otel_port = 4318,
+  otel_environment = 'dev',
+  otel_log_user_prompt = true,
 }
 
 function M.setup(opts)
@@ -42,6 +45,15 @@ function M.setup(opts)
   end
   if type(opts.targeted_init_delay_ms) == 'number' and opts.targeted_init_delay_ms >= 0 then
     M.targeted_init_delay_ms = opts.targeted_init_delay_ms
+  end
+  if type(opts.otel_port) == 'number' and opts.otel_port >= 1024 and opts.otel_port <= 65535 then
+    M.otel_port = math.floor(opts.otel_port)
+  end
+  if type(opts.otel_environment) == 'string' and opts.otel_environment ~= '' then
+    M.otel_environment = opts.otel_environment
+  end
+  if type(opts.otel_log_user_prompt) == 'boolean' then
+    M.otel_log_user_prompt = opts.otel_log_user_prompt
   end
   -- Propagate to tmux config so detection and titles work
   local ok, utils = pcall(require, 'nvim-claude.utils')
