@@ -80,11 +80,11 @@ init.lua (entry point)
 │       │   └── claude-hooks/ (shell wrappers: pre/post/bash/stop/user-prompt)
 │       └── codex/
 │           ├── init.lua (provider façade)
-│           ├── hooks.lua (installer: writes shell-only rules to ~/.codex/config.toml and [mcp_servers.nvim-lsp])
+│           ├── hooks.lua (installer: writes `[otel]` + `[mcp_servers.nvim-lsp]` to ~/.codex/config.toml)
 │           ├── chat.lua (pane send)
 │           ├── background.lua (agent pane launch; CODEX_HOME cloned + hooks stripped; --full-auto with task)
-│           ├── config.lua (spawn, pane title)
-│           └── codex-hooks/ (shell-only wrappers)
+│           ├── config.lua (spawn, pane title, OTEL port/env)
+│           └── otel_listener.lua (embedded OTLP/HTTP server that mirrors telemetry events into events.core)
 ├── logger.lua, project-state.lua, mappings.lua, statusline.lua
 ```
 
@@ -108,7 +108,6 @@ State cleanup happens when:
 
 #### 4. Hook System Integration
 Claude Code hooks are installed via `.claude/settings.local.json`.
-Codex hooks are shell-only and installed to `~/.codex/config.toml` using per-rule entries; we parse `apply_patch` patches to pre-touch per-file baselines and mark edits precisely; read-only commands (rg/sed/ls) are ignored; rm/git rm targets are tracked.
 
 ```json
 {
@@ -139,8 +138,25 @@ Codex hooks are shell-only and installed to `~/.codex/config.toml` using per-rul
 
 Wrappers call `rpc/nvim-rpc.sh` (Python-based RPC client using pynvim) to communicate with the running Neovim instance via the public events facade.
 
+Codex integration no longer installs shell hooks. Instead, `hooks.lua` writes:
+
+```toml
+[otel]
+environment = "dev"
+log_user_prompt = false
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/logs", protocol = "json" } }
+```
+
+The Codex CLI streams `codex.tool_decision`, `codex.tool_result`, and `codex.user_prompt` events over OTLP/HTTP. `otel_listener.lua` runs a lightweight HTTP server inside Neovim, decodes the OTLP JSON payloads, and calls `events.core` APIs to:
+
+- ensure baselines are created before the first tool runs (on `codex.tool_decision`)
+- diff git status snapshots per tool call to identify edited/deleted files (on `codex.tool_result`)
+- propagate user prompts so checkpoints stay in sync (on `codex.user_prompt`)
+
+`config.lua` exposes `otel_log_user_prompt` (default `true`) so checkpoint previews include the actual prompt. Set it to `false` to keep Codex telemetry redacted (`[REDACTED]`), in which case checkpoints fall back to the placeholder `"Codex prompt (redacted)"`.
+
 ### Codex Setup (submodule)
-This plugin vendors the Codex fork as a submodule for compatibility with the stable hook payloads.
+This plugin vendors the Codex fork as a submodule for compatibility with the CLI APIs that expose telemetry metadata.
 
 ```bash
 git submodule update --init --recursive lua/nvim-claude/agent_provider/providers/codex/codex
@@ -155,7 +171,7 @@ EOF
 :ClaudeInstallHooks
 ```
 
-This writes shell-only rules to `~/.codex/config.toml` and registers `[mcp_servers.nvim-lsp]` for diagnostics.
+`:ClaudeInstallHooks` now writes a managed `[otel]` block (pointing at the embedded listener) plus `[mcp_servers.nvim-lsp]` for diagnostics.
 
 ### Key Implementation Details
 
@@ -298,7 +314,7 @@ This is a Neovim plugin that integrates with Claude Code (the CLI tool). It trac
   - Tests live in `tests/e2e_spec.lua` and use temp git repos; no external CLIs or hooks.
 - Unit (inline diff): `./scripts/run_tests.sh` also runs `tests/inline_diff_unit_spec.lua`
   - Validates hunks plan generation and executor action contracts via the public facades.
-- Optional hooks simulation: `scripts/e2e-hooks-sim.sh`
+- Optional OTEL simulation script (planned replacement for the old `scripts/e2e-hooks-sim.sh`)
   - Starts a headless Neovim server, runs the real Codex shell pre/post hooks with a JSON payload, applies a patch, then inspects Neovim state via RPC.
   - Useful as a separate CI job; not required for fast iteration.
 
@@ -486,6 +502,13 @@ tail -20 ~/.local/share/nvim/nvim-claude/logs/<hash>/debug.log
 # 6. Verify state changes
 :lua print(vim.inspect(require('nvim-claude.events').list_edited_files()))
 ```
+
+#### 8. Codex Telemetry Debugging
+- Verify `~/.codex/config.toml` contains the `[otel]` block with `exporter = { otlp-http = { endpoint = "http://127.0.0.1:<port>/v1/logs", protocol = "json" } }`.
+- Ensure the local listener is running: `lsof -i :<port>` should show `nvim` bound to `127.0.0.1`.
+- Use `tail -f ~/.local/share/nvim/nvim-claude/logs/<hash>/debug.log | grep codex_otel` to confirm events are processed.
+- If Codex sends telemetry but files are not tracked, run `git status --porcelain` manually before/after a command to confirm the snapshot diff matches expectations.
+- To restart the listener without restarting Neovim: `:lua require('nvim-claude.agent_provider.providers.codex.otel_listener').ensure(require('nvim-claude.agent_provider.providers.codex.config').otel_port)`
 
 ## Key Learnings and Development Philosophy
 

@@ -55,15 +55,9 @@ After installation:
 1. **Automatic Setup**: The plugin automatically installs required components on first use
 2. **Hooks**
    - Claude Code (default): Run `:ClaudeInstallHooks` in your project to enable automatic diff tracking
-   - Codex (optional): Add the Codex submodule and switch provider
-     ```bash
-     git submodule update --init --recursive lua/nvim-claude/agent_provider/providers/codex/codex
-     ```
-     In your config:
-     ```lua
-     require('nvim-claude').setup({ provider = { name = 'codex' } })
-     ```
-     Then run `:ClaudeInstallHooks` to install shell‑only hooks to `~/.codex/config.toml` and register the MCP server.
+   - Codex (optional): Switch provider via `require('nvim-claude').setup({ provider = { name = 'codex' } })`, then run `:ClaudeInstallHooks` to:
+     - Register the MCP LSP bridge
+     - Configure `[otel]` in `~/.codex/config.toml` with an `otlp-http` exporter (JSON) pointing at the local listener (default `http://127.0.0.1:4318/v1/logs`). Prompts are logged by default so checkpoints show the real text; set `provider = { name = 'codex', codex = { otel_log_user_prompt = false } }` if you need redaction.
 3. **Manual Installation** (if needed):
    - `:ClaudeInstallRPC` - Install the Python RPC client for hook communication
    - `:ClaudeInstallMCP` - Install the MCP server for LSP diagnostics

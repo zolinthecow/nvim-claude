@@ -51,6 +51,12 @@ worktree based off of either the master branch, the current branch, the state of
 to create a commit that can be cherry-picked back onto the branch it was based off of and its up to the user to figure out what to do
 with that.
 
+### Codex OTEL replay
+- `agent_provider/providers/codex/otel_listener.lua` exposes a lightweight OTLP/HTTP listener for Codex CLI. Each `codex.tool_result` for `apply_patch` is parsed by `apply_patch_replay.lua`, which ports the Rust patch grammar (multiple file ops, `*** Move to`, EOF markers) and the fuzzy `seek_sequence` matcher (exact → rstrip → trim → unicode-normalized comparisons).
+- Reverse replay happens entirely in Lua: the module splits current file contents into lines, walks every hunk to locate the modified regions, and reconstructs the *prior* text. The listener then calls `events.pre_tool_use(abs_path, { prior_content = … })` so inline diffs light up immediately even if Codex is running without our hook installer.
+- Errors are surfaced through `logger.warn('codex_otel', 'reverse patch failed', …)`, so telemetry regressions are easy to spot without breaking the stream.
+- Dev harness: run `nvim --headless -u NONE -c "luafile scripts/test_codex_apply_patch_replay.lua" -c qa` to exercise five representative patch scenarios (multi-hunk edits, EOF additions/deletions, moves). Use this before touching the matcher so we keep parity with Codex’s Rust implementation.
+
 ## Coding principles
 We try to rely on git as much as possible since we don't want to reimplement things.
 

@@ -53,6 +53,7 @@ load_provider = function(name)
       'nvim-claude.agent_provider.providers.codex.chat',
       'nvim-claude.agent_provider.providers.codex.background',
       'nvim-claude.agent_provider.providers.codex.config',
+      'nvim-claude.agent_provider.providers.codex.otel_listener',
     }) do
       package.loaded[mod] = nil
     end

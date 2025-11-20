@@ -1,9 +1,9 @@
--- Codex provider: hooks installer for ~/.codex/config.toml
+-- Codex provider: OpenTelemetry + MCP installer for ~/.codex/config.toml
 
 local M = {}
 
 local utils = require 'nvim-claude.utils'
-local logger = require 'nvim-claude.logger'
+local cfg = require('nvim-claude.agent_provider.providers.codex.config')
 
 local function codex_home()
   local home = vim.env.CODEX_HOME or (vim.fn.expand('~') .. '/.codex')
@@ -29,68 +29,88 @@ local function ensure_home()
   return home
 end
 
-local function hooks_block(paths)
+local function otel_block()
+  local endpoint = string.format('http://127.0.0.1:%d/v1/logs', cfg.otel_port or 4318)
   local t = {}
-  table.insert(t, '[hooks]')
-  -- Use per-rule hooks exclusively to avoid ambiguity; keep prompt/stop at top level
-  table.insert(t, string.format('user_prompt_submit = ["%s"]', paths.user_prompt))
-  table.insert(t, string.format('stop = ["%s"]', paths.stop))
-  table.insert(t, 'timeout_ms = 10000')
-  table.insert(t, '')
-  -- Shell-only rules: we parse apply_patch/write/delete in the shell hooks
-  table.insert(t, '[[hooks.pre_tool_use_rules]]')
-  table.insert(t, string.format('argv = ["%s"]', paths.shell_pre))
-  table.insert(t, 'include = ["shell"]')
-  table.insert(t, 'exclude = []')
-  table.insert(t, '')
-  table.insert(t, '[[hooks.post_tool_use_rules]]')
-  table.insert(t, string.format('argv = ["%s"]', paths.shell_post))
-  table.insert(t, 'include = ["shell"]')
-  table.insert(t, 'exclude = []')
+  table.insert(t, '# Managed by nvim-claude (Codex provider)')
+  table.insert(t, '[otel]')
+  table.insert(t, string.format('environment = %q', cfg.otel_environment or 'dev'))
+  table.insert(t, string.format('log_user_prompt = %s', cfg.otel_log_user_prompt and 'true' or 'false'))
+  table.insert(t,
+    string.format('exporter = { otlp-http = { endpoint = %q, protocol = "json", headers = {} } }', endpoint))
   table.insert(t, '')
   return table.concat(t, '\n')
 end
 
-local function write_config_with_hooks(paths)
-  ensure_home()
+local function read_config_lines()
   local path = config_path()
   local content = utils.read_file(path) or ''
   local lines = {}
   for l in (content .. '\n'):gmatch('([^\n]*)\n') do table.insert(lines, l) end
+  return lines
+end
 
-  -- Locate existing hooks-related blocks: [hooks], [hooks.*], [[hooks.*]]
-  local start_idx, end_idx = nil, nil
-  local in_hooks = false
-  for i, l in ipairs(lines) do
-    local is_header = l:match('^%s*%[') ~= nil
-    local is_hooks_header = l:match('^%s*%[%[?hooks') ~= nil
-    if is_header and is_hooks_header then
-      if not in_hooks then
-        start_idx = i
-        in_hooks = true
+local function remove_hooks_sections(lines)
+  local result = {}
+  local i = 1
+  while i <= #lines do
+    local line = lines[i]
+    if line:match('^%s*%[%[?hooks') then
+      i = i + 1
+      while i <= #lines do
+        local peek = lines[i]
+        if peek:match('^%s*%[%[?hooks') then
+          i = i + 1
+        elseif peek:match('^%s*%[.+%]%s*$') then
+          break
+        else
+          i = i + 1
+        end
       end
-    elseif is_header and in_hooks and (not is_hooks_header) then
-      end_idx = i
-      break
+    else
+      table.insert(result, line)
+      i = i + 1
     end
   end
-  if in_hooks and not end_idx then end_idx = #lines + 1 end
+  return result
+end
 
-  local new_block = hooks_block(paths)
-  local new_content
-  if start_idx then
-    local before = table.concat(vim.list_slice(lines, 1, start_idx - 1), '\n')
-    local after = table.concat(vim.list_slice(lines, end_idx, #lines), '\n')
-    new_content = ''
-    if before ~= '' then new_content = before .. '\n' end
-    new_content = new_content .. new_block
-    if after ~= '' then new_content = new_content .. after .. '\n' end
-  else
-    new_content = content
-    if new_content ~= '' and not new_content:match('\n$') then new_content = new_content .. '\n' end
-    new_content = new_content .. new_block
+local function strip_otel_blocks(lines)
+  local result = {}
+  local skip = false
+  for _, line in ipairs(lines) do
+    if skip then
+      if line:match('^%s*%[.+%]%s*$') then
+        skip = false
+        table.insert(result, line)
+      end
+    else
+      if line:match('^%s*# Managed by nvim%-claude %(Codex provider%)%s*$') then
+        skip = true
+      elseif line:match('^%s*%[otel%]%s*$') then
+        skip = true
+      else
+        table.insert(result, line)
+      end
+    end
   end
-  return utils.write_file(path, new_content)
+  if skip then
+    -- block ran to EOF; drop trailing comment/newlines
+  end
+  return result
+end
+
+local function write_otel_config()
+  ensure_home()
+  local lines = read_config_lines()
+  lines = remove_hooks_sections(lines)
+  lines = strip_otel_blocks(lines)
+
+  local content = table.concat(lines, '\n')
+  content = content:gsub('%s+$', '')
+  if content ~= '' then content = content .. '\n\n' end
+  local new_content = content .. otel_block()
+  return utils.write_file(config_path(), new_content)
 end
 
 -- Write or update MCP server entry for Codex to use our LSP server
@@ -143,46 +163,31 @@ local function write_mcp_server()
 end
 
 function M.install()
-  local root = plugin_root()
-  local base = 'lua/nvim-claude/agent_provider/providers/codex/codex-hooks/'
-  local pre = root .. base .. 'pre-tool-use.sh'
-  local post = root .. base .. 'post-tool-use.sh'
-  local user_prompt = root .. base .. 'user-prompt-submit.sh'
-  local stop = root .. base .. 'stop-hook-validator.sh'
-  local shell_pre = root .. base .. 'shell-pre.sh'
-  local shell_post = root .. base .. 'shell-post.sh'
-
-  -- ensure executables
-  for _, p in ipairs({ pre, post, user_prompt, stop, shell_pre, shell_post, root .. base .. 'hook-common.sh' }) do
-    if vim.fn.filereadable(p) == 1 then
-      pcall(function() utils.exec(string.format('chmod +x %s 2>/dev/null', vim.fn.shellescape(p))) end)
-    end
-  end
-
-  local ok = write_config_with_hooks({ pre = pre, post = post, user_prompt = user_prompt, stop = stop, shell_pre = shell_pre, shell_post = shell_post })
+  local ok = write_otel_config()
   if not ok then
-    vim.notify('nvim-claude: Failed to install Codex hooks', vim.log.levels.ERROR)
+    vim.notify('nvim-claude: Failed to configure Codex OpenTelemetry exporter', vim.log.levels.ERROR)
     return false
   end
+
   -- Write MCP server entry
   local ok_mcp = write_mcp_server()
   if ok_mcp then
-    vim.notify('nvim-claude: Codex hooks + MCP server installed in ~/.codex/config.toml', vim.log.levels.INFO)
+    vim.notify('nvim-claude: Codex telemetry + MCP server installed in ~/.codex/config.toml', vim.log.levels.INFO)
   else
-    vim.notify('nvim-claude: Codex hooks installed; failed to write MCP server entry', vim.log.levels.WARN)
+    vim.notify('nvim-claude: Codex telemetry enabled; failed to write MCP server entry', vim.log.levels.WARN)
   end
   return true
 end
 
 function M.uninstall()
-  -- Best-effort: remove [hooks] block entirely
+  -- Best-effort: remove [otel] block entirely
   local path = config_path()
   local content = utils.read_file(path)
   if not content or content == '' then return true end
   local lines = {}
   for l in (content .. '\n'):gmatch('([^\n]*)\n') do table.insert(lines, l) end
   local start_idx, end_idx = nil, nil
-  for i, l in ipairs(lines) do if l:match('^%s*%[hooks%]%s*$') then start_idx = i break end end
+  for i, l in ipairs(lines) do if l:match('^%s*%[otel%]%s*$') then start_idx = i break end end
   if start_idx then
     end_idx = #lines + 1
     for j = start_idx + 1, #lines do if lines[j]:match('^%s*%[.+%]%s*$') then end_idx = j; break end end
@@ -197,7 +202,7 @@ function M.uninstall()
       return false
     end
   end
-  vim.notify('nvim-claude: Codex hooks uninstalled from ~/.codex/config.toml', vim.log.levels.INFO)
+  vim.notify('nvim-claude: Codex OpenTelemetry config removed from ~/.codex/config.toml', vim.log.levels.INFO)
   return true
 end
 

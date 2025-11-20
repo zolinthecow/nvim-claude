@@ -11,7 +11,7 @@ local autocmds = require 'nvim-claude.events.autocmds'
 local commands = require 'nvim-claude.events.commands'
 
 -- Public event handlers
-function M.pre_tool_use(file_path) return core.pre_tool_use(file_path) end
+function M.pre_tool_use(file_path, opts) return core.pre_tool_use(file_path, opts) end
 function M.post_tool_use(file_path) return core.post_tool_use(file_path) end
 function M.track_deleted_file(file_path) return core.track_deleted_file(file_path) end
 function M.untrack_failed_deletion(file_path) return core.untrack_failed_deletion(file_path) end

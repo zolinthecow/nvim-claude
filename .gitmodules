@@ -1,3 +1,0 @@
-[submodule "lua/nvim-claude/agent_provider/providers/codex/codex"]
-	path = lua/nvim-claude/agent_provider/providers/codex/codex
-	url = https://github.com/zolinthecow/codex.git
