@@ -1,11 +1,8 @@
 -- Codex provider configuration
 
-local env_command = vim.env.NVIM_CLAUDE_CODEX_BIN
-local default_command = env_command and env_command ~= '' and env_command or 'codex'
-
 local M = {
-  spawn_command = default_command,
-  background_spawn = default_command .. ' --full-auto',
+  spawn_command = 'codex',
+  background_spawn = 'codex' .. ' --full-auto',
   pane_title = 'codex',
   process_pattern = 'codex',
   targeted_spawn_command = nil,
