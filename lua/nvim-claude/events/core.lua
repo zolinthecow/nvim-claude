@@ -15,7 +15,8 @@ local function add_to_session(file_path)
 end
 
 -- Ensure baseline exists; optionally update baseline file entry with current content
-function M.pre_tool_use(file_path)
+function M.pre_tool_use(file_path, opts)
+  opts = opts or {}
   -- Resolve project
   local git_root = file_path and utils.get_project_root_for_file(file_path) or utils.get_project_root()
   if not git_root then return true end
@@ -27,11 +28,18 @@ function M.pre_tool_use(file_path)
   end
 
   -- If we have a specific file and it exists, update that file in baseline to its current content
-  if file_path and vim.fn.filereadable(file_path) == 1 then
+  local has_prior = opts.prior_content ~= nil
+  local readable = file_path and vim.fn.filereadable(file_path) == 1 or false
+  if file_path and (has_prior or readable) then
     local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
     -- Only update if not already tracked as edited (baseline captured previously)
     if not session.is_edited_file(git_root, relative) then
-      local content = utils.read_file(file_path) or ''
+      local content = opts.prior_content
+      if content == nil and readable then
+        content = utils.read_file(file_path)
+        if content == nil then content = '' end
+      end
+      if content == nil then content = '' end
       inline_diff.update_baseline_file(git_root, relative, content)
     end
   end

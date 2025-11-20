@@ -9,23 +9,15 @@ local utils = require('nvim-claude.utils')
 local events = require('nvim-claude.events')
 local logger = require('nvim-claude.logger')
 local inline_diff = require('nvim-claude.inline_diff')
+local apply_patch_replay = require('nvim-claude.agent_provider.providers.codex.apply_patch_replay')
 
 local M = {}
 
 local state = {
   server = nil,
   port = nil,
-  pending_calls = {},
-  baseline_initialized = {},
-  last_status = {},
   autocmd_registered = false,
   default_git_root = utils.get_project_root(),
-}
-
-local tracked_tools = {
-  local_shell = true,
-  apply_patch = true,
-  unified_exec = true,
 }
 
 local function log_debug(message, data)
@@ -40,37 +32,38 @@ local function log_warn(message, data)
   logger.warn('codex_otel', message, data)
 end
 
-local function snapshot_count(snapshot)
-  local count = 0
-  if snapshot then
-    for _ in pairs(snapshot) do
-      count = count + 1
-    end
-  end
-  return count
-end
+local function get_tool_arguments(attrs)
+  if not attrs then return nil end
 
-local function log_snapshot(stage, git_root, context, snapshot)
-  local data = {
-    git_root = git_root,
-    count = snapshot_count(snapshot),
-    files = snapshot,
+  local function normalize(value)
+    if type(value) == 'string' and value ~= '' then
+      return value
+    end
+    if type(value) == 'table' then
+      if type(value.arguments) == 'string' and value.arguments ~= '' then
+        return value.arguments
+      end
+      if type(value[1]) == 'string' then
+        return table.concat(value, '\n')
+      end
+    end
+    return nil
+  end
+
+  local candidates = {
+    attrs.arguments,
+    attrs.tool_arguments,
+    attrs.body,
   }
-  if context then
-    for k, v in pairs(context) do
-      data[k] = v
+
+  for _, candidate in ipairs(candidates) do
+    local normalized = normalize(candidate)
+    if normalized then
+      return normalized
     end
   end
-  log_debug('git status snapshot (' .. stage .. ')', data)
-  if stage == 'decision' then
-    pcall(function()
-      vim.fn.writefile({ vim.fn.json_encode(data) }, '/tmp/nvim-claude-codex-otel-before.json')
-    end)
-  elseif stage == 'result-after' then
-    pcall(function()
-      vim.fn.writefile({ vim.fn.json_encode(data) }, '/tmp/nvim-claude-codex-otel-after.json')
-    end)
-  end
+
+  return nil
 end
 
 local function decode_any_value(value)
@@ -161,77 +154,6 @@ local function normalize_relative_path(path)
   return trimmed ~= '' and trimmed or nil
 end
 
-local function parse_apply_patch_paths(patch)
-  if type(patch) ~= 'string' or patch == '' then return {} end
-  local dedup = {}
-  local targets = {}
-
-  local function add_path(rel)
-    local normalized = normalize_relative_path(rel)
-    if normalized and not dedup[normalized] then
-      dedup[normalized] = true
-      table.insert(targets, normalized)
-    end
-  end
-
-  for line in patch:gmatch('[^\n]+') do
-    local update = line:match('^%*%*%*%s+[Uu]pdate File:%s+(.+)$')
-    if update then
-      add_path(update)
-    else
-      local add_file = line:match('^%*%*%*%s+[Aa]dd File:%s+(.+)$')
-      if add_file then
-        add_path(add_file)
-      else
-        local delete = line:match('^%*%*%*%s+[Dd]elete File:%s+(.+)$')
-        if delete then
-          add_path(delete)
-        else
-          local move_from, move_to = line:match('^%*%*%*%s+[Mm]ove File:%s+(.+)%s+%-%>%s+(.+)$')
-          if move_from and move_to then
-            add_path(move_from)
-            add_path(move_to)
-          end
-        end
-      end
-    end
-  end
-
-  return targets
-end
-
-local function resolve_abs_paths(git_root, rel_paths)
-  local abs = {}
-  if not rel_paths then return abs end
-  for _, rel in ipairs(rel_paths) do
-    local normalized = normalize_relative_path(rel)
-    if normalized then
-      local combined = git_root .. '/' .. normalized
-      local full = vim.fn.fnamemodify(combined, ':p')
-      table.insert(abs, full)
-    end
-  end
-  return abs
-end
-
-local function collect_apply_patch_targets(git_root, attrs)
-  if not git_root or git_root == '' then return {} end
-  if not attrs then return {} end
-  local patch = attrs.arguments
-  if type(patch) ~= 'string' or patch == '' then return {} end
-  local rel_targets = parse_apply_patch_paths(patch)
-  if not rel_targets or #rel_targets == 0 then
-    return {}
-  end
-  return resolve_abs_paths(git_root, rel_targets)
-end
-
-local function log_tool_event(stage, attrs, extra)
-  local data = extra or {}
-  data.attrs = sanitize_attrs(attrs)
-  log_info('tool ' .. stage, data)
-end
-
 local function normalize_git_root(path_hint)
   local checked = {}
   local function try(path)
@@ -267,256 +189,138 @@ local function normalize_git_root(path_hint)
   return nil
 end
 
-local function git_status_snapshot(git_root)
-  local cmd = string.format('cd %s && git status --porcelain=1 -z', vim.fn.shellescape(git_root))
-  local output = vim.fn.system(cmd)
-  if vim.v.shell_error ~= 0 then
-    log_warn('git status failed', { git_root = git_root, stderr = output })
-    return {}
+
+local function read_baseline_file(git_root, relative_path)
+  local ref = inline_diff.get_baseline_ref(git_root)
+  if not ref then return nil end
+  local quoted_root = vim.fn.shellescape(git_root)
+  local quoted_rel = string.format("'%s'", relative_path:gsub("'", "'\\''"))
+  local cmd = string.format('cd %s && git show %s:%s 2>/dev/null', quoted_root, ref, quoted_rel)
+  local content, err = utils.exec(cmd)
+  if err or not content or content == '' then return content end
+  if content:match('^fatal:') or content:match('^error:') then
+    return nil
   end
-  local entries = vim.split(output, '\0')
-  local snapshot = {}
-  for _, entry in ipairs(entries) do
-    if entry and entry ~= '' then
-      local status = entry:sub(1, 2)
-      local path = vim.trim(entry:sub(4))
-      if path ~= '' then
-        snapshot[path] = status
-      end
-    end
-  end
-  log_debug('git status run', {
-    git_root = git_root,
-    raw_len = #output,
-    entry_count = vim.tbl_count(snapshot),
-    sample = table.concat(vim.list_slice(entries, 1, math.min(5, #entries)), '\\n'),
-  })
-  return snapshot
+  return content
 end
 
-local function diff_snapshots(before, after)
-  local delta = {}
-  before = before or {}
-  after = after or {}
-
-  for path, status in pairs(after) do
-    if before[path] ~= status then
-      delta[path] = status
-    end
+local function reconstruct_prior_from_update(git_root, abs_path, relative_path, operation)
+  local hunks = operation.hunks or {}
+  if #hunks == 0 then
+    log_warn('update operation missing hunks', { git_root = git_root, path = relative_path })
+    return nil
   end
 
-  for path in pairs(before) do
-    if not after[path] then
-      delta[path] = ' D'
-    end
+  local current = utils.read_file(abs_path)
+  if not current then
+    log_warn('current file missing for reverse patch', { file = abs_path })
+    return nil
   end
 
-  return delta
-end
-
-local function mark_changed_files(git_root, delta)
-  if not git_root or git_root == '' then return end
-  if not delta then return end
-  local files = {}
-  for path in pairs(delta) do
-    if path and path ~= '' then
-      local abs = git_root .. '/' .. path
-      events.post_tool_use(abs)
-      table.insert(files, abs)
-    end
-  end
-  if #files > 0 then
-    log_info('marked edited files', { git_root = git_root, count = #files, files = files })
-  end
-end
-
-local function ensure_baseline(git_root, conversation_id, context)
-  local normalized = normalize_git_root(git_root)
-  if not normalized then
-    log_warn('baseline skipped (git root unresolved)', {
-      requested_root = git_root,
-      conversation = conversation_id,
-      context = context,
+  local restored, err = apply_patch_replay.reconstruct_prior_content(current, hunks)
+  if not restored then
+    log_warn('reverse patch failed', {
+      file = relative_path,
+      error = err,
     })
     return nil
   end
 
-  local key = conversation_id or normalized
-  local already_initialized = key and state.baseline_initialized[key] or false
-  local had_ref = inline_diff.get_baseline_ref(normalized) ~= nil
-
-  local ok = events.pre_tool_use(normalized)
-  if key then
-    state.baseline_initialized[key] = true
-  end
-  log_info('baseline ensured', {
-    git_root = normalized,
-    conversation = conversation_id,
-    already_initialized = already_initialized,
-    baseline_preexisting = had_ref,
-    ensure_result = ok ~= false,
-    context = context,
-  })
-  return normalized
+  return restored
 end
 
-local function handle_tool_decision(attrs)
-  local tool = attrs['tool_name']
-  if not tool or not tracked_tools[tool] then return end
-  local decision = attrs['decision']
-  if decision ~= 'approved' and decision ~= 'approved_for_session' then return end
-  local call_id = attrs['call_id']
-  if not call_id or call_id == '' then return end
-
-  local git_root = normalize_git_root(attrs.cwd or utils.get_project_root())
-  if not git_root then
-    log_warn('tool decision without git root', { call_id = call_id, tool = tool, attrs = sanitize_attrs(attrs) })
-    return
+local function handle_apply_patch_operation(git_root, operation, attrs)
+  local relative = normalize_relative_path(operation.move_path or operation.path)
+  if not relative then
+    log_warn('apply_patch operation missing path', { attrs = sanitize_attrs(attrs) })
+    return false
   end
 
-  log_tool_event('decision', attrs, {
-    call_id = call_id,
-    tool = tool,
-    git_root = git_root,
-    cwd_attr = attrs.cwd,
-    baseline_exists = inline_diff.get_baseline_ref(git_root) ~= nil,
-  })
-
-  local entry = {
-    git_root = git_root,
-    before = nil,
-    targets = {},
-    tool = tool,
-  }
-  if tool ~= 'apply_patch' then
-    local snapshot = git_status_snapshot(git_root)
-    entry.before = snapshot
-    log_snapshot('decision', git_root, {
-      call_id = call_id,
-      tool = tool,
-    }, snapshot)
+  local abs_path = git_root .. '/' .. relative
+  local tracked = false
+  local ok, is_tracked = pcall(events.is_edited_file, git_root, relative)
+  if ok and is_tracked then
+    tracked = true
   end
-  state.pending_calls[call_id] = entry
 
-  ensure_baseline(git_root, attrs['conversation.id'], { call_id = call_id, tool = tool })
-
-  if tool == 'apply_patch' then
-    local abs_targets = collect_apply_patch_targets(git_root, attrs)
-    entry.targets = abs_targets
-    if abs_targets and #abs_targets > 0 then
-      for _, abs in ipairs(abs_targets) do
-        events.pre_tool_use(abs)
-      end
-      log_info('apply_patch targets tracked', {
-        call_id = call_id,
-        git_root = git_root,
-        count = #abs_targets,
-        targets = abs_targets,
-      })
-    else
-      log_warn('apply_patch decision without targets', {
-        call_id = call_id,
-        git_root = git_root,
-      })
+  local prior_content = nil
+  if operation.type == 'update' then
+    prior_content = reconstruct_prior_from_update(git_root, abs_path, relative, operation)
+  elseif operation.type == 'add' then
+    prior_content = ''
+  elseif operation.type == 'delete' then
+    prior_content = read_baseline_file(git_root, relative)
+    if not prior_content then
+      log_warn('baseline missing for delete operation', { file = relative })
     end
+  else
+    log_warn('unknown apply_patch operation type', { type = tostring(operation.type) })
+    return false
   end
 
-  log_debug('tool decision processed', {
-    tool = tool,
-    call_id = call_id,
-    git_root = git_root,
-    decision = decision,
-    pending_files = entry.before and vim.tbl_count(entry.before) or 0,
-  })
+  if tracked then
+    events.pre_tool_use(abs_path)
+    events.post_tool_use(abs_path)
+    return true
+  end
+
+  if prior_content == nil and operation.type ~= 'add' then
+    log_warn('unable to reconstruct prior content', {
+      file = relative,
+      type = operation.type,
+    })
+    events.post_tool_use(abs_path)
+    return false
+  end
+
+  local opts = nil
+  if prior_content ~= nil then
+    opts = { prior_content = prior_content }
+  end
+  events.pre_tool_use(abs_path, opts)
+  events.post_tool_use(abs_path)
+  return true
 end
 
 local function handle_tool_result(attrs)
-  local call_id = attrs['call_id']
   local tool = attrs['tool_name']
-  if tool and not tracked_tools[tool] then return end
-
-  local pending = call_id and state.pending_calls[call_id] or nil
-  local git_root = (pending and pending.git_root) or normalize_git_root(attrs.cwd or utils.get_project_root())
-  if not git_root or git_root == '' then return end
-
-  local resolved_tool = tool or (pending and pending.tool)
-  log_tool_event('result', attrs, {
-    call_id = call_id,
-    tool = resolved_tool,
-    git_root = git_root,
-    cwd_attr = attrs.cwd,
-    success = attrs.success,
-  })
-
-  local pending_tool = (pending and pending.tool) or tool
-  if pending_tool == 'apply_patch' then
-    local target_paths = {}
-    if pending and pending.targets and #pending.targets > 0 then
-      target_paths = pending.targets
-    else
-      target_paths = collect_apply_patch_targets(git_root, attrs)
-      if target_paths and #target_paths > 0 then
-        -- We missed pre_tool_use (no decision), so ensure baselines now.
-        for _, abs in ipairs(target_paths) do
-          events.pre_tool_use(abs)
-        end
-      end
-    end
-
-    if target_paths and #target_paths > 0 then
-      for _, abs in ipairs(target_paths) do
-        events.post_tool_use(abs)
-      end
-      log_info('apply_patch targets marked', {
-        call_id = call_id,
-        git_root = git_root,
-        count = #target_paths,
-        paths = target_paths,
-      })
-    else
-      log_warn('apply_patch result without targets', {
-        call_id = call_id,
-        git_root = git_root,
-      })
-    end
-    if call_id then
-      state.pending_calls[call_id] = nil
-    end
+  if tool ~= 'apply_patch' then
     return
   end
 
-  local after = git_status_snapshot(git_root)
-  log_snapshot('result-after', git_root, {
-    call_id = call_id,
-    tool = resolved_tool,
-  }, after)
-  local before = pending and pending.before or state.last_status[git_root] or {}
-  log_snapshot('result-before', git_root, {
-    call_id = call_id,
-    tool = resolved_tool,
-  }, before)
-  local delta = diff_snapshots(before, after)
-  if next(delta) then
-    mark_changed_files(git_root, delta)
-    log_info('tool result delta', {
-      call_id = call_id,
-      tool = resolved_tool,
-      git_root = git_root,
-      changed = delta,
-    })
-  else
-    log_debug('tool result had no diff', {
-      call_id = call_id,
-      tool = resolved_tool,
-      git_root = git_root,
-    })
+  local git_root = normalize_git_root(attrs.cwd or utils.get_project_root())
+  if not git_root or git_root == '' then
+    log_warn('tool result without git root', { attrs = sanitize_attrs(attrs) })
+    return
   end
 
-  state.last_status[git_root] = after
-  if call_id then
-    state.pending_calls[call_id] = nil
+  local patch = get_tool_arguments(attrs)
+  local operations, parse_err = apply_patch_replay.parse_apply_patch_operations(patch)
+  if not operations or #operations == 0 then
+    log_warn('apply_patch result without operations', {
+      git_root = git_root,
+      call_id = attrs['call_id'],
+      parse_error = parse_err,
+    })
+    return
   end
+
+  local handled = 0
+  for _, operation in ipairs(operations) do
+    local ok = handle_apply_patch_operation(git_root, operation, attrs)
+    if ok then
+      handled = handled + 1
+    end
+  end
+
+  log_info('apply_patch result processed', {
+    git_root = git_root,
+    call_id = attrs['call_id'],
+    total_operations = #operations,
+    handled_operations = handled,
+  })
 end
+
 
 local function handle_user_prompt(attrs)
   local prompt = attrs['prompt']
@@ -545,9 +349,7 @@ local function process_log_record(attrs)
   local event_name = attrs['event.name']
   if not event_name then return end
 
-  if event_name == 'codex.tool_decision' then
-    handle_tool_decision(attrs)
-  elseif event_name == 'codex.tool_result' then
+  if event_name == 'codex.tool_result' then
     handle_tool_result(attrs)
   elseif event_name == 'codex.user_prompt' then
     handle_user_prompt(attrs)
@@ -664,9 +466,6 @@ local function stop_server()
     end)
     state.server = nil
     state.port = nil
-    state.pending_calls = {}
-    state.baseline_initialized = {}
-    state.last_status = {}
   end
 end
 
