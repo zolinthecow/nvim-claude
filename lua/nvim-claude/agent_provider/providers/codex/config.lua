@@ -13,6 +13,8 @@ local M = {
   otel_port = 4318,
   otel_environment = 'dev',
   otel_log_user_prompt = true,
+  use_daemon = true,
+  relay_python = nil, -- when nil, relay picks mcp-env python if available, else python3
 }
 
 function M.setup(opts)
@@ -54,6 +56,12 @@ function M.setup(opts)
   end
   if type(opts.otel_log_user_prompt) == 'boolean' then
     M.otel_log_user_prompt = opts.otel_log_user_prompt
+  end
+  if type(opts.use_daemon) == 'boolean' then
+    M.use_daemon = opts.use_daemon
+  end
+  if type(opts.relay_python) == 'string' and opts.relay_python ~= '' then
+    M.relay_python = opts.relay_python
   end
   -- Propagate to tmux config so detection and titles work
   local ok, utils = pcall(require, 'nvim-claude.utils')

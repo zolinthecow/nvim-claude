@@ -5,11 +5,11 @@
 
 local uv = vim.loop
 
-local utils = require('nvim-claude.utils')
-local events = require('nvim-claude.events')
-local logger = require('nvim-claude.logger')
-local inline_diff = require('nvim-claude.inline_diff')
-local apply_patch_replay = require('nvim-claude.agent_provider.providers.codex.apply_patch_replay')
+local utils = require 'nvim-claude.utils'
+local events = require 'nvim-claude.events'
+local logger = require 'nvim-claude.logger'
+local inline_diff = require 'nvim-claude.inline_diff'
+local apply_patch_replay = require 'nvim-claude.agent_provider.providers.codex.apply_patch_replay'
 
 local M = {}
 
@@ -33,7 +33,9 @@ local function log_warn(message, data)
 end
 
 local function get_tool_arguments(attrs)
-  if not attrs then return nil end
+  if not attrs then
+    return nil
+  end
 
   local function normalize(value)
     if type(value) == 'string' and value ~= '' then
@@ -71,16 +73,36 @@ local function decode_any_value(value)
     return value
   end
 
-  if value.stringValue ~= nil then return value.stringValue end
-  if value.string_value ~= nil then return value.string_value end
-  if value.boolValue ~= nil then return value.boolValue end
-  if value.bool_value ~= nil then return value.bool_value end
-  if value.intValue ~= nil then return tonumber(value.intValue) end
-  if value.int_value ~= nil then return tonumber(value.int_value) end
-  if value.doubleValue ~= nil then return value.doubleValue end
-  if value.double_value ~= nil then return value.double_value end
-  if value.bytesValue ~= nil then return value.bytesValue end
-  if value.bytes_value ~= nil then return value.bytes_value end
+  if value.stringValue ~= nil then
+    return value.stringValue
+  end
+  if value.string_value ~= nil then
+    return value.string_value
+  end
+  if value.boolValue ~= nil then
+    return value.boolValue
+  end
+  if value.bool_value ~= nil then
+    return value.bool_value
+  end
+  if value.intValue ~= nil then
+    return tonumber(value.intValue)
+  end
+  if value.int_value ~= nil then
+    return tonumber(value.int_value)
+  end
+  if value.doubleValue ~= nil then
+    return value.doubleValue
+  end
+  if value.double_value ~= nil then
+    return value.double_value
+  end
+  if value.bytesValue ~= nil then
+    return value.bytesValue
+  end
+  if value.bytes_value ~= nil then
+    return value.bytes_value
+  end
 
   local array = value.arrayValue or value.array_value
   if type(array) == 'table' and type(array.values) == 'table' then
@@ -107,7 +129,9 @@ end
 
 local function attributes_to_map(list)
   local map = {}
-  if type(list) ~= 'table' then return map end
+  if type(list) ~= 'table' then
+    return map
+  end
   for _, attr in ipairs(list) do
     if type(attr) == 'table' then
       local key = attr.key or attr.name
@@ -120,9 +144,13 @@ local function attributes_to_map(list)
 end
 
 local function truncate_string(str, limit)
-  if type(str) ~= 'string' then return str end
+  if type(str) ~= 'string' then
+    return str
+  end
   local max = limit or 4000
-  if #str <= max then return str end
+  if #str <= max then
+    return str
+  end
   return str:sub(1, max) .. '…<truncated>'
 end
 
@@ -145,9 +173,13 @@ local function sanitize_attrs(attrs)
 end
 
 local function normalize_relative_path(path)
-  if not path or path == '' then return nil end
+  if not path or path == '' then
+    return nil
+  end
   local trimmed = vim.trim(path)
-  if trimmed == '' then return nil end
+  if trimmed == '' then
+    return nil
+  end
   trimmed = trimmed:gsub('^b?/', '')
   trimmed = trimmed:gsub('^%./', '')
   trimmed = trimmed:gsub('//+', '/')
@@ -157,7 +189,9 @@ end
 local function normalize_git_root(path_hint)
   local checked = {}
   local function try(path)
-    if not path or path == '' or checked[path] then return nil end
+    if not path or path == '' or checked[path] then
+      return nil
+    end
     checked[path] = true
     local stat = vim.loop.fs_stat(path)
     local dir = path
@@ -166,7 +200,9 @@ local function normalize_git_root(path_hint)
     elseif stat.type ~= 'directory' then
       dir = vim.fn.fnamemodify(path, ':h')
     end
-    if not dir or dir == '' then return nil end
+    if not dir or dir == '' then
+      return nil
+    end
     local cmd = string.format('cd %s && git rev-parse --show-toplevel 2>/dev/null', vim.fn.shellescape(dir))
     local out = vim.fn.system(cmd)
     if vim.v.shell_error == 0 and out and out ~= '' then
@@ -189,16 +225,19 @@ local function normalize_git_root(path_hint)
   return nil
 end
 
-
 local function read_baseline_file(git_root, relative_path)
   local ref = inline_diff.get_baseline_ref(git_root)
-  if not ref then return nil end
+  if not ref then
+    return nil
+  end
   local quoted_root = vim.fn.shellescape(git_root)
   local quoted_rel = string.format("'%s'", relative_path:gsub("'", "'\\''"))
   local cmd = string.format('cd %s && git show %s:%s 2>/dev/null', quoted_root, ref, quoted_rel)
   local content, err = utils.exec(cmd)
-  if err or not content or content == '' then return content end
-  if content:match('^fatal:') or content:match('^error:') then
+  if err or not content or content == '' then
+    return content
+  end
+  if content:match '^fatal:' or content:match '^error:' then
     return nil
   end
   return content
@@ -321,17 +360,20 @@ local function handle_tool_result(attrs)
   })
 end
 
-
 local function handle_user_prompt(attrs)
   local prompt = attrs['prompt']
   local git_root = utils.get_project_root()
-  if not git_root or git_root == '' then return end
-  if not prompt or prompt == '' then return end
+  if not git_root or git_root == '' then
+    return
+  end
+  if not prompt or prompt == '' then
+    return
+  end
   if prompt == '[REDACTED]' then
     prompt = 'Codex prompt (redacted)'
   end
 
-  local original = vim.fn.getenv('TARGET_FILE')
+  local original = vim.fn.getenv 'TARGET_FILE'
   vim.fn.setenv('TARGET_FILE', git_root)
   pcall(events.user_prompt_submit, prompt)
   if original and original ~= vim.NIL and original ~= '' then
@@ -347,7 +389,9 @@ end
 
 local function process_log_record(attrs)
   local event_name = attrs['event.name']
-  if not event_name then return end
+  if not event_name then
+    return
+  end
 
   if event_name == 'codex.tool_result' then
     handle_tool_result(attrs)
@@ -358,7 +402,9 @@ end
 
 local function process_payload(payload)
   local resource_logs = payload.resourceLogs or payload.resource_logs
-  if type(resource_logs) ~= 'table' then return end
+  if type(resource_logs) ~= 'table' then
+    return
+  end
 
   for _, resource in ipairs(resource_logs) do
     local resource_attrs = attributes_to_map(resource.resource and resource.resource.attributes)
@@ -383,6 +429,11 @@ local function process_payload(payload)
       end
     end
   end
+end
+
+-- Expose for external relay (daemon) to forward OTEL payloads into Neovim
+function M.process_payload(payload)
+  return process_payload(payload)
 end
 
 local function send_response(client, status_line)
@@ -420,14 +471,14 @@ local function handle_client(client)
         local header_blob = buffer:sub(1, header_end + 3)
         local request_line_end = header_blob:find('\r\n', 1, true)
         local request_line = header_blob:sub(1, request_line_end - 1)
-        local method, path = request_line:match('^(%S+)%s+(%S+)')
+        local method, path = request_line:match '^(%S+)%s+(%S+)'
         if method ~= 'POST' or path ~= '/v1/logs' then
           send_response(client, 'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n')
           return
         end
         local headers = {}
-        for line in header_blob:sub(request_line_end + 2):gmatch('([^\r\n]+)') do
-          local name, value = line:match('^([^:]+):%s*(.*)$')
+        for line in header_blob:sub(request_line_end + 2):gmatch '([^\r\n]+)' do
+          local name, value = line:match '^([^:]+):%s*(.*)$'
           if name then
             headers[name:lower()] = value
           end
@@ -470,7 +521,9 @@ local function stop_server()
 end
 
 local function ensure_autocmd()
-  if state.autocmd_registered then return end
+  if state.autocmd_registered then
+    return
+  end
   state.autocmd_registered = true
   vim.api.nvim_create_autocmd('VimLeavePre', {
     group = vim.api.nvim_create_augroup('NvimClaudeCodexOtel', { clear = true }),
