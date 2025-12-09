@@ -269,7 +269,6 @@ local function reconstruct_prior_from_update(git_root, abs_path, relative_path, 
 end
 
 local function handle_apply_patch_operation(git_root, operation, attrs)
-  log_debug('apply_patch_operation.start', { git_root = git_root, op_type = operation.type, path = operation.path, move_path = operation.move_path, call_id = attrs and attrs.call_id })
   local relative = normalize_relative_path(operation.move_path or operation.path)
   if not relative then
     log_warn('apply_patch operation missing path', { attrs = sanitize_attrs(attrs) })
@@ -301,7 +300,6 @@ local function handle_apply_patch_operation(git_root, operation, attrs)
   if tracked then
     events.pre_tool_use(abs_path)
     events.post_tool_use(abs_path)
-    log_info('apply_patch_operation.tracked', { file = relative, call_id = attrs and attrs.call_id })
     return true
   end
 
@@ -314,22 +312,12 @@ local function handle_apply_patch_operation(git_root, operation, attrs)
     return false
   end
 
-  log_debug('apply_patch_operation.prior_content', {
-    file = relative,
-    op_type = operation.type,
-    prior_len = prior_content and #prior_content or 0,
-    prior_sha1 = prior_content and vim.fn.sha256(prior_content) or '',
-    prior_preview = prior_content and prior_content:sub(1, 400) or '',
-    call_id = attrs and attrs.call_id,
-  })
-
   local opts = nil
   if prior_content ~= nil then
     opts = { prior_content = prior_content }
   end
   events.pre_tool_use(abs_path, opts)
   events.post_tool_use(abs_path)
-  log_info('apply_patch_operation.completed', { file = relative, call_id = attrs and attrs.call_id, op_type = operation.type })
   return true
 end
 

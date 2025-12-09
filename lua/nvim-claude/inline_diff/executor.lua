@@ -139,8 +139,6 @@ function M.recompute_and_render(bufnr)
     current_len = #(current_content or ''),
     base_sha1 = vim.fn.sha256(base_content or ''),
     current_sha1 = vim.fn.sha256(current_content or ''),
-    base_content = base_content,
-    current_content = current_content,
   })
   local d = diffmod.compute_diff(base_content, current_content)
   if not d or not d.hunks or #d.hunks == 0 then
