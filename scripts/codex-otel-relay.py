@@ -22,6 +22,10 @@ except Exception as exc:  # pragma: no cover - best effort import
     sys.exit(1)
 
 LOG_LOCK = threading.Lock()
+CONV_LOCK = threading.Lock()
+CONV_CACHE = {}  # conversation.id -> git_root
+CONV_NEGATIVE = set()  # conversation ids we already failed to resolve
+SESSIONS_ROOT = Path.home() / '.codex' / 'sessions'
 
 
 def log(msg):
@@ -66,6 +70,19 @@ def decode_any(value):
     return value
 
 
+def preview(value, limit=800):
+    try:
+        text = json.dumps(value, ensure_ascii=True)
+    except Exception:
+        try:
+            text = repr(value)
+        except Exception:
+            text = '<unprintable>'
+    if len(text) > limit:
+        return f'{text[:limit]}...<truncated {len(text) - limit} chars>'
+    return text
+
+
 def attributes_to_map(attr_list):
     out = {}
     if not isinstance(attr_list, list):
@@ -108,75 +125,60 @@ def server_file(git_root):
     return Path(runtime_dir) / f"nvim-claude-{project_hash(git_root)}-server"
 
 
-def load_project_roots():
-    """Return list of project roots from global project-state."""
-    state_path = Path.home() / ".local" / "share" / "nvim" / "nvim-claude" / "projects" / "state.json"
-    if not state_path.exists():
-        return []
+def find_session_file(conv_id):
+    if not conv_id or not SESSIONS_ROOT.exists():
+        return None
+    pattern = f'*{conv_id}.jsonl'
     try:
-        data = json.loads(state_path.read_text())
+        for path in SESSIONS_ROOT.rglob(pattern):
+            if path.is_file():
+                return path
     except Exception:
-        return []
-    return list(data.keys())
-
-
-def normalize_path(p):
-    if not p:
         return None
-    p = p.strip()
-    if p == "":
+    return None
+
+
+def git_root_from_session(conv_id):
+    cached = None
+    with CONV_LOCK:
+        cached = CONV_CACHE.get(conv_id)
+        if cached:
+            return cached
+        if conv_id in CONV_NEGATIVE:
+            return None
+
+    session_path = find_session_file(conv_id)
+    if not session_path:
+        with CONV_LOCK:
+            CONV_NEGATIVE.add(conv_id)
         return None
-    # drop leading b/ or a/ prefixes, ./, //
-    for pref in ("b/", "a/"):
-        if p.startswith(pref):
-            p = p[len(pref):]
-            break
-    if p.startswith("./"):
-        p = p[2:]
-    while p.startswith("//"):
-        p = p[1:]
-    return p
 
+    git_root = None
+    try:
+        with session_path.open() as fh:
+            for line in fh:
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if obj.get('type') == 'session_meta':
+                    payload = obj.get('payload') or {}
+                    cwd = payload.get('cwd')
+                    if cwd:
+                        git_root = find_git_root(cwd) or cwd
+                    break
+    except Exception as exc:
+        log(f'[relay] failed to read session file for {conv_id}: {exc}')
 
-def extract_paths_from_patch(patch_text):
-    paths = set()
-    if not isinstance(patch_text, str):
-        return paths
-    for line in patch_text.splitlines():
-        if line.startswith("*** Update File: "):
-            paths.add(normalize_path(line.split(":", 1)[1].strip()))
-        elif line.startswith("*** Add File: "):
-            paths.add(normalize_path(line.split(":", 1)[1].strip()))
-        elif line.startswith("*** Delete File: "):
-            paths.add(normalize_path(line.split(":", 1)[1].strip()))
-        elif line.startswith("*** Move to: "):
-            paths.add(normalize_path(line.split(":", 1)[1].strip()))
-    paths.discard(None)
-    return paths
+    with CONV_LOCK:
+        if git_root:
+            CONV_CACHE[conv_id] = git_root
+            CONV_NEGATIVE.discard(conv_id)
+            log(f'[relay] mapped conversation {conv_id} -> {git_root}')
+        else:
+            CONV_NEGATIVE.add(conv_id)
 
-
-def best_project_for_path(path, project_roots):
-    if not path or not project_roots:
-        return None
-    # If absolute, pick the longest root that prefixes the path
-    if path.startswith("/"):
-        best = None
-        for root in project_roots:
-            if path.startswith(root.rstrip("/") + "/") or path == root:
-                if best is None or len(root) > len(best):
-                    best = root
-        return best
-    # Relative: try roots where the file exists
-    best = None
-    for root in project_roots:
-        candidate = Path(root) / path
-        if candidate.exists():
-            if best is None or len(root) > len(best):
-                best = root
-    # Fallback: choose longest root (most specific) if nothing exists
-    if best is None and project_roots:
-        best = max(project_roots, key=len)
-    return best
+    return git_root
 
 
 class NeovimRouter:
@@ -236,13 +238,11 @@ def extract_git_root(resource_attrs, record_attrs):
 def split_payload(payload):
     """
     Yield (project_root, single_payload_dict) tuples.
-    For codex.tool_result/apply_patch, infer project root from patch paths.
+    Route by conversation.id -> cwd (from ~/.codex sessions), falling back to attrs.
     """
     resource_logs = payload.get("resourceLogs") or payload.get("resource_logs")
     if not isinstance(resource_logs, list):
         return
-
-    project_roots = load_project_roots()
 
     for resource in resource_logs:
         res_attrs = attributes_to_map(
@@ -257,39 +257,49 @@ def split_payload(payload):
                     rec_attrs["body"] = decode_any(record.get("body"))
 
                 event_name = rec_attrs.get("event.name") or rec_attrs.get("event_name")
-                tool_name = rec_attrs.get("tool_name")
+                conv_id = (
+                    rec_attrs.get("conversation.id")
+                    or rec_attrs.get("conversation_id")
+                    or rec_attrs.get("conversationId")
+                )
 
-                if event_name != "codex.tool_result" or tool_name != "apply_patch":
-                    # Ignore non-apply_patch events
+                if event_name == 'codex.user_prompt':
+                    # Debug the shape of user prompt payloads so we can route checkpoints later
+                    log(
+                        '[relay] user_prompt '
+                        f'resource={preview(res_attrs)} record={preview(rec_attrs)}'
+                    )
+                    # keep processing; we want to forward this
+
+                if not event_name or not event_name.startswith('codex.'):
+                    # Ignore unrelated telemetry
                     continue
 
-                patch_text = rec_attrs.get("arguments") or rec_attrs.get("tool_arguments") or rec_attrs.get("body") or ""
-                paths = extract_paths_from_patch(patch_text)
-                targets = set()
-                for p in paths:
-                    root = best_project_for_path(p, project_roots)
-                    if root:
-                        targets.add(root)
+                git_root = None
+                if conv_id:
+                    git_root = git_root_from_session(conv_id)
 
-                if not targets:
-                    log("[relay] dropped log record (apply_patch without resolvable path)")
+                if not git_root:
+                    git_root = extract_git_root(res_attrs, rec_attrs)
+
+                if not git_root:
+                    log(f"[relay] dropped log record (no git root) event={event_name} conv_id={conv_id}")
                     continue
 
-                for git_root in targets:
-                    single_payload = {
-                        "resourceLogs": [
-                            {
-                                "resource": resource.get("resource", {}),
-                                "scopeLogs": [
-                                    {
-                                        "scope": scope.get("scope") or scope.get("instrumentationScope"),
-                                        "logRecords": [record],
-                                    }
-                                ],
-                            }
-                        ]
-                    }
-                    yield git_root, single_payload
+                single_payload = {
+                    "resourceLogs": [
+                        {
+                            "resource": resource.get("resource", {}),
+                            "scopeLogs": [
+                                {
+                                    "scope": scope.get("scope") or scope.get("instrumentationScope"),
+                                    "logRecords": [record],
+                                }
+                            ],
+                        }
+                    ]
+                }
+                yield git_root, single_payload
 
 
 class RelayHandler(BaseHTTPRequestHandler):
