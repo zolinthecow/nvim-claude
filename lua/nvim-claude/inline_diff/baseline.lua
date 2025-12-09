@@ -5,6 +5,7 @@ local M = {}
 
 local utils = require 'nvim-claude.utils'
 local persistence = require 'nvim-claude.inline_diff.persistence'
+local project_state = require 'nvim-claude.project-state'
 
 -- Simple in-process cache keyed by project root
 local cache = {}
@@ -31,6 +32,11 @@ local function clear_persisted_ref(git_root, raw_ref, source)
     state.baseline_ref = nil
     state.stash_ref = nil
     persistence.set_state(git_root, state)
+  end
+  -- Reset edited-file tracking since it is tied to the cleared baseline
+  if git_root then
+    project_state.set(git_root, 'claude_edited_files', {})
+    project_state.set(git_root, 'session_edited_files', {})
   end
   if source == 'git_ref' then
     utils.exec(string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root))
@@ -62,8 +68,14 @@ function M.get_baseline_ref(git_root)
     local persisted_raw = state.baseline_ref or state.stash_ref
     local persisted = sanitize_ref(persisted_raw)
     if persisted then
-      cache[git_root] = persisted
-      return persisted
+      -- Validate the object actually exists; stale refs cause git errors later
+      local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, persisted)
+      local _, exists_err = utils.exec(exists_cmd)
+      if not exists_err then
+        cache[git_root] = persisted
+        return persisted
+      end
+      clear_persisted_ref(git_root, persisted_raw, 'missing_object')
     end
     clear_persisted_ref(git_root, persisted_raw, 'persistence')
   end
@@ -73,9 +85,15 @@ function M.get_baseline_ref(git_root)
   if ref and not err then
     local sanitized = sanitize_ref(ref)
     if sanitized then
-      cache[git_root] = sanitized
-      persistence.save_state({ baseline_ref = sanitized })
-      return sanitized
+      -- Validate object exists
+      local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, sanitized)
+      local _, exists_err = utils.exec(exists_cmd)
+      if not exists_err then
+        cache[git_root] = sanitized
+        persistence.save_state({ baseline_ref = sanitized })
+        return sanitized
+      end
+      clear_persisted_ref(git_root, ref, 'missing_object')
     end
     clear_persisted_ref(git_root, ref, 'git_ref')
   end

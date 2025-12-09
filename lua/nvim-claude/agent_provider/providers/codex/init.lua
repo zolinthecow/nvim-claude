@@ -9,10 +9,15 @@ local hooks = require('nvim-claude.agent_provider.providers.codex.hooks')
 local chat = require('nvim-claude.agent_provider.providers.codex.chat')
 local background = require('nvim-claude.agent_provider.providers.codex.background')
 local otel = require('nvim-claude.agent_provider.providers.codex.otel_listener')
+local relay = require('nvim-claude.agent_provider.providers.codex.relay')
 
 function M.setup(opts)
   cfg.setup(opts)
-  otel.ensure(cfg.otel_port)
+  if cfg.use_daemon then
+    relay.ensure_running()
+  else
+    otel.ensure(cfg.otel_port)
+  end
 end
 
 M.install_hooks = hooks.install

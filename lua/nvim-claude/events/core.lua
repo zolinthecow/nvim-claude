@@ -8,9 +8,13 @@ local session = require 'nvim-claude.events.session'
 
 -- Helper: add file to session_edited_files (persisted per project)
 local function add_to_session(file_path)
-  if not file_path or file_path == '' then return end
+  if not file_path or file_path == '' then
+    return
+  end
   local git_root = utils.get_project_root_for_file(file_path)
-  if not git_root then return end
+  if not git_root then
+    return
+  end
   session.add_turn_file(git_root, file_path)
 end
 
@@ -19,12 +23,16 @@ function M.pre_tool_use(file_path, opts)
   opts = opts or {}
   -- Resolve project
   local git_root = file_path and utils.get_project_root_for_file(file_path) or utils.get_project_root()
-  if not git_root then return true end
+  if not git_root then
+    return true
+  end
 
   -- Create baseline if missing
   if not inline_diff.get_baseline_ref(git_root) then
-    local ref = inline_diff.create_baseline('nvim-claude: baseline ' .. os.date('%Y-%m-%d %H:%M:%S'), git_root)
-    if not ref then return true end
+    local ref = inline_diff.create_baseline('nvim-claude: baseline ' .. os.date '%Y-%m-%d %H:%M:%S', git_root)
+    if not ref then
+      return true
+    end
   end
 
   -- If we have a specific file and it exists, update that file in baseline to its current content
@@ -37,9 +45,13 @@ function M.pre_tool_use(file_path, opts)
       local content = opts.prior_content
       if content == nil and readable then
         content = utils.read_file(file_path)
-        if content == nil then content = '' end
+        if content == nil then
+          content = ''
+        end
       end
-      if content == nil then content = '' end
+      if content == nil then
+        content = ''
+      end
       inline_diff.update_baseline_file(git_root, relative, content)
     end
   end
@@ -49,8 +61,15 @@ end
 
 -- After tool use: mark file as edited, persist session, and refresh diff if open
 function M.post_tool_use(file_path)
+  local logger = require 'nvim-claude.logger'
   local git_root = file_path and utils.get_project_root_for_file(file_path) or utils.get_project_root()
-  if not git_root then return true end
+  logger.debug('post_tool_use', 'In post tool use', {
+    git_root = git_root,
+  })
+
+  if not git_root then
+    return true
+  end
 
   if file_path and file_path ~= '' then
     local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
@@ -59,8 +78,34 @@ function M.post_tool_use(file_path)
 
     -- If buffer is loaded, refresh inline diff via façade (schedule to avoid re-entrancy)
     local bufnr = vim.fn.bufnr(file_path)
-    if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+    if bufnr == -1 then
+      -- Fallback: resolve path and search loaded buffers (handles symlinks/relative opens)
+      local target = vim.fn.fnamemodify(file_path, ':p')
+      for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(b) then
+          local name = vim.api.nvim_buf_get_name(b)
+          if name ~= '' and vim.fn.fnamemodify(name, ':p') == target then
+            bufnr = b
+            break
+          end
+        end
+      end
+    end
+    logger.debug('post_tool_use', 'Buffer lookup for refresh', {
+      file_path = file_path,
+      bufnr = bufnr,
+      loaded = bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) or false,
+    })
+    local loaded = bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) or false
+    if loaded then
       vim.schedule(function()
+        -- If the buffer is not locally modified, sync it from disk so the diff sees the new content
+        local ok_mod, modified = pcall(vim.api.nvim_buf_get_option, bufnr, 'modified')
+        if ok_mod and not modified then
+          pcall(vim.api.nvim_buf_call, bufnr, function()
+            pcall(vim.cmd, 'checktime')
+          end)
+        end
         pcall(require('nvim-claude.inline_diff').refresh_inline_diff, bufnr)
       end)
     end
@@ -72,8 +117,10 @@ end
 -- Called before rm deletes a file; ensure baseline has latest content and track
 function M.track_deleted_file(file_path)
   local git_root = utils.get_project_root_for_file(file_path)
-  local logger = require('nvim-claude.logger')
-  if not git_root then return true end
+  local logger = require 'nvim-claude.logger'
+  if not git_root then
+    return true
+  end
 
   -- Ensure baseline exists
   if not inline_diff.get_baseline_ref(git_root) then
@@ -98,9 +145,11 @@ end
 -- Called if deletion failed; untrack the file
 function M.untrack_failed_deletion(file_path)
   local git_root = utils.get_project_root_for_file(file_path)
-  if not git_root then return true end
+  if not git_root then
+    return true
+  end
   local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-  local logger = require('nvim-claude.logger')
+  local logger = require 'nvim-claude.logger'
   if session.is_edited_file(git_root, relative) then
     session.remove_edited_file(git_root, relative)
     logger.info('untrack_failed_deletion', 'Untracked after failed deletion', { file = relative, project = git_root })
@@ -110,10 +159,10 @@ end
 
 -- On user prompt: exit checkpoint preview if active, then checkpoint current state
 function M.user_prompt_submit(prompt)
-  local checkpoint = require('nvim-claude.checkpoint')
-  local logger = require('nvim-claude.logger')
+  local checkpoint = require 'nvim-claude.checkpoint'
+  local logger = require 'nvim-claude.logger'
   -- Try to scope operations to the project implied by TARGET_FILE (set by hook wrapper)
-  local target = vim.fn.getenv('TARGET_FILE')
+  local target = vim.fn.getenv 'TARGET_FILE'
   local git_root_override = nil
   if target and target ~= '' and target ~= vim.NIL then
     local uv = vim.loop
@@ -136,7 +185,7 @@ function M.user_prompt_submit(prompt)
   end
   local id = checkpoint.create_checkpoint(prompt, git_root_override)
   if id then
-    local preview = (prompt or ''):gsub('\n',' '):sub(1,50)
+    local preview = (prompt or ''):gsub('\n', ' '):sub(1, 50)
     logger.info('user_prompt_submit_hook', 'Created checkpoint', { checkpoint_id = id, prompt_preview = preview })
   else
     logger.warn('user_prompt_submit_hook', 'Failed to create checkpoint')
