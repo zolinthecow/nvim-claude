@@ -9,12 +9,12 @@ function M.setup()
   -- Install hooks (via provider)
   vim.api.nvim_create_user_command('ClaudeInstallHooks', function()
     agent_provider.install_hooks()
-  end, { desc = 'Install hooks for current provider (Claude)' })
+  end, { desc = 'Install hooks for current provider' })
 
   -- Uninstall hooks (via provider)
   vim.api.nvim_create_user_command('ClaudeUninstallHooks', function()
     agent_provider.uninstall_hooks()
-  end, { desc = 'Uninstall hooks for current provider (Claude)' })
+  end, { desc = 'Uninstall hooks for current provider' })
 
   -- Enable/refresh autocmds
   vim.api.nvim_create_user_command('ClaudeEventsEnable', function()

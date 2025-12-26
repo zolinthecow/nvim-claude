@@ -56,7 +56,7 @@ function M.update_claude_settings()
     os.remove(old_server_file)
   end
 
-  -- Install/update provider hook settings (Claude-only for now)
+  -- Install/update provider hook settings for current provider
   agent_provider.install_hooks()
 end
 

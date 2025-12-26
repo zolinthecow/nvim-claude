@@ -27,6 +27,13 @@ function M.register(claude)
         table.insert(details, 'background_spawn=' .. tostring(cfg.background_spawn))
         table.insert(details, 'pane_title=' .. tostring(cfg.pane_title))
       end
+    elseif provider_name == 'opencode' then
+      local ok, cfg = pcall(require, 'nvim-claude.agent_provider.providers.opencode.config')
+      if ok and cfg then
+        table.insert(details, 'spawn_command=' .. tostring(cfg.spawn_command))
+        table.insert(details, 'background_spawn=' .. tostring(cfg.background_spawn))
+        table.insert(details, 'pane_title=' .. tostring(cfg.pane_title))
+      end
     end
     if #details > 0 then table.insert(lines, 'Config: ' .. table.concat(details, ', ')) end
     table.insert(lines, '')

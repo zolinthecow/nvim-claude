@@ -43,7 +43,15 @@ function M.install()
 end
 
 function M.ensure_installed()
-  local venv = vim.fn.expand('~/.local/share/nvim/nvim-claude/rpc-env')
+  local venv = vim.env.NVIM_CLAUDE_RPC_ENV
+  if not venv or venv == '' then
+    local xdg = vim.env.XDG_DATA_HOME
+    if xdg and xdg ~= '' then
+      venv = xdg .. '/nvim/nvim-claude/rpc-env'
+    else
+      venv = vim.fn.expand('~/.local/share/nvim/nvim-claude/rpc-env')
+    end
+  end
   local py = venv .. '/bin/python'
   if vim.fn.filereadable(py) == 1 then
     local _ = vim.fn.system(string.format('%s -c "import pynvim" 2>/dev/null', py))
