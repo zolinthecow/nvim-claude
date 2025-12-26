@@ -63,6 +63,23 @@ load_provider = function(name)
       return impl
     end
   end
+  if name == 'opencode' then
+    for _, mod in ipairs({
+      'nvim-claude.agent_provider.providers.opencode',
+      'nvim-claude.agent_provider.providers.opencode.init',
+      'nvim-claude.agent_provider.providers.opencode.hooks',
+      'nvim-claude.agent_provider.providers.opencode.chat',
+      'nvim-claude.agent_provider.providers.opencode.background',
+      'nvim-claude.agent_provider.providers.opencode.config',
+    }) do
+      package.loaded[mod] = nil
+    end
+    local ok, impl = pcall(require, 'nvim-claude.agent_provider.providers.opencode')
+    if ok then
+      providers['opencode'] = impl
+      return impl
+    end
+  end
   return nil
 end
 

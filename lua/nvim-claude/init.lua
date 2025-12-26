@@ -38,6 +38,10 @@ M.config = {
       spawn_command = 'claude',
       background_spawn = 'claude --dangerously-skip-permissions',
     },
+    opencode = {
+      spawn_command = 'opencode',
+      background_spawn = 'opencode',
+    },
   },
 }
 
@@ -99,8 +103,8 @@ local function validate_config(config)
       ok = false
     end
     local name = config.provider.name or 'claude'
-    if name ~= 'claude' and name ~= 'codex' then
-      table.insert(errors, "provider.name must be 'claude' or 'codex'")
+    if name ~= 'claude' and name ~= 'codex' and name ~= 'opencode' then
+      table.insert(errors, "provider.name must be 'claude', 'codex', or 'opencode'")
       ok = false
     end
     local opts = config.provider[name]
@@ -214,7 +218,7 @@ function M.setup(user_config)
   -- Initialize submodules with config
   M.tmux.setup(M.config.tmux)
   M.git.setup(M.config.agents)
-  -- Initialize provider system (Claude-only for now); thread provider-specific options
+  -- Initialize provider system and thread provider-specific options
   do
     local prov = M.config.provider or {}
     local name = prov.name or 'claude'

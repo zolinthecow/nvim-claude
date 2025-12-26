@@ -33,7 +33,13 @@ fi
 PYTHON_VERSION=$("$PYTHON_CMD" --version 2>&1 | cut -d' ' -f2)
 echo "✅ Found suitable Python: $PYTHON_CMD (version $PYTHON_VERSION)"
 
-RPC_VENV_PATH="$HOME/.local/share/nvim/nvim-claude/rpc-env"
+if [ -n "$NVIM_CLAUDE_RPC_ENV" ]; then
+    RPC_VENV_PATH="$NVIM_CLAUDE_RPC_ENV"
+elif [ -n "$XDG_DATA_HOME" ]; then
+    RPC_VENV_PATH="$XDG_DATA_HOME/nvim/nvim-claude/rpc-env"
+else
+    RPC_VENV_PATH="$HOME/.local/share/nvim/nvim-claude/rpc-env"
+fi
 
 echo '📦 Creating RPC Python virtual environment...'
 "$PYTHON_CMD" -m venv "$RPC_VENV_PATH"
