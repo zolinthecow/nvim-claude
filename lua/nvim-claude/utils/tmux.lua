@@ -155,8 +155,12 @@ function M.send_to_pane(pane_id, text)
 end
 
 -- Send multi-line text to a pane (for batched content)
-function M.send_text_to_pane(pane_id, text)
+-- Options:
+--   bracketed_paste: use bracketed paste mode (default: false)
+--                    This prevents terminals from interpreting the paste as commands
+function M.send_text_to_pane(pane_id, text, opts)
   if not pane_id then return false end
+  opts = opts or {}
   local tmpfile = os.tmpname()
   local file = io.open(tmpfile, 'w')
   if not file then
@@ -165,7 +169,8 @@ function M.send_text_to_pane(pane_id, text)
   end
   file:write(text)
   file:close()
-  local cmd = string.format("tmux load-buffer -t %s '%s' && tmux paste-buffer -t %s && rm '%s'", pane_id, tmpfile, pane_id, tmpfile)
+  local paste_flags = opts.bracketed_paste and '-p' or ''
+  local cmd = string.format("tmux load-buffer '%s' && tmux paste-buffer %s -t %s && rm '%s'", tmpfile, paste_flags, pane_id, tmpfile)
   local _, err = utils.exec(cmd)
   if err then
     os.remove(tmpfile)

@@ -25,7 +25,10 @@ function M.send_text(text)
   if not pane then
     return false
   end
-  return tmux.send_text_to_pane(pane, text)
+  -- Use bracketed paste mode for opencode to prevent:
+  -- 1. Auto-submission when pasting (opencode interprets regular paste end as submit)
+  -- 2. Newlines being collapsed
+  return tmux.send_text_to_pane(pane, text, { bracketed_paste = true })
 end
 
 local function spawn_targeted_pane(base_pane, initial_text)
@@ -52,7 +55,8 @@ local function spawn_targeted_pane(base_pane, initial_text)
   if initial_text and initial_text ~= '' then
     vim.defer_fn(function()
       if targeted_pane_id and tmux.pane_exists(targeted_pane_id) then
-        tmux.send_text_to_pane(targeted_pane_id, initial_text)
+        -- Use bracketed paste for opencode to preserve newlines and prevent auto-submit
+        tmux.send_text_to_pane(targeted_pane_id, initial_text, { bracketed_paste = true })
       end
     end, delay)
   end
@@ -66,7 +70,8 @@ function M.ensure_targeted_pane(initial_text)
   end
   if targeted_pane_id and tmux.pane_exists(targeted_pane_id) then
     if initial_text and initial_text ~= '' then
-      tmux.send_text_to_pane(targeted_pane_id, initial_text)
+      -- Use bracketed paste for opencode to preserve newlines and prevent auto-submit
+      tmux.send_text_to_pane(targeted_pane_id, initial_text, { bracketed_paste = true })
     end
     return targeted_pane_id
   end
@@ -77,7 +82,8 @@ function M.send_targeted_text(text)
   if not targeted_pane_id or not tmux.pane_exists(targeted_pane_id) then
     return false
   end
-  return tmux.send_text_to_pane(targeted_pane_id, text)
+  -- Use bracketed paste for opencode to preserve newlines and prevent auto-submit
+  return tmux.send_text_to_pane(targeted_pane_id, text, { bracketed_paste = true })
 end
 
 function M.get_targeted_pane()
