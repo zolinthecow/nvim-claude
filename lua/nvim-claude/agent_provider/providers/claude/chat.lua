@@ -25,7 +25,7 @@ function M.send_text(text)
   if not pane then
     return false
   end
-  return tmux.send_text_to_pane(pane, text)
+  return tmux.send_text_to_pane(pane, text, { bracketed_paste = true })
 end
 
 local function spawn_targeted_pane(base_pane, initial_text)
