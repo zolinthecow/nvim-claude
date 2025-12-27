@@ -155,15 +155,9 @@ function M.send_to_pane(pane_id, text)
 end
 
 -- Send multi-line text to a pane (for batched content)
--- Options:
---   bracketed_paste: use bracketed paste mode (default: false)
---                    This prevents terminals from interpreting the paste as commands
-function M.send_text_to_pane(pane_id, text, opts)
+-- Uses bracketed paste mode (-p) to preserve newlines and prevent auto-submit
+function M.send_text_to_pane(pane_id, text)
   if not pane_id then return false end
-  opts = opts or {}
-  
-  -- Use set-buffer + paste-buffer with -p flag, running in target pane context
-  -- to avoid display artifacts from shell evaluation bleeding across panes
   local tmpfile = os.tmpname()
   local file = io.open(tmpfile, 'w')
   if not file then
@@ -172,21 +166,7 @@ function M.send_text_to_pane(pane_id, text, opts)
   end
   file:write(text)
   file:close()
-  
-  -- Read file content and use set-buffer (stdin) to avoid any shell expansion
-  local cmd
-  if opts.bracketed_paste then
-    -- Use cat to pipe directly to set-buffer, then paste with -p
-    cmd = string.format(
-      "cat '%s' | tmux set-buffer -b nvimclaudepaste -- - && tmux paste-buffer -p -d -b nvimclaudepaste -t %s; rm -f '%s'",
-      tmpfile, pane_id, tmpfile
-    )
-  else
-    cmd = string.format(
-      "cat '%s' | tmux set-buffer -b nvimclaudepaste -- - && tmux paste-buffer -d -b nvimclaudepaste -t %s; rm -f '%s'",
-      tmpfile, pane_id, tmpfile
-    )
-  end
+  local cmd = string.format("tmux load-buffer '%s' && tmux paste-buffer -p -t %s && rm '%s'", tmpfile, pane_id, tmpfile)
   local _, err = utils.exec(cmd)
   if err then
     os.remove(tmpfile)
