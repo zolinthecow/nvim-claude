@@ -127,6 +127,18 @@ function M.exec(cmd)
   end
 end
 
+-- Write content to a temp file, returning the path (caller must clean up)
+function M.write_temp_file(content)
+  local tmpfile = os.tmpname()
+  local f = io.open(tmpfile, 'w')
+  if not f then
+    return nil
+  end
+  f:write(content or '')
+  f:close()
+  return tmpfile
+end
+
 -- Check if tmux is available
 function M.has_tmux()
   local result = M.exec 'which tmux'

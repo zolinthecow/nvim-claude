@@ -33,18 +33,9 @@ function M.apply_diff_visualization(bufnr, diff_data)
     local new_line_num = hunk.new_start -- 1-indexed line number in new file
     local old_line_num = hunk.old_start -- 1-indexed line number in old file
 
-    -- First, detect if this hunk is a replacement (has both - and + lines)
-    local has_deletions = false
-    local has_additions = false
-    for _, diff_line in ipairs(hunk.lines or {}) do
-      if diff_line:match '^%-' then
-        has_deletions = true
-      end
-      if diff_line:match '^%+' then
-        has_additions = true
-      end
-    end
-    local is_replacement = has_deletions and has_additions
+    -- Track the anchor line for deletions (where in the new file they should appear)
+    -- This is the line in the new file where deletions occurred
+    local deletion_anchor = hunk.new_start - 1 -- 0-indexed
 
     for _, diff_line in ipairs(hunk.lines or {}) do
       if diff_line:match '^%+' then
@@ -53,24 +44,19 @@ function M.apply_diff_visualization(bufnr, diff_data)
         new_line_num = new_line_num + 1
         -- Don't advance old_line_num for additions
       elseif diff_line:match '^%-' then
-        -- This is a deleted line - show as virtual text above current position
-        -- For replacements, the deletion should appear above the addition
-        local del_line = new_line_num - 1
-        if del_line < 0 then del_line = 0 end
-        if is_replacement and #additions > 0 then
-          -- Place deletion above the first addition
-          del_line = additions[1]
-        end
+        -- This is a deleted line - show as virtual text
+        -- Use the current position in the new file (before any additions in this hunk)
         table.insert(deletions, {
-          line = del_line, -- 0-indexed
+          line = deletion_anchor, -- 0-indexed, where in new file this deletion belongs
           text = diff_line:sub(2),
         })
         old_line_num = old_line_num + 1
         -- Don't advance new_line_num for deletions
       elseif diff_line:match '^%s' then
-        -- Context line - advance both
+        -- Context line - advance both and update deletion anchor
         new_line_num = new_line_num + 1
         old_line_num = old_line_num + 1
+        deletion_anchor = new_line_num - 1 -- Update anchor to after context
       end
     end
 
@@ -86,7 +72,8 @@ function M.apply_diff_visualization(bufnr, diff_data)
 
     -- Show deletions as a single virt_lines block for stability (multiple lines)
     if #deletions > 0 then
-      local anchor = (#additions > 0 and additions[1]) or 0
+      -- Use first addition line if available, otherwise use the deletion's anchor position
+      local anchor = (#additions > 0 and additions[1]) or deletions[1].line
       if anchor < 0 then anchor = 0 end
       if anchor >= #buf_lines then anchor = math.max(0, #buf_lines - 1) end
 

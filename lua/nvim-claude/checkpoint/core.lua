@@ -85,16 +85,26 @@ function M.create_checkpoint(prompt_text, git_root)
   if #prompt_preview < #(prompt_text or '') then
     prompt_preview = prompt_preview .. '...'
   end
+  -- Sanitize preview for display (remove potentially problematic chars)
+  local safe_preview = prompt_preview:gsub('[`$"\\]', '')
   
-  local commit_message = string.format('[nvim-claude checkpoint] %s - %s', timestamp, prompt_preview)
+  local commit_message = string.format('[nvim-claude checkpoint] %s - %s', timestamp, safe_preview)
   if prompt_text and #prompt_text > #prompt_preview then
     commit_message = commit_message .. '\n\n' .. prompt_text
   end
 
-  -- Create commit object without updating HEAD
-  local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -m %q', 
-    git_root, tree_sha, parent_sha, commit_message)
+  -- Write commit message to temp file to avoid shell interpretation of user content
+  local msg_file = utils.write_temp_file(commit_message)
+  if not msg_file then
+    logger.error('checkpoint.create_checkpoint', 'Failed to write commit message temp file')
+    return nil
+  end
+
+  -- Create commit object without updating HEAD, reading message from file
+  local commit_cmd = string.format('cd "%s" && git commit-tree %s -p %s -F %q', 
+    git_root, tree_sha, parent_sha, msg_file)
   local commit_sha, commit_err = utils.exec(commit_cmd)
+  os.remove(msg_file)
   if commit_err then
     logger.error('checkpoint.create_checkpoint', 'Failed to create commit object', { error = commit_err })
     return nil

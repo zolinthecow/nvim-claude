@@ -7,11 +7,13 @@ local utils = require 'nvim-claude.utils'
 
 local function decode_b64(s)
   if not s or s == '' then return '' end
-  -- Use shell base64 for portability; ensure we don't add trailing newline
-  local cmd = string.format("printf '%%s' %s | base64 -d 2>/dev/null", vim.fn.shellescape(s))
-  local out = vim.fn.system(cmd)
-  out = (out or ''):gsub('\n$', '')
-  return out
+  -- Use Neovim's built-in base64 decode to avoid any shell interpretation
+  local ok, decoded = pcall(vim.base64.decode, s)
+  if ok and decoded then
+    return decoded
+  end
+  -- Fallback: try vim.fn.system but this shouldn't be needed
+  return ''
 end
 
 -- Pre-tool-use (file path optional)

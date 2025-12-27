@@ -137,9 +137,17 @@ const callAdapter = async ($, baseDir, targetFile, method, value) => {
     ? `luaeval("require('nvim-claude.events.adapter').${method}()")`
     : `luaeval("require('nvim-claude.events.adapter').${method}('${payload}')")`
   const target = targetFile || baseDir
-  const shell = target ? $.env({ TARGET_FILE: target }) : $
   try {
-    await shell.nothrow()`${rpcPath} --remote-expr ${expr}`
+    // Use child_process.spawn directly to avoid any shell interpretation
+    const { spawn } = await import('child_process')
+    await new Promise((resolve) => {
+      const proc = spawn(rpcPath, ['--remote-expr', expr], {
+        env: { ...process.env, TARGET_FILE: target },
+        stdio: 'ignore',
+      })
+      proc.on('close', resolve)
+      proc.on('error', resolve)
+    })
   } catch (error) {
     // Ignore RPC failures to avoid disrupting OpenCode
   }
