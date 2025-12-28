@@ -1,0 +1,3 @@
+[submodule "lua/nvim-claude/cursor_cpp"]
+	path = lua/nvim-claude/cursor_cpp
+	url = https://github.com/zolinthecow/cursor_cpp.git

@@ -43,6 +43,12 @@ M.config = {
       background_spawn = 'opencode',
     },
   },
+  cursor_cpp = {
+    enabled = false, -- Set to true to enable Cursor tab completion
+    auto_trigger = false, -- Auto-trigger on text change (can be slow)
+    trigger_on_accept = true, -- Trigger completion immediately after accept
+    debounce_ms = 300, -- Debounce time for auto-trigger
+  },
 }
 
 -- Validate configuration
@@ -261,6 +267,18 @@ function M.setup(user_config)
   -- Set up keymappings if enabled
   if M.config.mappings then
     require('nvim-claude.mappings').setup(M.config.mappings, nil)
+  end
+
+  -- Set up Cursor CPP tab completion if enabled
+  if M.config.cursor_cpp and M.config.cursor_cpp.enabled then
+    local ok, cursor_cmp = pcall(require, 'nvim-claude.cursor_cpp.cmp_source')
+    if ok then
+      cursor_cmp.setup({
+        auto_trigger = M.config.cursor_cpp.auto_trigger,
+        trigger_on_accept = M.config.cursor_cpp.trigger_on_accept,
+        debounce_ms = M.config.cursor_cpp.debounce_ms,
+      })
+    end
   end
 
   -- Plugin loaded successfully
