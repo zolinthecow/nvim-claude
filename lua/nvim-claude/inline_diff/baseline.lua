@@ -57,11 +57,16 @@ function M.get_baseline_ref(git_root)
   if cache[git_root] then
     local cached = sanitize_ref(cache[git_root])
     if cached then
-      cache[git_root] = cached
-      return cached
+      local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, cached)
+      local _, exists_err = utils.exec(exists_cmd)
+      if not exists_err then
+        cache[git_root] = cached
+        return cached
+      end
     end
     cache[git_root] = nil
   end
+
 
   local state = persistence.get_state(git_root)
   if state and (state.baseline_ref or state.stash_ref) then
