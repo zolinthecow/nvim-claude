@@ -7,9 +7,6 @@ local utils = require 'nvim-claude.utils'
 local persistence = require 'nvim-claude.inline_diff.persistence'
 local project_state = require 'nvim-claude.project-state'
 
--- Simple in-process cache keyed by project root
-local cache = {}
-
 local function sanitize_ref(ref)
   if not ref then return nil end
   if type(ref) ~= 'string' then ref = tostring(ref) end
@@ -26,7 +23,6 @@ local function clear_persisted_ref(git_root, raw_ref, source)
     ref = raw_ref,
     source = source,
   })
-  cache[git_root] = nil
   local state = persistence.get_state(git_root) or {}
   if state.baseline_ref or state.stash_ref then
     state.baseline_ref = nil
@@ -54,20 +50,6 @@ function M.get_baseline_ref(git_root)
   git_root = git_root or project_root_or_nil()
   if not git_root then return nil end
 
-  if cache[git_root] then
-    local cached = sanitize_ref(cache[git_root])
-    if cached then
-      local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, cached)
-      local _, exists_err = utils.exec(exists_cmd)
-      if not exists_err then
-        cache[git_root] = cached
-        return cached
-      end
-    end
-    cache[git_root] = nil
-  end
-
-
   local state = persistence.get_state(git_root)
   if state and (state.baseline_ref or state.stash_ref) then
     local persisted_raw = state.baseline_ref or state.stash_ref
@@ -77,7 +59,6 @@ function M.get_baseline_ref(git_root)
       local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, persisted)
       local _, exists_err = utils.exec(exists_cmd)
       if not exists_err then
-        cache[git_root] = persisted
         return persisted
       end
       clear_persisted_ref(git_root, persisted_raw, 'missing_object')
@@ -94,7 +75,6 @@ function M.get_baseline_ref(git_root)
       local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, sanitized)
       local _, exists_err = utils.exec(exists_cmd)
       if not exists_err then
-        cache[git_root] = sanitized
         persistence.save_state({ baseline_ref = sanitized })
         return sanitized
       end
@@ -116,8 +96,6 @@ function M.set_baseline_ref(git_root, ref)
     logger.error('baseline', 'Invalid baseline ref rejected', { ref = ref, git_root = git_root })
     return
   end
-
-  cache[git_root] = sanitize_ref(ref)
 
   if ref and ref:match('^[a-f0-9]+$') then
     local cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, ref)
