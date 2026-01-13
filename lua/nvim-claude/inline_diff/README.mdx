@@ -1,0 +1,41 @@
+# Inline diff system
+
+Inline diffs are driven by a git baseline commit (`refs/nvim-claude/baseline`). The inline-diff facade delegates to internal modules for diff computation, rendering, and accept/reject operations.
+
+## Baseline handling
+
+The baseline commit is created from a temporary git index snapshot. Subsequent edits update files inside that baseline commit so diffs compare the working tree against the original state.
+
+```lua
+local inline_diff = require('nvim-claude.inline_diff')
+
+local result = inline_diff.compute_diff('alpha\n', 'alpha\nbeta\n')
+assert(#result.hunks == 1)
+
+local found = false
+for _, line in ipairs(result.hunks[1].lines or {}) do
+  if line == '+beta' then
+    found = true
+  end
+end
+assert(found)
+```
+
+## Accept / reject flows
+
+Accepting or rejecting hunks updates the baseline commit and clears visuals. These APIs live on the facade to keep callers isolated from internal modules.
+
+```lua
+local inline_diff = require('nvim-claude.inline_diff')
+
+assert(type(inline_diff.accept_current_hunk) == 'function')
+assert(type(inline_diff.reject_current_hunk) == 'function')
+```
+
+## Persistence
+
+Diff state and baseline refs persist via `inline_diff/persistence.lua` and `project-state.lua`.
+
+```sh
+test -f 'lua/nvim-claude/inline_diff/persistence.lua'
+```

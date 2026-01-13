@@ -1,0 +1,27 @@
+# Checkpoints
+
+Checkpoints snapshot the git state for each user prompt. The facade exposes simple status helpers while the core module manages git refs and preview state.
+
+## Status snapshot
+
+Use `checkpoint.get_status()` to inspect the current preview state stored in project state.
+
+```lua
+local checkpoint = require('nvim-claude.checkpoint')
+local project_state = require('nvim-claude.project-state')
+local utils = require('nvim-claude.utils')
+
+local root = utils.get_project_root()
+project_state.set(root, 'checkpoint_state', {
+  mode = 'preview',
+  preview_checkpoint = 'cp_demo',
+  original_ref = 'deadbeef',
+  preview_stash = 'stash@{0}'
+})
+
+local status = checkpoint.get_status()
+assert(status.mode == 'preview')
+assert(status.preview_checkpoint == 'cp_demo')
+
+project_state.set(root, 'checkpoint_state', nil)
+```

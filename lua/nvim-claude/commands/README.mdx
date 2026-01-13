@@ -1,0 +1,14 @@
+# Command registration
+
+The commands module aggregates command registration for feature areas. It delegates to each subsystem's command registrar.
+
+## Registering commands
+
+```lua
+local commands = require('nvim-claude.commands')
+
+commands.register_all({})
+
+local registered = vim.api.nvim_get_commands({})
+assert(registered['ClaudeChat'] ~= nil)
+```

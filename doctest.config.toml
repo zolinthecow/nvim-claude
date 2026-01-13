@@ -1,0 +1,22 @@
+include = [
+  'docs/**/*.md',
+  'docs/**/*.mdx',
+  'lua/nvim-claude/**/README.mdx',
+  'doctest/docs/**/*.md',
+  'doctest/docs/**/*.mdx',
+  'doctest/src/**/*.md',
+  'doctest/src/**/*.mdx',
+  'shim/**/*.mdx'
+]
+exclude = ['**/node_modules/**', '**/dist/**', '**/.git/**']
+timeout_ms = 20000
+unknown_language = 'skip'
+
+[runners]
+sh = '/bin/sh -e'
+bash = '/bin/sh -e'
+js = 'bun'
+ts = 'bun'
+lua = 'nvim'
+
+[env]

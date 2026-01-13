@@ -1,0 +1,75 @@
+# nvim-claude architecture notes
+
+These docs are colocated with code and are meant to stay executable. Every fenced block is a doctest unless it opts out.
+
+## Core principles
+
+- Facades (`nvim-claude.events`, `nvim-claude.inline_diff`, `nvim-claude.utils`) are the public API.
+- Inline diffs are backed by a git baseline commit at `refs/nvim-claude/baseline`.
+- Project state is stored globally under `stdpath('data')/nvim-claude/projects`.
+
+## Project docs
+
+- `docs/architecture.mdx`
+- `docs/coding-guidelines.mdx`
+- `docs/debugging.mdx`
+- `docs/diagnostics.mdx`
+- `docs/testing.mdx`
+- `docs/tasks.mdx`
+- `shim/README.mdx`
+
+## Module docs
+
+- `lua/nvim-claude/README.mdx`
+- `lua/nvim-claude/events/README.mdx`
+- `lua/nvim-claude/inline_diff/README.mdx`
+- `lua/nvim-claude/utils/README.mdx`
+- `lua/nvim-claude/rpc/README.mdx`
+- `lua/nvim-claude/background_agent/README.mdx`
+- `lua/nvim-claude/checkpoint/README.mdx`
+- `lua/nvim-claude/agent_provider/README.mdx`
+- `lua/nvim-claude/lsp_mcp/README.mdx`
+- `lua/nvim-claude/chat/README.mdx`
+- `lua/nvim-claude/commands/README.mdx`
+- `lua/nvim-claude/debug/README.mdx`
+- `lua/nvim-claude/cursor_cpp/README.mdx`
+
+## Facade usage
+
+```lua
+local events = require('nvim-claude.events')
+local inline_diff = require('nvim-claude.inline_diff')
+local utils = require('nvim-claude.utils')
+
+assert(type(events.setup) == 'function')
+assert(type(inline_diff.compute_diff) == 'function')
+assert(type(utils.get_project_root) == 'function')
+```
+
+## Sanity checks
+
+```sh
+test -f 'docs/architecture.mdx'
+test -f 'docs/coding-guidelines.mdx'
+test -f 'docs/debugging.mdx'
+test -f 'docs/diagnostics.mdx'
+test -f 'docs/testing.mdx'
+test -f 'docs/tasks.mdx'
+test -f 'shim/README.mdx'
+```
+
+```sh
+test -f 'lua/nvim-claude/README.mdx'
+test -f 'lua/nvim-claude/events/README.mdx'
+test -f 'lua/nvim-claude/inline_diff/README.mdx'
+test -f 'lua/nvim-claude/utils/README.mdx'
+test -f 'lua/nvim-claude/rpc/README.mdx'
+test -f 'lua/nvim-claude/background_agent/README.mdx'
+test -f 'lua/nvim-claude/checkpoint/README.mdx'
+test -f 'lua/nvim-claude/agent_provider/README.mdx'
+test -f 'lua/nvim-claude/lsp_mcp/README.mdx'
+test -f 'lua/nvim-claude/chat/README.mdx'
+test -f 'lua/nvim-claude/commands/README.mdx'
+test -f 'lua/nvim-claude/debug/README.mdx'
+test -f 'lua/nvim-claude/cursor_cpp/README.mdx'
+```

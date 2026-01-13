@@ -1,0 +1,23 @@
+# Testing
+
+Primary checks are doctests and manual Neovim workflows.
+
+## Doctest run
+
+```sh
+test -f 'doctest.config.toml'
+```
+
+```sh no-doctest
+bun doctest/src/cli.ts --config doctest.config.toml
+```
+
+## Manual plugin test
+
+```sh no-doctest
+nvim
+```
+
+```sh no-doctest
+:source lua/nvim-claude/init.lua
+```

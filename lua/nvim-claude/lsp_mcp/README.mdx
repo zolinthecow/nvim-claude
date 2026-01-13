@@ -1,0 +1,14 @@
+# LSP/MCP bridge
+
+The MCP bridge runs diagnostics in a headless Neovim instance. The facade exposes install helpers and a diagnostics API without inline-diff coupling.
+
+## Diagnostics payloads
+
+```lua
+local mcp = require('nvim-claude.lsp_mcp')
+
+local json = mcp.diagnostics.get_for_files({})
+local decoded = vim.json.decode(json)
+
+assert(type(decoded) == 'table')
+```

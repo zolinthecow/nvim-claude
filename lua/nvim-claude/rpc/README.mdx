@@ -1,0 +1,21 @@
+# RPC client
+
+The RPC client is a thin wrapper around a Python `pynvim` client. `:ClaudeInstallRPC` runs `rpc/install.sh` to build the virtual environment and dependencies, while `rpc/nvim-rpc.sh` resolves the environment before launching `nvim_rpc.py`.
+
+## Environment discovery
+
+```sh
+test -f 'rpc/nvim-rpc.sh'
+grep -q 'NVIM_CLAUDE_RPC_ENV' 'rpc/nvim-rpc.sh'
+```
+
+## Neovim integration
+
+The Lua side checks for an existing venv and installs if missing.
+
+```lua
+local rpc = require('nvim-claude.rpc')
+
+assert(type(rpc.install) == 'function')
+assert(type(rpc.ensure_installed) == 'function')
+```

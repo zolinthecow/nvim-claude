@@ -1,0 +1,38 @@
+# Core shared modules
+
+This folder holds shared state and helpers that every subsystem relies on. These files are intentionally small and act as glue between features.
+
+## Project state
+
+`project-state.lua` stores per-project data under a global `stdpath('data')/nvim-claude/projects` directory. Feature modules should read/write through this API rather than creating their own state files.
+
+```lua
+local project_state = require('nvim-claude.project-state')
+local tmp = vim.fn.tempname()
+vim.fn.mkdir(tmp, 'p')
+
+project_state.set(tmp, 'demo', { ok = true })
+local value = project_state.get(tmp, 'demo')
+assert(value.ok == true)
+```
+
+## Logging
+
+`logger.lua` is used across modules to emit structured diagnostics.
+
+```lua
+local logger = require('nvim-claude.logger')
+assert(type(logger.debug) == 'function')
+```
+
+## Settings
+
+`settings-updater.lua` and `mappings.lua` provide shared configuration and keymap wiring.
+
+```lua
+local settings = require('nvim-claude.settings-updater')
+local mappings = require('nvim-claude.mappings')
+
+assert(type(settings.update_claude_settings) == 'function')
+assert(type(mappings.setup) == 'function')
+```
