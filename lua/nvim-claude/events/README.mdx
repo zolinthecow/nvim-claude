@@ -1,0 +1,27 @@
+# Events system
+
+The events layer is the hook boundary between CLI tool usage and the inline-diff engine. The `events` facade exposes a small API, while `events.core` handles baseline creation, edited-file tracking, and refresh scheduling.
+
+## Key flows
+
+- `pre_tool_use` ensures a baseline exists and captures pre-edit content.
+- `post_tool_use` records edited files and refreshes inline diffs when buffers are loaded.
+- `track_deleted_file` records deletions before files disappear.
+- `user_prompt_submit` creates checkpoints tied to user prompts.
+
+```lua
+local events = require('nvim-claude.events')
+local root = vim.fn.getcwd()
+
+events.clear_edited_files(root)
+events.add_edited_file(root, 'lua/nvim-claude/init.lua')
+
+local edited = events.list_edited_files(root)
+assert(vim.tbl_contains(edited, 'lua/nvim-claude/init.lua'))
+
+events.clear_edited_files(root)
+```
+
+## Facade discipline
+
+Other modules should import `require('nvim-claude.events')` and avoid reaching into internal files directly.

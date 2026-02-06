@@ -1,0 +1,24 @@
+# Architecture overview
+
+This repo uses a small set of core systems with strict facades between them. Inline diffs, checkpoints, and MCP diagnostics all rely on git-backed state in `project-state.lua`.
+
+## Core systems
+
+- Inline diffs compare the working tree against a baseline commit stored at `refs/nvim-claude/baseline`.
+- Events hooks create the baseline and track edited files.
+- Checkpoints store prompt snapshots under `refs/nvim-claude/checkpoints/*`.
+- Background agents run in isolated git worktrees with a per-project registry.
+- MCP diagnostics run in headless Neovim to avoid UI freezes.
+
+## Provider layer
+
+`agent_provider` selects a provider (`claude`, `codex`, `opencode`) and exposes chat/background helpers through a single facade.
+
+## State location
+
+```lua
+local project_state = require('nvim-claude.project-state')
+
+local dir = project_state.get_global_state_dir()
+assert(type(dir) == 'string' and dir:match('nvim%-claude/projects'))
+```

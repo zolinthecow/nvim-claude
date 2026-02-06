@@ -1,0 +1,12 @@
+# Debugging
+
+Use `:ClaudeDebugLogs` to locate project logs, `:ClaudeViewLog` to open them, and `:ClaudeClearLog` to reset.
+
+## Log file path
+
+```lua
+local logger = require('nvim-claude.logger')
+
+local log_file = logger.get_log_file()
+assert(type(log_file) == 'string' and log_file ~= '')
+```

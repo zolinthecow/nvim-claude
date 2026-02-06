@@ -1,0 +1,18 @@
+# Chat selection helpers
+
+Selection helpers format buffer ranges into fenced blocks for chat payloads.
+
+## Formatting a selection
+
+```lua
+local selection = require('nvim-claude.chat.selection')
+
+local buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'local x = 1', 'return x' })
+vim.api.nvim_buf_set_name(buf, 'scratch.lua')
+vim.bo[buf].filetype = 'lua'
+
+local payload = selection.format_selection(buf, 1, 2)
+assert(payload.code_block == 'local x = 1\nreturn x')
+assert(payload.message:match('```lua'))
+```

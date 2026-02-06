@@ -1,0 +1,15 @@
+# FS shim
+
+The shim intercepts file writes/deletes to create baselines before agent edits land. It is optional and currently macOS-specific.
+
+## Build script
+
+```sh
+test -f 'shim/build.sh'
+```
+
+## Manual build
+
+```sh no-doctest
+./shim/build.sh
+```

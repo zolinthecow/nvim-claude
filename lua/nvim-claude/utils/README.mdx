@@ -1,0 +1,25 @@
+# Utils facade
+
+`nvim-claude.utils` is the shared toolbox. The facade merges `utils.core` and attaches namespaced modules like `utils.git` and `utils.tmux`.
+
+## Core helpers
+
+```lua
+local utils = require('nvim-claude.utils')
+local root = utils.get_project_root()
+
+assert(type(root) == 'string' and root ~= '')
+assert(utils.agent_dirname('demo task'):match('^agent%-'))
+```
+
+## Namespaced modules
+
+`utils.git` owns git worktree helpers used by background agents. `utils.tmux` adds tmux detection helpers.
+
+```lua
+local utils = require('nvim-claude.utils')
+
+assert(type(utils.git) == 'table')
+assert(type(utils.git.supports_worktrees) == 'function')
+assert(type(utils.tmux) == 'table')
+```

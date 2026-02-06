@@ -1,0 +1,17 @@
+# Coding guidelines
+
+The plugin uses a strict facade pattern. Import other features through their `init.lua` facade and keep internal modules private.
+
+## Facade rule of thumb
+
+```lua
+local events = require('nvim-claude.events')
+local inline_diff = require('nvim-claude.inline_diff')
+
+assert(type(events.pre_tool_use) == 'function')
+assert(type(inline_diff.accept_all_files) == 'function')
+```
+
+## Shell hooks
+
+Shell wrappers must call the events facade via `rpc/nvim-rpc.sh` and `events.adapter`. Avoid calling internal modules from shell.

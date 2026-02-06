@@ -1,0 +1,19 @@
+# Agent providers
+
+Agent providers abstract Claude/Codex/OpenCode integrations behind a single facade. The provider handles hooks, chat transport, and background agent spawning.
+
+## Selecting a provider
+
+```lua
+local agent_provider = require('nvim-claude.agent_provider')
+
+agent_provider.setup({
+  provider = 'claude',
+  claude = { pane_title = 'doctest-pane' }
+})
+
+assert(agent_provider.name() == 'claude')
+
+local window_name = agent_provider.background.generate_window_name()
+assert(type(window_name) == 'string' and window_name ~= '')
+```

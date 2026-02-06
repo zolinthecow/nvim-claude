@@ -1,0 +1,22 @@
+# Background agents
+
+Background agents run Claude tasks in isolated git worktrees and track progress in a registry. The facade (`nvim-claude.background_agent`) exposes registry helpers, UI entrypoints, and runner actions without leaking internal modules.
+
+## Registry formatting
+
+Use `registry_format` to render an agent summary for UI lists or statusline output.
+
+```lua
+local background_agent = require('nvim-claude.background_agent')
+
+local formatted = background_agent.registry_format({
+  status = 'active',
+  task = 'Refactor inline diff rendering',
+  window_name = 'claude-chat',
+  start_time = os.time() - 30,
+  progress = 'Planning'
+})
+
+assert(formatted:match('%[ACTIVE%]'))
+assert(formatted:match('Refactor'))
+```

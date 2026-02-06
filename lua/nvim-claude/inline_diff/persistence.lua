@@ -28,8 +28,8 @@ function M.set_state(git_root, state)
 end
 
 -- Merge and persist state updates (baseline_ref, claude_edited_files, etc.)
-function M.save_state(state_data)
-  local git_root = project_root_or_nil()
+function M.save_state(state_data, git_root)
+  git_root = git_root or project_root_or_nil()
   if not git_root then return false end
 
   local current = project_state.get(git_root, 'inline_diff_state') or {}

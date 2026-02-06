@@ -1,0 +1,14 @@
+# Debug commands
+
+Debug commands surface logs and agent status in floating windows or messages.
+
+## Registering debug commands
+
+```lua
+local debug_commands = require('nvim-claude.debug.commands')
+
+debug_commands.register({})
+
+local registered = vim.api.nvim_get_commands({})
+assert(registered['ClaudeDebug'] ~= nil)
+```
