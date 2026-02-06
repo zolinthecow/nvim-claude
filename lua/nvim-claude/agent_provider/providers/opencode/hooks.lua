@@ -1,4 +1,4 @@
--- OpenCode provider: plugin installer for .opencode/plugin
+-- OpenCode provider: plugin installer for .opencode/plugins
 
 local M = {}
 
@@ -25,11 +25,11 @@ local function ensure_plugin_dir()
   if not project_root then
     return nil, 'Not in a git repository'
   end
-  local plugin_dir = project_root .. '/.opencode/plugin'
+  local plugin_dir = project_root .. '/.opencode/plugins'
   if vim.fn.isdirectory(plugin_dir) == 0 then
     local ok = vim.fn.mkdir(plugin_dir, 'p')
     if ok ~= 1 then
-      return nil, 'Failed to create .opencode/plugin directory'
+      return nil, 'Failed to create .opencode/plugins directory'
     end
   end
   return plugin_dir
@@ -108,6 +108,24 @@ const extractChangedFiles = (baseDir, metadata) => {
   return files.map((file) => normalizePath(baseDir, file)).filter(Boolean)
 }
 
+const collectTargets = (baseDir, args, metadata) => {
+  const targets = new Set()
+  const filePath = normalizePath(baseDir, extractFilePath(args))
+  if (filePath) targets.add(filePath)
+  const patchText = extractPatchText(args)
+  if (patchText) {
+    for (const pathItem of extractPatchPaths(baseDir, patchText)) {
+      targets.add(pathItem)
+    }
+  }
+  if (metadata) {
+    for (const pathItem of extractChangedFiles(baseDir, metadata)) {
+      targets.add(pathItem)
+    }
+  }
+  return Array.from(targets)
+}
+
 const isRmCommand = (command) => typeof command === 'string' && /^\s*rm\b/.test(command)
 
 const buildLsCommand = (command) => command.replace(/^\s*rm\b/, 'ls -d')
@@ -162,29 +180,18 @@ export const NvimClaude = async ({ directory, worktree, $ }) => {
     'tool.execute.before': async (input, output) => {
       const callId = input && input.callID
       if (callId) {
-        pendingCalls.set(callId, { tool: input.tool, args: output && output.args })
+        const storedArgs = (output && output.args) || (input && input.args) || null
+        pendingCalls.set(callId, { tool: input.tool, args: storedArgs })
       }
-      const tool = input && input.tool
-      const args = output && output.args ? output.args : {}
-      if (tool === 'edit' || tool === 'write') {
-        const filePath = normalizePath(baseDir, extractFilePath(args))
-        if (filePath) {
-          await callAdapter($, baseDir, filePath, 'pre_tool_use_b64', filePath)
-        }
-        return
+      const args = (output && output.args) || (input && input.args) || {}
+      const targets = collectTargets(baseDir, args)
+      for (const filePath of targets) {
+        await callAdapter($, baseDir, filePath, 'pre_tool_use_b64', filePath)
       }
-      if (tool === 'patch') {
-        const patchText = extractPatchText(args)
-        const files = extractPatchPaths(baseDir, patchText)
-        for (const filePath of files) {
-          await callAdapter($, baseDir, filePath, 'pre_tool_use_b64', filePath)
-        }
-        return
-      }
-      if (tool === 'bash') {
-        const command = args && args.command
-        const targets = await resolveRmTargets(baseDir, command, $)
-        for (const filePath of targets) {
+      const command = args && args.command
+      if (command) {
+        const rmTargets = await resolveRmTargets(baseDir, command, $)
+        for (const filePath of rmTargets) {
           await callAdapter($, baseDir, filePath, 'track_deleted_file_b64', filePath)
         }
       }
@@ -193,28 +200,13 @@ export const NvimClaude = async ({ directory, worktree, $ }) => {
       const callId = input && input.callID
       const stored = callId ? pendingCalls.get(callId) : null
       if (callId) pendingCalls.delete(callId)
-      const tool = (stored && stored.tool) || (input && input.tool)
-      const args = stored && stored.args ? stored.args : {}
-      if (tool === 'edit' || tool === 'write') {
-        const filePath = normalizePath(baseDir, extractFilePath(args))
-        if (filePath) {
-          await callAdapter($, baseDir, filePath, 'post_tool_use_b64', filePath)
-        }
-        return
+      const args = (stored && stored.args) || (output && output.args) || (input && input.args) || {}
+      const targets = collectTargets(baseDir, args, output && output.metadata)
+      for (const filePath of targets) {
+        await callAdapter($, baseDir, filePath, 'post_tool_use_b64', filePath)
       }
-      if (tool === 'patch') {
-        let files = extractChangedFiles(baseDir, output && output.metadata)
-        if (files.length === 0) {
-          const patchText = extractPatchText(args)
-          files = extractPatchPaths(baseDir, patchText)
-        }
-        for (const filePath of files) {
-          await callAdapter($, baseDir, filePath, 'post_tool_use_b64', filePath)
-        }
-        return
-      }
-      if (tool === 'bash') {
-        const command = args && args.command
+      const command = args && args.command
+      if (command) {
         const remaining = await resolveRmTargets(baseDir, command, $)
         for (const filePath of remaining) {
           await callAdapter($, baseDir, filePath, 'untrack_failed_deletion_b64', filePath)
@@ -249,13 +241,32 @@ function M.install()
     vim.notify('nvim-claude: ' .. (err or 'Failed to prepare OpenCode plugin'), vim.log.levels.ERROR)
     return false
   end
-  local plugin_file = plugin_dir .. '/nvim-claude.js'
   local content = plugin_template(plugin_root())
-  local ok = utils.write_file(plugin_file, content)
-  if not ok then
+
+  local project_root = utils.get_project_root()
+  local plugin_files = {
+    plugin_dir .. '/nvim-claude.js',
+    -- Legacy path for older OpenCode releases
+    project_root .. '/.opencode/plugin/nvim-claude.js',
+  }
+
+  local wrote_any = false
+  for _, plugin_file in ipairs(plugin_files) do
+    local parent = vim.fn.fnamemodify(plugin_file, ':h')
+    if vim.fn.isdirectory(parent) == 0 then
+      vim.fn.mkdir(parent, 'p')
+    end
+    local ok = utils.write_file(plugin_file, content)
+    if ok then
+      wrote_any = true
+    end
+  end
+
+  if not wrote_any then
     vim.notify('nvim-claude: Failed to write OpenCode plugin', vim.log.levels.ERROR)
     return false
   end
+
   vim.notify('nvim-claude: OpenCode plugin installed', vim.log.levels.INFO)
   return true
 end
@@ -266,12 +277,18 @@ function M.uninstall()
     vim.notify('nvim-claude: Not in a git repository', vim.log.levels.ERROR)
     return false
   end
-  local plugin_file = project_root .. '/.opencode/plugin/nvim-claude.js'
-  if utils.file_exists(plugin_file) then
-    local ok = pcall(vim.fn.delete, plugin_file)
-    if not ok then
-      vim.notify('nvim-claude: Failed to remove OpenCode plugin', vim.log.levels.ERROR)
-      return false
+  local plugin_files = {
+    project_root .. '/.opencode/plugins/nvim-claude.js',
+    -- Legacy path from older nvim-claude builds
+    project_root .. '/.opencode/plugin/nvim-claude.js',
+  }
+  for _, plugin_file in ipairs(plugin_files) do
+    if utils.file_exists(plugin_file) then
+      local ok = pcall(vim.fn.delete, plugin_file)
+      if not ok then
+        vim.notify('nvim-claude: Failed to remove OpenCode plugin', vim.log.levels.ERROR)
+        return false
+      end
     end
   end
   vim.notify('nvim-claude: OpenCode plugin uninstalled', vim.log.levels.INFO)

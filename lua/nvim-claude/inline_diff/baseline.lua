@@ -75,7 +75,7 @@ function M.get_baseline_ref(git_root)
       local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, sanitized)
       local _, exists_err = utils.exec(exists_cmd)
       if not exists_err then
-        persistence.save_state({ baseline_ref = sanitized })
+        persistence.save_state({ baseline_ref = sanitized }, git_root)
         return sanitized
       end
       clear_persisted_ref(git_root, ref, 'missing_object')
@@ -98,9 +98,26 @@ function M.set_baseline_ref(git_root, ref)
   end
 
   if ref and ref:match('^[a-f0-9]+$') then
+    local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, ref)
+    local _, exists_err = utils.exec(exists_cmd)
+    if exists_err then
+      local logger = require('nvim-claude.logger')
+      logger.error('baseline', 'Invalid baseline ref rejected', { ref = ref, git_root = git_root })
+      return
+    end
+
     local cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, ref)
-    utils.exec(cmd)
-    persistence.save_state({ baseline_ref = ref })
+    local _, update_err = utils.exec(cmd)
+    if update_err then
+      local logger = require('nvim-claude.logger')
+      logger.error('baseline', 'Failed to update baseline ref', {
+        ref = ref,
+        git_root = git_root,
+        error = update_err,
+      })
+      return
+    end
+    persistence.save_state({ baseline_ref = ref }, git_root)
   else
     -- Clear git ref
     local cmd = string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root)
