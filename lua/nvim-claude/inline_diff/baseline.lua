@@ -31,12 +31,10 @@ local function clear_persisted_ref(git_root, raw_ref, source)
   end
   -- Reset edited-file tracking since it is tied to the cleared baseline
   if git_root then
-    project_state.set(git_root, 'claude_edited_files', {})
+    project_state.set(git_root, 'claude_edited_files', vim.empty_dict())
     project_state.set(git_root, 'session_edited_files', {})
   end
-  if source == 'git_ref' then
-    utils.exec(string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root))
-  end
+  utils.exec(string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root))
 end
 
 local function project_root_or_nil()
@@ -45,7 +43,7 @@ local function project_root_or_nil()
   return nil
 end
 
--- Get baseline ref for this project (reads cache → project-state → git ref)
+-- Get baseline ref for this project from project-state (authoritative).
 function M.get_baseline_ref(git_root)
   git_root = git_root or project_root_or_nil()
   if not git_root then return nil end
@@ -66,26 +64,10 @@ function M.get_baseline_ref(git_root)
     clear_persisted_ref(git_root, persisted_raw, 'persistence')
   end
 
-  local ref_cmd = string.format('cd "%s" && git rev-parse refs/nvim-claude/baseline 2>/dev/null', git_root)
-  local ref, err = utils.exec(ref_cmd)
-  if ref and not err then
-    local sanitized = sanitize_ref(ref)
-    if sanitized then
-      -- Validate object exists
-      local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, sanitized)
-      local _, exists_err = utils.exec(exists_cmd)
-      if not exists_err then
-        persistence.save_state({ baseline_ref = sanitized }, git_root)
-        return sanitized
-      end
-      clear_persisted_ref(git_root, ref, 'missing_object')
-    end
-    clear_persisted_ref(git_root, ref, 'git_ref')
-  end
   return nil
 end
 
--- Set baseline ref (updates git ref, cache, and persists to project-state)
+-- Set baseline ref (project-state is authoritative; git ref is a mirror/pin).
 function M.set_baseline_ref(git_root, ref)
   git_root = git_root or project_root_or_nil()
   if not git_root then return end
@@ -106,26 +88,36 @@ function M.set_baseline_ref(git_root, ref)
       return
     end
 
+    -- Persist authoritative baseline first.
+    persistence.save_state({ baseline_ref = ref }, git_root)
+
+    -- Keep git ref as a best-effort mirror/pin.
     local cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, ref)
     local _, update_err = utils.exec(cmd)
     if update_err then
       local logger = require('nvim-claude.logger')
-      logger.error('baseline', 'Failed to update baseline ref', {
+      logger.warn('baseline', 'Failed to update mirrored baseline ref', {
         ref = ref,
         git_root = git_root,
         error = update_err,
       })
-      return
     end
-    persistence.save_state({ baseline_ref = ref }, git_root)
   else
-    -- Clear git ref
-    local cmd = string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root)
-    utils.exec(cmd)
     local state = persistence.get_state(git_root) or {}
     state.baseline_ref = nil
     state.stash_ref = nil
     persistence.set_state(git_root, state)
+
+    -- Clear mirrored git ref best-effort.
+    local cmd = string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root)
+    local _, update_err = utils.exec(cmd)
+    if update_err then
+      local logger = require('nvim-claude.logger')
+      logger.warn('baseline', 'Failed to clear mirrored baseline ref', {
+        git_root = git_root,
+        error = update_err,
+      })
+    end
   end
 end
 

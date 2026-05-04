@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "Running nvim-claude tests (hunks.lua)..."
+echo "Running nvim-claude tests..."
 
 if ! command -v nvim >/dev/null 2>&1; then
   echo "Error: Neovim (nvim) not found in PATH" >&2
@@ -21,10 +21,16 @@ if ! nvim --headless -u tests/minimal_init.lua +"lua require('plenary')" +qa! >/
   exit 1
 fi
 
-nvim --headless -u tests/minimal_init.lua \
-  -c "PlenaryBustedFile tests/inline_diff_unit_spec.lua" \
-  -c "PlenaryBustedFile tests/events_spec.lua" \
-  -c "PlenaryBustedFile tests/e2e_spec.lua" \
-  -c "qa!"
+for spec in \
+  tests/project_state_schema_spec.lua \
+  tests/inline_diff_unit_spec.lua \
+  tests/events_spec.lua \
+  tests/e2e_spec.lua
+do
+  echo "→ $spec"
+  nvim --headless -u tests/minimal_init.lua \
+    -c "PlenaryBustedFile $spec" \
+    -c "qa!"
+done
 
 echo "✅ Tests finished"

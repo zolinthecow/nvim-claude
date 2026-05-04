@@ -2,6 +2,53 @@
 local M = {}
 local utils = require 'nvim-claude.utils'
 local logger = require 'nvim-claude.logger'
+local schema = require 'nvim-claude.project_state_schema'
+
+-- Cache resolved git roots to avoid repeated subprocess calls
+-- on hot paths (e.g. frequent project_state.get/set operations).
+local git_root_cache = {}
+
+local function trim_trailing_slash(path)
+  return (path or ''):gsub('/+$', '')
+end
+
+local function resolve_git_root(path)
+  if not path or path == '' then
+    return nil
+  end
+  local dir = path
+  if vim.fn.isdirectory(dir) == 0 then
+    dir = vim.fn.fnamemodify(dir, ':h')
+  end
+  if not dir or dir == '' or vim.fn.isdirectory(dir) == 0 then
+    return nil
+  end
+
+  dir = trim_trailing_slash(dir)
+  if dir == '' then
+    return nil
+  end
+
+  local cached = git_root_cache[dir]
+  if type(cached) == 'string' and cached ~= '' then
+    return cached
+  end
+
+  local cmd = string.format('cd %s && git rev-parse --show-toplevel 2>/dev/null', vim.fn.shellescape(dir))
+  local out = vim.fn.system(cmd)
+  if vim.v.shell_error ~= 0 or not out or out == '' then
+    return nil
+  end
+
+  local git_root = trim_trailing_slash(out:gsub('%s+$', ''))
+  if git_root ~= '' then
+    git_root_cache[dir] = git_root
+    git_root_cache[git_root] = git_root
+    return git_root
+  end
+
+  return nil
+end
 
 -- Get the global state directory
 function M.get_global_state_dir()
@@ -12,14 +59,38 @@ end
 
 -- Get normalized project key from path
 function M.get_project_key(project_root)
-  if not project_root then
+  if type(project_root) ~= 'string' or project_root == '' then
     return nil
   end
-  -- Normalize the path
-  local normalized = vim.fn.resolve(vim.fn.expand(project_root))
-  -- Remove trailing slashes
-  normalized = normalized:gsub('/$', '')
-  return normalized
+
+  if project_root:sub(1, 2) == '__' then
+    return nil
+  end
+
+  -- Reject URI-like pseudo paths (e.g. fugitive:/...)
+  if project_root:match('^[%a][%w+.-]*:') then
+    return nil
+  end
+
+  local normalized = trim_trailing_slash(vim.fn.resolve(vim.fn.expand(project_root)))
+  if normalized == '' then
+    return nil
+  end
+
+  local stat = vim.loop.fs_stat(normalized)
+  if not stat then
+    return nil
+  end
+
+  if stat.type ~= 'directory' then
+    normalized = trim_trailing_slash(vim.fn.fnamemodify(normalized, ':h'))
+  end
+  if normalized == '' or vim.fn.isdirectory(normalized) == 0 then
+    return nil
+  end
+
+  local git_root = resolve_git_root(normalized)
+  return git_root or normalized
 end
 
 -- Get the global state file path
@@ -41,14 +112,23 @@ function M.load_all_states()
     logger.error('load_all_states', 'Failed to parse state file', { error = state })
     return {}
   end
-  
-  return state or {}
+
+  local normalized, changed = schema.normalize_all_states(state or {}, M.get_project_key)
+  if changed then
+    local saved = M.save_all_states(normalized)
+    if not saved then
+      logger.warn('load_all_states', 'Failed to persist normalized state file')
+    end
+  end
+
+  return normalized
 end
 
 -- Save all project states
 function M.save_all_states(states)
   local state_file = M.get_state_file()
-  local content = vim.json.encode(states)
+  local normalized = schema.normalize_all_states(states or {}, M.get_project_key)
+  local content = vim.json.encode(normalized)
   
   if not utils.write_file(state_file, content) then
     logger.error('save_all_states', 'Failed to write state file')
@@ -127,20 +207,22 @@ function M.cleanup_old_projects(days_threshold)
   local removed = 0
   
   for project_path, state in pairs(all_states) do
-    -- Check if project still exists
-    local exists = vim.fn.isdirectory(project_path) == 1
-    
-    -- Check last access time
-    local last_accessed = state.last_accessed or 0
-    
-    if not exists or last_accessed < cutoff_time then
-      all_states[project_path] = nil
-      removed = removed + 1
-      logger.info('cleanup_old_projects', 'Removed old project state', {
-        project = project_path,
-        exists = exists,
-        last_accessed = os.date('%Y-%m-%d', last_accessed)
-      })
+    if not (type(project_path) == 'string' and project_path:sub(1, 2) == '__') then
+      -- Check if project still exists
+      local exists = vim.fn.isdirectory(project_path) == 1
+
+      -- Check last access time
+      local last_accessed = state.last_accessed or 0
+
+      if not exists or last_accessed < cutoff_time then
+        all_states[project_path] = nil
+        removed = removed + 1
+        logger.info('cleanup_old_projects', 'Removed old project state', {
+          project = project_path,
+          exists = exists,
+          last_accessed = os.date('%Y-%m-%d', last_accessed)
+        })
+      end
     end
   end
   
@@ -157,13 +239,15 @@ function M.list_projects()
   local projects = {}
   
   for project_path, state in pairs(all_states) do
-    table.insert(projects, {
-      path = project_path,
-      last_accessed = state.last_accessed or 0,
-      exists = vim.fn.isdirectory(project_path) == 1,
-      has_inline_diff = state.inline_diff_state ~= nil,
-      has_agents = state.agent_registry ~= nil and next(state.agent_registry) ~= nil
-    })
+    if not (type(project_path) == 'string' and project_path:sub(1, 2) == '__') then
+      table.insert(projects, {
+        path = project_path,
+        last_accessed = state.last_accessed or 0,
+        exists = vim.fn.isdirectory(project_path) == 1,
+        has_inline_diff = state.inline_diff_state ~= nil,
+        has_agents = state.agent_registry ~= nil and next(state.agent_registry) ~= nil
+      })
+    end
   end
   
   -- Sort by last accessed, most recent first

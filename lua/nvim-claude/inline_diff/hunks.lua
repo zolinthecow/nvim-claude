@@ -5,6 +5,7 @@ local M = {}
 local utils = require 'nvim-claude.utils'
 local baseline = require 'nvim-claude.inline_diff.baseline'
 local diffmod = require 'nvim-claude.inline_diff.diff'
+local session = require 'nvim-claude.events.session'
 
 -- Build an action descriptor for the UI/executor layer
 local function action(t, fields)
@@ -220,8 +221,12 @@ function M.reject_current_hunk(bufnr)
 
   -- Determine if file exists in baseline
   local ref = baseline.get_baseline_ref(git_root)
-  local baseline_check = ref and utils.exec(string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, ref, relative_path)) or nil
-  if baseline_check and (baseline_check:match '^fatal:' or baseline_check:match 'does not exist') then
+  local baseline_check, baseline_check_err = nil, nil
+  if ref then
+    baseline_check, baseline_check_err = utils.exec(string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, ref, relative_path))
+  end
+  local missing_in_baseline = baseline_check == nil and baseline_check_err and (baseline_check_err:match '^fatal:' or baseline_check_err:match 'does not exist')
+  if missing_in_baseline then
     -- New file: plan to remove lines; if empty, plan to delete & untrack
     local new_content = compute_manual_reject_content(bufnr, hunk)
     local actions = { action('buffer_set_content', { bufnr = bufnr, content = new_content }), action('buffer_write', { bufnr = bufnr }) }
@@ -312,7 +317,7 @@ function M.reject_all_hunks_in_file(bufnr)
   local baseline_cmd = string.format("cd '%s' && git show %s:'%s' 2>&1", git_root, ref, relative_path)
   local baseline_content, err = utils.exec(baseline_cmd)
 
-  if baseline_content and (baseline_content:match '^fatal:' or baseline_content:match 'does not exist') then
+  if err and (err:match '^fatal:' or err:match 'does not exist') then
     return {
       status = 'ok',
       actions = {
@@ -323,7 +328,7 @@ function M.reject_all_hunks_in_file(bufnr)
       info = { bufnr = bufnr, file = file_path },
     }
   else
-    if err or not baseline_content or baseline_content == '' then
+    if err or baseline_content == nil then
       return { status = 'error', actions = {}, info = { reason = 'baseline_read_failed', file = file_path } }
     end
     return {
@@ -373,7 +378,6 @@ end
 -- Note: these operate at the data layer (baseline + filesystem + project_state).
 -- UI behaviors (like closing or switching buffers) should be handled by the facade.
 local navigation = require 'nvim-claude.inline_diff.navigation'
-local project_state = require 'nvim-claude.project-state'
 
 function M.accept_all_files()
   local root, items = navigation.get_edited_items()
@@ -387,9 +391,7 @@ function M.accept_all_files()
       local content = utils.read_file(full) or ''
       baseline.update_baseline_with_content(root, it.rel, content, ref)
     end
-    local map = project_state.get(root, 'claude_edited_files') or {}
-    map[it.rel] = nil
-    project_state.set(root, 'claude_edited_files', map)
+    session.remove_edited_file(root, it.rel)
   end
   return { ok = true, root = root, items = items }
 end
@@ -412,9 +414,7 @@ function M.reject_all_files()
     else
       if base == '' then pcall(os.remove, full) else utils.write_file(full, base) end
     end
-    local map = project_state.get(root, 'claude_edited_files') or {}
-    map[it.rel] = nil
-    project_state.set(root, 'claude_edited_files', map)
+    session.remove_edited_file(root, it.rel)
   end
   return { ok = true, root = root, items = items }
 end

@@ -6,7 +6,7 @@ local baseline = require 'nvim-claude.inline_diff.baseline'
 local diffmod = require 'nvim-claude.inline_diff.diff'
 local render = require 'nvim-claude.inline_diff.render'
 local utils = require 'nvim-claude.utils'
-local project_state = require 'nvim-claude.project-state'
+local session = require 'nvim-claude.events.session'
 local nav = require 'nvim-claude.inline_diff.navigation'
 local hunks_mod = require 'nvim-claude.inline_diff.hunks'
 
@@ -82,9 +82,7 @@ function M.run_action(action)
   elseif action.type == 'project_untrack_file' then
     local git_root = action.git_root or utils.get_project_root()
     if git_root and action.relative_path then
-      local map = project_state.get(git_root, 'claude_edited_files') or {}
-      map[action.relative_path] = nil
-      project_state.set(git_root, 'claude_edited_files', map)
+      session.remove_edited_file(git_root, action.relative_path)
     end
   elseif action.type == 'worktree_apply_reverse_patch' then
     local git_root = action.git_root or utils.get_project_root()

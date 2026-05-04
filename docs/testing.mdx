@@ -1,6 +1,6 @@
 # Testing
 
-Primary checks are doctests and manual Neovim workflows.
+Primary checks are doctests, headless Neovim tests, and provider integration harnesses.
 
 ## Doctest run
 
@@ -21,3 +21,15 @@ nvim
 ```sh no-doctest
 :source lua/nvim-claude/init.lua
 ```
+
+## OpenCode integration harness
+
+Run the OpenCode harness when changing `agent_provider/providers/opencode` or event tracking code:
+
+```sh no-doctest
+./scripts/run_opencode_integration_test.sh
+```
+
+The harness creates a temporary git repo, starts headless Neovim, installs the generated OpenCode plugin into a temporary config dir, invokes `tool.execute.before` and `tool.execute.after` with OpenCode-style metadata, and asserts baseline capture, edited-file tracking, turn tracking, and inline diff hunks.
+
+Set `NVIM_CLAUDE_KEEP_TMP=1` to keep failure artifacts.

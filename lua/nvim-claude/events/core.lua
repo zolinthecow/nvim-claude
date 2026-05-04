@@ -6,6 +6,14 @@ local utils = require 'nvim-claude.utils'
 local inline_diff = require 'nvim-claude.inline_diff'
 local session = require 'nvim-claude.events.session'
 
+local function is_directory(path)
+  if not path or path == '' then
+    return false
+  end
+  local stat = vim.loop.fs_stat(path)
+  return stat and stat.type == 'directory' or false
+end
+
 -- Helper: add file to session_edited_files (persisted per project)
 local function add_to_session(file_path)
   if not file_path or file_path == '' then
@@ -37,8 +45,9 @@ function M.pre_tool_use(file_path, opts)
 
   -- If we have a specific file and it exists, update that file in baseline to its current content
   local has_prior = opts.prior_content ~= nil
+  local dir_path = is_directory(file_path)
   local readable = file_path and vim.fn.filereadable(file_path) == 1 or false
-  if file_path and (has_prior or readable) then
+  if file_path and not dir_path and (has_prior or readable) then
     local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
     -- Only update if not already tracked as edited (baseline captured previously)
     if not session.is_edited_file(git_root, relative) then
@@ -72,6 +81,10 @@ function M.post_tool_use(file_path)
   end
 
   if file_path and file_path ~= '' then
+    if is_directory(file_path) then
+      return true
+    end
+
     local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
     session.add_edited_file(git_root, relative)
     add_to_session(file_path)

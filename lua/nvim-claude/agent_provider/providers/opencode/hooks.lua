@@ -1,4 +1,4 @@
--- OpenCode provider: plugin installer for .opencode/plugins
+-- OpenCode provider: plugin installer for ~/.config/opencode/plugins
 
 local M = {}
 
@@ -20,19 +20,156 @@ local function plugin_root()
   return fallback
 end
 
-local function ensure_plugin_dir()
-  local project_root = utils.get_project_root()
-  if not project_root then
-    return nil, 'Not in a git repository'
+local function opencode_config_root()
+  local xdg = vim.env.XDG_CONFIG_HOME
+  if xdg and xdg ~= '' then
+    return xdg .. '/opencode'
   end
-  local plugin_dir = project_root .. '/.opencode/plugins'
+  return vim.fn.expand('~/.config/opencode')
+end
+
+local function ensure_plugin_dir()
+  local plugin_dir = opencode_config_root() .. '/plugins'
   if vim.fn.isdirectory(plugin_dir) == 0 then
     local ok = vim.fn.mkdir(plugin_dir, 'p')
     if ok ~= 1 then
-      return nil, 'Failed to create .opencode/plugins directory'
+      return nil, 'Failed to create OpenCode global plugins directory'
     end
   end
   return plugin_dir
+end
+
+local function global_plugin_file()
+  return opencode_config_root() .. '/plugins/nvim-claude.js'
+end
+
+local function stale_plugin_files()
+  local files = {
+    opencode_config_root() .. '/plugin/nvim-claude.js',
+  }
+
+  local project_root = utils.get_project_root()
+  if project_root and project_root ~= '' then
+    table.insert(files, project_root .. '/.opencode/plugins/nvim-claude.js')
+    table.insert(files, project_root .. '/.opencode/plugin/nvim-claude.js')
+  end
+
+  return files
+end
+
+local function remove_plugin_files(files)
+  for _, plugin_file in ipairs(files) do
+    if utils.file_exists(plugin_file) then
+      local ok = pcall(vim.fn.delete, plugin_file)
+      if not ok then
+        return false, plugin_file
+      end
+    end
+  end
+  return true
+end
+
+local function remove_path(path, flags)
+  if not utils.file_exists(path) then
+    return true
+  end
+  local ok
+  if flags and flags ~= '' then
+    ok = pcall(vim.fn.delete, path, flags)
+  else
+    ok = pcall(vim.fn.delete, path)
+  end
+  if not ok then
+    return false, path
+  end
+  return true
+end
+
+local function remove_empty_dir(path)
+  if vim.fn.isdirectory(path) == 0 then
+    return true
+  end
+  if #vim.fn.readdir(path) > 0 then
+    return true
+  end
+  return remove_path(path, 'd')
+end
+
+local function should_remove_project_bootstrap(package_path)
+  local pkg = utils.read_json(package_path)
+  if type(pkg) ~= 'table' then
+    return false
+  end
+
+  local deps = pkg.dependencies
+  if type(deps) ~= 'table' then
+    return false
+  end
+
+  local dep_count = 0
+  for dep_name, dep_value in pairs(deps) do
+    dep_count = dep_count + 1
+    if dep_name ~= '@opencode-ai/plugin' or type(dep_value) ~= 'string' then
+      return false
+    end
+  end
+
+  if dep_count ~= 1 then
+    return false
+  end
+
+  for key, _ in pairs(pkg) do
+    if key ~= 'dependencies' then
+      return false
+    end
+  end
+
+  return true
+end
+
+local function cleanup_project_bootstrap()
+  local project_root = utils.get_project_root()
+  if not project_root or project_root == '' then
+    return true
+  end
+
+  local opencode_root = project_root .. '/.opencode'
+  local package_path = opencode_root .. '/package.json'
+  if not should_remove_project_bootstrap(package_path) then
+    return true
+  end
+
+  local paths = {
+    package_path,
+    opencode_root .. '/package-lock.json',
+    opencode_root .. '/bun.lock',
+    opencode_root .. '/.gitignore',
+  }
+
+  for _, path in ipairs(paths) do
+    local ok, failed_path = remove_path(path)
+    if not ok then
+      return false, failed_path
+    end
+  end
+
+  local ok, failed_path = remove_path(opencode_root .. '/node_modules', 'rf')
+  if not ok then
+    return false, failed_path
+  end
+
+  for _, path in ipairs({
+    opencode_root .. '/plugin',
+    opencode_root .. '/plugins',
+    opencode_root,
+  }) do
+    local dir_ok, dir_failed_path = remove_empty_dir(path)
+    if not dir_ok then
+      return false, dir_failed_path
+    end
+  end
+
+  return true
 end
 
 local function escape_js_single_quotes(value)
@@ -103,9 +240,71 @@ const extractPatchPaths = (baseDir, patchText) => {
 const extractChangedFiles = (baseDir, metadata) => {
   const meta = normalizeMetadata(metadata)
   if (!meta) return []
-  const files = meta.files_changed || meta.filesChanged
-  if (!Array.isArray(files)) return []
-  return files.map((file) => normalizePath(baseDir, file)).filter(Boolean)
+  const results = new Set()
+
+  const addPath = (filePath) => {
+    const normalized = normalizePath(baseDir, filePath)
+    if (normalized) results.add(normalized)
+  }
+
+  const addFileEntry = (file) => {
+    if (typeof file === 'string') {
+      addPath(file)
+      return
+    }
+    if (!file || typeof file !== 'object') return
+    addPath(file.filePath || file.filepath || file.relativePath || file.path || file.file)
+    addPath(file.movePath || file.move_path)
+  }
+
+  const files = meta.files || meta.files_changed || meta.filesChanged
+  if (Array.isArray(files)) {
+    for (const file of files) addFileEntry(file)
+  }
+
+  addPath(meta.filepath || meta.filePath)
+
+  if (meta.filediff && typeof meta.filediff === 'object') {
+    addPath(meta.filediff.file || meta.filediff.filePath || meta.filediff.path)
+  }
+
+  return Array.from(results)
+}
+
+const normalizeTool = (tool) => (typeof tool === 'string' ? tool.trim().toLowerCase() : '')
+
+const isBashTool = (tool) => {
+  const t = normalizeTool(tool)
+  return t === 'bash' || t === 'shell'
+}
+
+const hasWriteLikeArgs = (args) => {
+  if (!args || typeof args !== 'object') return false
+  const filePath = extractFilePath(args)
+  if (!filePath) return false
+  return Boolean(
+    extractPatchText(args)
+    || Array.isArray(args.edits)
+    || typeof args.content === 'string'
+    || typeof args.text === 'string'
+    || typeof args.old_string === 'string'
+    || typeof args.new_string === 'string'
+    || typeof args.oldString === 'string'
+    || typeof args.newString === 'string'
+    || typeof args.insert_text === 'string'
+    || typeof args.insertText === 'string'
+  )
+}
+
+const shouldTrackMutation = (tool, args) => {
+  const t = normalizeTool(tool)
+  if (isBashTool(t)) return false
+  if (t === 'edit' || t === 'write' || t === 'patch' || t === 'apply_patch' || t === 'multiedit' || t === 'multi_edit') {
+    return true
+  }
+  if (extractPatchText(args)) return true
+  if (hasWriteLikeArgs(args)) return true
+  return false
 }
 
 const collectTargets = (baseDir, args, metadata) => {
@@ -179,17 +378,20 @@ export const NvimClaude = async ({ directory, worktree, $ }) => {
   return {
     'tool.execute.before': async (input, output) => {
       const callId = input && input.callID
+      const tool = input && input.tool
       if (callId) {
         const storedArgs = (output && output.args) || (input && input.args) || null
         pendingCalls.set(callId, { tool: input.tool, args: storedArgs })
       }
       const args = (output && output.args) || (input && input.args) || {}
-      const targets = collectTargets(baseDir, args)
-      for (const filePath of targets) {
-        await callAdapter($, baseDir, filePath, 'pre_tool_use_b64', filePath)
+      if (shouldTrackMutation(tool, args)) {
+        const targets = collectTargets(baseDir, args)
+        for (const filePath of targets) {
+          await callAdapter($, baseDir, filePath, 'pre_tool_use_b64', filePath)
+        }
       }
       const command = args && args.command
-      if (command) {
+      if (isBashTool(tool) && command) {
         const rmTargets = await resolveRmTargets(baseDir, command, $)
         for (const filePath of rmTargets) {
           await callAdapter($, baseDir, filePath, 'track_deleted_file_b64', filePath)
@@ -200,13 +402,16 @@ export const NvimClaude = async ({ directory, worktree, $ }) => {
       const callId = input && input.callID
       const stored = callId ? pendingCalls.get(callId) : null
       if (callId) pendingCalls.delete(callId)
+      const tool = (stored && stored.tool) || (input && input.tool)
       const args = (stored && stored.args) || (output && output.args) || (input && input.args) || {}
-      const targets = collectTargets(baseDir, args, output && output.metadata)
-      for (const filePath of targets) {
-        await callAdapter($, baseDir, filePath, 'post_tool_use_b64', filePath)
+      if (shouldTrackMutation(tool, args)) {
+        const targets = collectTargets(baseDir, args, output && output.metadata)
+        for (const filePath of targets) {
+          await callAdapter($, baseDir, filePath, 'post_tool_use_b64', filePath)
+        }
       }
       const command = args && args.command
-      if (command) {
+      if (isBashTool(tool) && command) {
         const remaining = await resolveRmTargets(baseDir, command, $)
         for (const filePath of remaining) {
           await callAdapter($, baseDir, filePath, 'untrack_failed_deletion_b64', filePath)
@@ -243,55 +448,42 @@ function M.install()
   end
   local content = plugin_template(plugin_root())
 
-  local project_root = utils.get_project_root()
-  local plugin_files = {
-    plugin_dir .. '/nvim-claude.js',
-    -- Legacy path for older OpenCode releases
-    project_root .. '/.opencode/plugin/nvim-claude.js',
-  }
-
-  local wrote_any = false
-  for _, plugin_file in ipairs(plugin_files) do
-    local parent = vim.fn.fnamemodify(plugin_file, ':h')
-    if vim.fn.isdirectory(parent) == 0 then
-      vim.fn.mkdir(parent, 'p')
-    end
-    local ok = utils.write_file(plugin_file, content)
-    if ok then
-      wrote_any = true
-    end
-  end
-
-  if not wrote_any then
+  local plugin_file = global_plugin_file()
+  local ok = utils.write_file(plugin_file, content)
+  if not ok then
     vim.notify('nvim-claude: Failed to write OpenCode plugin', vim.log.levels.ERROR)
     return false
   end
 
-  vim.notify('nvim-claude: OpenCode plugin installed', vim.log.levels.INFO)
+  local removed_ok, removed_path = remove_plugin_files(stale_plugin_files())
+  if not removed_ok then
+    vim.notify('nvim-claude: Failed to remove old OpenCode plugin at ' .. removed_path, vim.log.levels.WARN)
+  end
+
+  local cleaned_ok, cleaned_path = cleanup_project_bootstrap()
+  if not cleaned_ok then
+    vim.notify('nvim-claude: Failed to clean old project .opencode state at ' .. cleaned_path, vim.log.levels.WARN)
+  end
+
+  vim.notify('nvim-claude: OpenCode plugin installed in ~/.config/opencode/plugins (restart OpenCode to reload plugins)', vim.log.levels.INFO)
   return true
 end
 
 function M.uninstall()
-  local project_root = utils.get_project_root()
-  if not project_root then
-    vim.notify('nvim-claude: Not in a git repository', vim.log.levels.ERROR)
+  local plugin_files = { global_plugin_file() }
+  vim.list_extend(plugin_files, stale_plugin_files())
+  local ok, failed_path = remove_plugin_files(plugin_files)
+  if not ok then
+    vim.notify('nvim-claude: Failed to remove OpenCode plugin at ' .. failed_path, vim.log.levels.ERROR)
     return false
   end
-  local plugin_files = {
-    project_root .. '/.opencode/plugins/nvim-claude.js',
-    -- Legacy path from older nvim-claude builds
-    project_root .. '/.opencode/plugin/nvim-claude.js',
-  }
-  for _, plugin_file in ipairs(plugin_files) do
-    if utils.file_exists(plugin_file) then
-      local ok = pcall(vim.fn.delete, plugin_file)
-      if not ok then
-        vim.notify('nvim-claude: Failed to remove OpenCode plugin', vim.log.levels.ERROR)
-        return false
-      end
-    end
+
+  local cleaned_ok, cleaned_path = cleanup_project_bootstrap()
+  if not cleaned_ok then
+    vim.notify('nvim-claude: Failed to clean old project .opencode state at ' .. cleaned_path, vim.log.levels.WARN)
   end
-  vim.notify('nvim-claude: OpenCode plugin uninstalled', vim.log.levels.INFO)
+
+  vim.notify('nvim-claude: OpenCode plugin removed from global config (restart OpenCode to apply)', vim.log.levels.INFO)
   return true
 end
 

@@ -4,13 +4,45 @@ local M = {}
 
 local project_state = require 'nvim-claude.project-state'
 
+local function normalize_edited_map(raw)
+  if type(raw) ~= 'table' then
+    return {}
+  end
+
+  -- Legacy/corrupted shape: list of paths instead of map[path] = true.
+  local is_list = false
+  if type(vim.islist) == 'function' then
+    is_list = vim.islist(raw)
+  else
+    local legacy = rawget(vim, 'tbl_islist')
+    if type(legacy) == 'function' then
+      is_list = legacy(raw)
+    end
+  end
+  if is_list then
+    local map = {}
+    for _, path in ipairs(raw) do
+      if type(path) == 'string' and path ~= '' then
+        map[path] = true
+      end
+    end
+    return map
+  end
+
+  return raw
+end
+
 -- Edited files map (relative paths -> true) per project (multi-turn)
 local function get_edited_map(git_root)
-  return project_state.get(git_root, 'claude_edited_files') or {}
+  return normalize_edited_map(project_state.get(git_root, 'claude_edited_files'))
 end
 
 local function set_edited_map(git_root, map)
-  return project_state.set(git_root, 'claude_edited_files', map or {})
+  local normalized = normalize_edited_map(map)
+  if next(normalized) == nil then
+    return project_state.set(git_root, 'claude_edited_files', vim.empty_dict())
+  end
+  return project_state.set(git_root, 'claude_edited_files', normalized)
 end
 
 function M.is_edited_file(git_root, relative_path)

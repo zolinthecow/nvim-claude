@@ -32,12 +32,9 @@ def get_server_address(project_root):
         server_address = server_file.read_text().strip()
         if server_address and Path(server_address).exists():
             return server_address
-    for temp_dir in ['/var/folders', '/tmp']:
-        temp_path = Path(temp_dir)
-        if temp_path.exists():
-            for socket in temp_path.glob('**/nvim.*.0'):
-                if socket.is_socket():
-                    return str(socket)
+
+    # Fail closed: never fall back to arbitrary Neovim sockets,
+    # which can route events to the wrong project/session.
     return None
 
 

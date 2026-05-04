@@ -5,6 +5,7 @@ local M = {}
 local utils = require 'nvim-claude.utils'
 local baseline = require 'nvim-claude.inline_diff.baseline'
 local diffmod = require 'nvim-claude.inline_diff.diff'
+local session = require 'nvim-claude.events.session'
 
 -- Compute the line range covered by a hunk in the new file
 local function hunk_line_range(hunk)
@@ -92,39 +93,33 @@ end
 
 -- Below: file-level navigation helpers (edited items, list, next/prev)
 
-local project_state = require 'nvim-claude.project-state'
-
 local function get_edited_items()
   local cur = vim.api.nvim_buf_get_name(0)
   local root = (cur and cur ~= '' and utils.get_project_root_for_file(cur)) or utils.get_project_root()
   if not root then return root, {} end
-  local map = project_state.get(root, 'claude_edited_files') or {}
+  local edited_files = session.list_edited_files(root)
   local baseline_ref = baseline.get_baseline_ref(root)
-  local items, changed = {}, false
-  for rel, v in pairs(map) do
-    if v then
-      local full = root .. '/' .. rel
-      if vim.fn.filereadable(full) == 1 then
-        local base_content = ''
-        if baseline_ref and baseline_ref ~= '' then
-          local cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", root, baseline_ref, rel)
-          base_content = utils.exec(cmd) or ''
-          if base_content:match('^fatal:') or base_content:match('^error:') then base_content = '' end
-        end
-        local current = utils.read_file(full) or ''
-        local d = diffmod.compute_diff(base_content, current)
-        if d and d.hunks and #d.hunks > 0 then
-          table.insert(items, { rel = rel, deleted = false })
-        else
-          map[rel] = nil
-          changed = true
-        end
-      else
-        table.insert(items, { rel = rel, deleted = true })
+  local items = {}
+  for _, rel in ipairs(edited_files) do
+    local full = root .. '/' .. rel
+    if vim.fn.filereadable(full) == 1 then
+      local base_content = ''
+      if baseline_ref and baseline_ref ~= '' then
+        local cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", root, baseline_ref, rel)
+        base_content = utils.exec(cmd) or ''
+        if base_content:match('^fatal:') or base_content:match('^error:') then base_content = '' end
       end
+      local current = utils.read_file(full) or ''
+      local d = diffmod.compute_diff(base_content, current)
+      if d and d.hunks and #d.hunks > 0 then
+        table.insert(items, { rel = rel, deleted = false })
+      else
+        session.remove_edited_file(root, rel)
+      end
+    else
+      table.insert(items, { rel = rel, deleted = true })
     end
   end
-  if changed then project_state.set(root, 'claude_edited_files', map) end
   table.sort(items, function(a, b) return a.rel < b.rel end)
   return root, items
 end
@@ -162,9 +157,7 @@ local function show_deleted_view(project_root, rel)
 
   -- Buffer-local actions to accept or reject deletion
   local function untrack()
-    local map = project_state.get(project_root, 'claude_edited_files') or {}
-    map[rel] = nil
-    project_state.set(project_root, 'claude_edited_files', map)
+    session.remove_edited_file(project_root, rel)
   end
 
   local function accept_delete()

@@ -28,9 +28,17 @@ cd /path/to/nvim-claude
 nvim --headless -u tests/minimal_init.lua -c "PlenaryBustedFile tests/hunks_spec.lua" -c "qa!"
 ```
 
+### Run the OpenCode integration harness
+```bash
+./scripts/run_opencode_integration_test.sh
+```
+
+This drives the generated OpenCode plugin against a headless Neovim RPC server and checks baseline capture, tracked files, turn files, and rendered inline diff hunks. Use `NVIM_CLAUDE_KEEP_TMP=1` to preserve debug artifacts on failure.
+
 ## Test Structure
 
 - `tests/hunks_spec.lua` - Action plan tests for hunks.lua
+- `scripts/run_opencode_integration_test.sh` - End-to-end OpenCode plugin event harness
 
 ## Tests Cover (so far)
 
