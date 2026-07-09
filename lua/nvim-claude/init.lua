@@ -230,7 +230,8 @@ function M.setup(user_config)
     local name = prov.name or 'claude'
     local prov_opts = prov[name] or {}
     local opts = { provider = name }
-    opts[name] = prov_opts
+    opts[name] = vim.tbl_deep_extend('force', {}, prov_opts)
+    if name == 'codex' then opts[name].event_sink = M.events end
     M.agent_provider.setup(opts)
   end
   M.background_agent.registry_setup(M.config.agents)

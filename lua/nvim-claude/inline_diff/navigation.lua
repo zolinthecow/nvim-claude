@@ -5,7 +5,7 @@ local M = {}
 local utils = require 'nvim-claude.utils'
 local baseline = require 'nvim-claude.inline_diff.baseline'
 local diffmod = require 'nvim-claude.inline_diff.diff'
-local session = require 'nvim-claude.events.session'
+local review_state = require 'nvim-claude.review_state'
 
 -- Compute the line range covered by a hunk in the new file
 local function hunk_line_range(hunk)
@@ -17,8 +17,8 @@ local function hunk_line_range(hunk)
     end
   end
   local end_line = start_line + line_offset - 1
-  if hunk.new_length == 0 then end_line = start_line end
-  return start_line, end_line
+  if hunk.new_count == 0 then end_line = start_line end
+  return math.max(1, start_line), math.max(1, end_line)
 end
 
 function M.jump_to_hunk(bufnr, diff_data, hunk_idx, silent)
@@ -37,6 +37,7 @@ function M.jump_to_hunk(bufnr, diff_data, hunk_idx, silent)
     end
   end
   if not jump_line then jump_line = hunk.new_start end
+  jump_line = math.max(1, jump_line)
 
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   if jump_line > line_count then jump_line = math.max(1, line_count) end
@@ -97,29 +98,40 @@ local function get_edited_items()
   local cur = vim.api.nvim_buf_get_name(0)
   local root = (cur and cur ~= '' and utils.get_project_root_for_file(cur)) or utils.get_project_root()
   if not root then return root, {} end
-  local edited_files = session.list_edited_files(root)
+  local edited_files = review_state.list_edited_files(root)
   local baseline_ref = baseline.get_baseline_ref(root)
   local items = {}
+  local stale = {}
   for _, rel in ipairs(edited_files) do
     local full = root .. '/' .. rel
     if vim.fn.filereadable(full) == 1 then
-      local base_content = ''
-      if baseline_ref and baseline_ref ~= '' then
-        local cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", root, baseline_ref, rel)
-        base_content = utils.exec(cmd) or ''
-        if base_content:match('^fatal:') or base_content:match('^error:') then base_content = '' end
-      end
-      local current = utils.read_file(full) or ''
-      local d = diffmod.compute_diff(base_content, current)
-      if d and d.hunks and #d.hunks > 0 then
-        table.insert(items, { rel = rel, deleted = false })
+      local base, read_err
+      if baseline_ref then
+        base, read_err = baseline.read_file(root, rel, baseline_ref)
       else
-        session.remove_edited_file(root, rel)
+        read_err = 'no_baseline'
+      end
+      local current = utils.read_file(full)
+      if not base or current == nil then
+        table.insert(items, { rel = rel, deleted = false, error = read_err or 'file_read_failed' })
+      else
+        local d, diff_err = diffmod.compute_diff(base.content, current, {
+          old_exists = base.exists,
+          new_exists = true,
+        })
+        if not d then
+          table.insert(items, { rel = rel, deleted = false, error = diff_err })
+        elseif d.hunks and #d.hunks > 0 then
+          table.insert(items, { rel = rel, deleted = false })
+        else
+          table.insert(stale, rel)
+        end
       end
     else
       table.insert(items, { rel = rel, deleted = true })
     end
   end
+  if #stale > 0 then review_state.remove_edited_files(root, stale) end
   table.sort(items, function(a, b) return a.rel < b.rel end)
   return root, items
 end
@@ -132,8 +144,9 @@ end
 local function show_deleted_view(project_root, rel)
   local ref = baseline.get_baseline_ref(project_root)
   if not ref or ref == '' then return end
-  local cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", project_root, ref, rel)
-  local base = utils.exec(cmd) or ''
+  local base_file = baseline.read_file(project_root, rel, ref)
+  if not base_file or not base_file.exists then return end
+  local base = base_file.content
   local win = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_win_set_buf(win, buf)
@@ -157,15 +170,21 @@ local function show_deleted_view(project_root, rel)
 
   -- Buffer-local actions to accept or reject deletion
   local function untrack()
-    session.remove_edited_file(project_root, rel)
+    return review_state.remove_edited_file(project_root, rel)
   end
 
   local function accept_delete()
     local ref_now = baseline.get_baseline_ref(project_root)
     if ref_now and ref_now ~= '' then
-      baseline.remove_from_baseline(project_root, rel, ref_now)
+      if not baseline.remove_from_baseline(project_root, rel, ref_now) then
+        vim.notify('Failed to accept deletion: ' .. rel, vim.log.levels.ERROR)
+        return
+      end
     end
-    untrack()
+    if not untrack() then
+      vim.notify('Failed to update review state: ' .. rel, vim.log.levels.ERROR)
+      return
+    end
     vim.notify('Accepted deletion: ' .. rel, vim.log.levels.INFO)
     vim.api.nvim_buf_delete(buf, { force = true })
   end
@@ -173,8 +192,14 @@ local function show_deleted_view(project_root, rel)
   local function reject_delete()
     local full = project_root .. '/' .. rel
     utils.ensure_dir(vim.fn.fnamemodify(full, ':h'))
-    utils.write_file(full, base)
-    untrack()
+    if not utils.write_file(full, base) then
+      vim.notify('Failed to restore file: ' .. rel, vim.log.levels.ERROR)
+      return
+    end
+    if not untrack() then
+      vim.notify('Failed to update review state: ' .. rel, vim.log.levels.ERROR)
+      return
+    end
     vim.notify('Restored file: ' .. rel, vim.log.levels.INFO)
     vim.cmd('edit ' .. vim.fn.fnameescape(full))
   end
@@ -215,7 +240,7 @@ function M.list_files()
           local exec = require('nvim-claude.inline_diff.executor')
           local diff_data = exec.get_diff_state(bufnr)
           if diff_data and diff_data.hunks and #diff_data.hunks > 0 then
-            M.jump_to_hunk(bufnr, diff_data, 1, true)
+          exec.jump_to_hunk(bufnr, 1, true)
           end
         end
       end)
@@ -244,7 +269,7 @@ function M.next_file()
         local exec = require('nvim-claude.inline_diff.executor')
         local diff_data = exec.get_diff_state(bufnr)
         if diff_data and diff_data.hunks and #diff_data.hunks > 0 then
-          M.jump_to_hunk(bufnr, diff_data, 1, true)
+          exec.jump_to_hunk(bufnr, 1, true)
         end
       end
     end)
@@ -272,7 +297,7 @@ function M.prev_file()
         local exec = require('nvim-claude.inline_diff.executor')
         local diff_data = exec.get_diff_state(bufnr)
         if diff_data and diff_data.hunks and #diff_data.hunks > 0 then
-          M.jump_to_hunk(bufnr, diff_data, 1, true)
+            exec.jump_to_hunk(bufnr, 1, true)
         end
       end
     end)

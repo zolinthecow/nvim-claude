@@ -21,6 +21,12 @@ end
 local baseline = require('nvim-claude.inline_diff.baseline')
 local inline = require('nvim-claude.inline_diff')
 local hunks = require('nvim-claude.inline_diff.hunks')
+local executor = require('nvim-claude.inline_diff.executor')
+local project_state = require('nvim-claude.project-state')
+local review_state = require('nvim-claude.review_state')
+
+local state_file = '/tmp/nvim-claude-inline-test-state-' .. vim.fn.getpid() .. '.json'
+project_state.get_state_file = function() return state_file end
 
 local function tmpdir()
   local dir = vim.fn.tempname()
@@ -50,15 +56,30 @@ local function open_buf(path)
   return vim.fn.bufnr(path)
 end
 
+local function wipe_root_buffers(root)
+  local resolved_root = vim.fn.resolve(root)
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.fn.resolve(vim.api.nvim_buf_get_name(bufnr))
+    if name:sub(1, #resolved_root + 1) == resolved_root .. '/' then
+      pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+    end
+  end
+end
+
 describe('inline_diff.hunks action plans', function()
   local root
+  local original_cwd = vim.fn.getcwd()
   before_each(function()
+    vim.fn.delete(state_file)
+    if project_state.clear_cache then project_state.clear_cache() end
     root = tmpdir()
     vim.fn.chdir(root)
     init_repo(root)
   end)
 
   after_each(function()
+    if root then wipe_root_buffers(root) end
+    vim.fn.chdir(original_cwd)
     if root then vim.fn.delete(root, 'rf') end
   end)
 
@@ -223,5 +244,242 @@ describe('inline_diff.hunks action plans', function()
     local planR = hunks.reject_all_hunks_in_all_files(active)
     eq('ok', planR.status)
     truthy(#planR.actions >= 2)
+  end)
+end)
+
+describe('inline_diff executed regressions', function()
+  local root
+  local original_cwd = vim.fn.getcwd()
+
+  before_each(function()
+    vim.fn.delete(state_file)
+    if project_state.clear_cache then project_state.clear_cache() end
+    root = tmpdir()
+    vim.fn.chdir(root)
+    init_repo(root)
+  end)
+
+  after_each(function()
+    if root then wipe_root_buffers(root) end
+    vim.fn.chdir(original_cwd)
+    if root then vim.fn.delete(root, 'rf') end
+  end)
+
+  it('computes unified hunks without filesystem or shell helpers', function()
+    local original_exec = utils.exec
+    local original_write = utils.write_file
+    utils.exec = function() error('unexpected shell call') end
+    utils.write_file = function() error('unexpected file write') end
+    local ok, result = pcall(inline.compute_diff, 'a\nb\nc\nd\ne\n', 'A\nb\nc\nd\nE\n')
+    utils.exec = original_exec
+    utils.write_file = original_write
+
+    truthy(ok)
+    eq(2, #result.hunks)
+    for _, hunk in ipairs(result.hunks) do
+      assert.is_number(hunk.old_start)
+      assert.is_number(hunk.old_count)
+      assert.is_number(hunk.new_start)
+      assert.is_number(hunk.new_count)
+      assert.is_table(hunk.lines)
+      assert.is_string(hunk.header)
+    end
+  end)
+
+  it('treats baseline messages as data', function()
+    local path = root .. '/file.txt'
+    local marker = root .. '/injected'
+    write_lines(path, { 'content' })
+    git('git add . && git commit -m init', root)
+
+    truthy(baseline.create_baseline('$(touch ' .. marker .. ')', root) ~= nil)
+    falsy(vim.loop.fs_stat(marker) ~= nil)
+  end)
+
+  it('rejects the hunk selected through the public navigation facade', function()
+    local path = root .. '/selected.txt'
+    local initial = {}
+    for i = 1, 30 do initial[i] = 'line ' .. i end
+    write_lines(path, initial)
+    git('git add . && git commit -m init', root)
+    baseline.create_baseline('baseline test', root)
+
+    local modified = vim.deepcopy(initial)
+    modified[5] = 'changed five'
+    modified[25] = 'changed twenty-five'
+    write_lines(path, modified)
+    local bufnr = open_buf(path)
+    review_state.add_edited_file(root, 'selected.txt')
+    inline.refresh_inline_diff(bufnr)
+    eq(2, #inline.get_diff_state(bufnr).hunks)
+
+    inline.jump_to_hunk(bufnr, 2, true)
+    eq(2, inline.get_diff_state(bufnr).current_hunk)
+    inline.reject_current_hunk(bufnr)
+
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    eq('changed five', lines[5])
+    eq('line 25', lines[25])
+    eq(1, #inline.get_diff_state(bufnr).hunks)
+    truthy(review_state.is_edited_file(root, 'selected.txt'))
+  end)
+
+  it('stops before untracking when a baseline update fails', function()
+    local path = root .. '/failure.txt'
+    write_lines(path, { 'before' })
+    git('git add . && git commit -m init', root)
+    local ref = baseline.create_baseline('baseline test', root)
+    write_lines(path, { 'after' })
+    local bufnr = open_buf(path)
+    review_state.add_edited_file(root, 'failure.txt')
+    inline.refresh_inline_diff(bufnr)
+
+    local original_update = baseline.update_baseline_with_content
+    local original_notify = vim.notify
+    baseline.update_baseline_with_content = function() return false, 'forced failure' end
+    vim.notify = function() end
+    local ok, err = pcall(inline.accept_current_hunk, bufnr)
+    baseline.update_baseline_with_content = original_update
+    vim.notify = original_notify
+
+    truthy(ok, err)
+    eq(ref, baseline.get_baseline_ref(root))
+    truthy(review_state.is_edited_file(root, 'failure.txt'))
+    truthy(inline.has_active_diff(bufnr))
+  end)
+
+  it('returns a failure and skips later actions', function()
+    review_state.add_edited_file(root, 'tracked.txt')
+    local result = executor.run_actions({
+      { type = 'unknown_effect' },
+      { type = 'project_untrack_file', git_root = root, relative_path = 'tracked.txt' },
+    })
+    falsy(result.ok)
+    eq(0, result.completed)
+    truthy(review_state.is_edited_file(root, 'tracked.txt'))
+  end)
+
+  it('normalizes nested absolute paths at the review-state boundary', function()
+    local path = root .. '/nested/new.txt'
+    vim.fn.mkdir(root .. '/nested', 'p')
+    write_lines(path, { 'new' })
+
+    truthy(review_state.add_edited_file(root, path))
+    eq('nested/new.txt', review_state.list_edited_files(root)[1])
+    truthy(review_state.is_edited_file(root, path))
+    truthy(review_state.remove_edited_file(root, path))
+    falsy(review_state.is_edited_file(root, 'nested/new.txt'))
+  end)
+
+  it('globally rejects into loaded buffers without allowing resurrection', function()
+    local path = root .. '/loaded.txt'
+    write_lines(path, { 'before' })
+    git('git add . && git commit -m init', root)
+    baseline.create_baseline('baseline test', root)
+    write_lines(path, { 'after' })
+    local bufnr = open_buf(path)
+    review_state.add_edited_file(root, 'loaded.txt')
+    inline.refresh_inline_diff(bufnr)
+
+    truthy(inline.reject_all_files())
+    eq('before', table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n'))
+    eq('before', table.concat(vim.fn.readfile(path), '\n'))
+    falsy(vim.bo[bufnr].modified)
+    falsy(review_state.is_edited_file(root, 'loaded.txt'))
+    falsy(inline.has_active_diff(bufnr))
+
+    vim.api.nvim_buf_call(bufnr, function() vim.cmd 'write' end)
+    eq('before', table.concat(vim.fn.readfile(path), '\n'))
+  end)
+
+  it('accepts all files with one batched baseline commit', function()
+    local path_a = root .. '/a.txt'
+    local path_b = root .. '/b.txt'
+    write_lines(path_a, { 'a0' })
+    write_lines(path_b, { 'b0' })
+    git('git add . && git commit -m init', root)
+    local old_ref = baseline.create_baseline('baseline test', root)
+    write_lines(path_a, { 'a1' })
+    write_lines(path_b, { 'b1' })
+    open_buf(path_a)
+    review_state.add_edited_file(root, 'a.txt')
+    review_state.add_edited_file(root, 'b.txt')
+
+    truthy(inline.accept_all_files())
+    local new_ref = baseline.get_baseline_ref(root)
+    eq('1\n', git('git rev-list --count ' .. new_ref .. ' ^' .. old_ref, root))
+    eq('a1\n', git('git show ' .. new_ref .. ':a.txt', root))
+    eq('b1\n', git('git show ' .. new_ref .. ':b.txt', root))
+    falsy(review_state.is_edited_file(root, 'a.txt'))
+    falsy(review_state.is_edited_file(root, 'b.txt'))
+  end)
+
+  it('globally rejects and closes a loaded file absent from the baseline', function()
+    git('git commit --allow-empty -m init', root)
+    baseline.create_baseline('baseline test', root)
+    local path = root .. '/new.txt'
+    write_lines(path, { 'new content' })
+    local bufnr = open_buf(path)
+    review_state.add_edited_file(root, 'new.txt')
+    inline.refresh_inline_diff(bufnr)
+
+    truthy(inline.reject_all_files())
+    falsy(vim.api.nvim_buf_is_valid(bufnr))
+    falsy(vim.loop.fs_stat(path) ~= nil)
+    falsy(review_state.is_edited_file(root, 'new.txt'))
+    falsy(inline.has_active_diff(bufnr))
+  end)
+
+  it('restores an existing empty file instead of deleting it', function()
+    local path = root .. '/empty.txt'
+    truthy(utils.write_file(path, ''))
+    git('git add . && git commit -m init', root)
+    baseline.create_baseline('baseline test', root)
+    write_lines(path, { 'not empty' })
+    local bufnr = open_buf(path)
+    review_state.add_edited_file(root, 'empty.txt')
+    inline.refresh_inline_diff(bufnr)
+
+    truthy(inline.reject_all_files())
+    truthy(vim.loop.fs_stat(path) ~= nil)
+    eq('', utils.read_file(path))
+    truthy(vim.api.nvim_buf_is_valid(bufnr))
+    eq('', table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n'))
+  end)
+
+  it('accepts truncation as an empty baseline blob without closing the buffer', function()
+    local path = root .. '/truncate.txt'
+    write_lines(path, { 'content' })
+    git('git add . && git commit -m init', root)
+    baseline.create_baseline('baseline test', root)
+    truthy(utils.write_file(path, ''))
+    local bufnr = open_buf(path)
+    review_state.add_edited_file(root, 'truncate.txt')
+    inline.refresh_inline_diff(bufnr)
+    eq(0, inline.get_diff_state(bufnr).hunks[1].new_start)
+    local jumped, jump_err = pcall(inline.jump_to_hunk, bufnr, 1, true)
+    truthy(jumped, jump_err)
+
+    inline.accept_all_hunks(bufnr)
+    local ref = baseline.get_baseline_ref(root)
+    git('git cat-file -e ' .. ref .. ':truncate.txt', root)
+    eq(0, vim.v.shell_error)
+    eq('', git('git show ' .. ref .. ':truncate.txt', root))
+    truthy(vim.api.nvim_buf_is_valid(bufnr))
+    falsy(review_state.is_edited_file(root, 'truncate.txt'))
+  end)
+
+  it('clears active diff state when a buffer is deleted', function()
+    local path = root .. '/delete-buffer.txt'
+    write_lines(path, { 'before' })
+    git('git add . && git commit -m init', root)
+    baseline.create_baseline('baseline test', root)
+    write_lines(path, { 'after' })
+    local bufnr = open_buf(path)
+    inline.refresh_inline_diff(bufnr)
+    truthy(inline.has_active_diff(bufnr))
+
+    vim.api.nvim_buf_delete(bufnr, { force = true })
+    falsy(inline.has_active_diff(bufnr))
   end)
 end)

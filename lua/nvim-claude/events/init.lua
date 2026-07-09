@@ -5,7 +5,7 @@
 local M = {}
 
 local core = require 'nvim-claude.events.core'
-local session = require 'nvim-claude.events.session'
+local review_state = require 'nvim-claude.review_state'
 local installer = require 'nvim-claude.events.installer'
 local autocmds = require 'nvim-claude.events.autocmds'
 local commands = require 'nvim-claude.events.commands'
@@ -29,31 +29,31 @@ end
 
 -- Minimal public session helpers
 function M.get_turn_files(git_root)
-  return session.get_turn_files(git_root)
+  return review_state.get_turn_files(git_root)
 end
 
 function M.clear_edited_files(git_root)
-  return session.clear_edited_files(git_root)
+  return review_state.clear_edited_files(git_root)
 end
 
 function M.clear_turn_files(git_root)
-  return session.clear_turn_files(git_root)
+  return review_state.clear_turn_files(git_root)
 end
 
 function M.list_edited_files(git_root)
-  return session.list_edited_files(git_root)
+  return review_state.list_edited_files(git_root)
 end
 
 function M.add_edited_file(git_root, relative_path)
-  return session.add_edited_file(git_root, relative_path)
+  return review_state.add_edited_file(git_root, relative_path)
 end
 
 function M.remove_edited_file(git_root, relative_path)
-  return session.remove_edited_file(git_root, relative_path)
+  return review_state.remove_edited_file(git_root, relative_path)
 end
 
 function M.is_edited_file(git_root, relative_path)
-  return session.is_edited_file(git_root, relative_path)
+  return review_state.is_edited_file(git_root, relative_path)
 end
 
 return M

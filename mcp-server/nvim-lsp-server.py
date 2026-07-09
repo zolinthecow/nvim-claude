@@ -20,7 +20,6 @@ import atexit
 import signal
 import hashlib
 import threading
-import fcntl
 from typing import Iterable, Optional, Union
 
 # Check pynvim is available (for subprocess calls)
@@ -56,95 +55,66 @@ LUA_MODULE = "nvim-claude.lsp_mcp.bridge"
 # Global state for headless instance
 _headless_process = None
 _headless_socket = None
+_headless_owned = False
 _headless_lock = threading.Lock()
-_last_cleanup_time = 0
 
 def ensure_headless_nvim():
     """Ensure a headless Neovim instance is running."""
-    global _headless_process, _headless_socket, _last_cleanup_time
-    
+    global _headless_process, _headless_socket, _headless_owned
+
     with _headless_lock:
-        # Periodic cleanup check (every 5 minutes)
-        current_time = time.time()
-        if current_time - _last_cleanup_time > 300:
-            cleanup_orphaned_processes()
-            _last_cleanup_time = current_time
-        
-        # Check if we have a valid running instance
-        if _headless_socket and os.path.exists(_headless_socket):
-            # Verify process is alive and responsive
-            if _headless_process and _headless_process.poll() is None:
-                # Test if socket is actually responsive
-                if test_socket_responsive(_headless_socket):
-                    return _headless_socket
-                else:
-                    # Socket exists but not responsive, clean it up
-                    cleanup_headless()
-        
-        # Start new headless instance
+        process_alive = _headless_process and _headless_process.poll() is None
+        if process_alive:
+            if (_headless_socket and os.path.exists(_headless_socket)
+                    and test_socket_responsive(_headless_socket)):
+                return _headless_socket
+            cleanup_headless()
+        elif _headless_owned:
+            cleanup_headless()
+
         cwd = os.getcwd()
         project_hash = hashlib.sha256(cwd.encode()).hexdigest()[:8]
-        _headless_socket = f"/tmp/nvim-claude-headless-{project_hash}.sock"
-        
-        # Use file locking to prevent race conditions
-        lock_file = f"/tmp/nvim-claude-headless-{project_hash}.lock"
+        _headless_socket = (
+            f"/tmp/nvim-claude-headless-{project_hash}-{os.getpid()}.sock"
+        )
+        if os.path.exists(_headless_socket):
+            try:
+                os.unlink(_headless_socket)
+            except OSError:
+                pass
+
+        config_dir = os.path.expanduser("~/.config/nvim")
+        user_init = os.path.join(config_dir, "init.lua")
+        nvim_cmd = [
+            "nvim", "--headless", "--listen", _headless_socket,
+            "--cmd", "let g:headless_mode=1",
+            "-u", user_init,
+        ]
+
         try:
-            with open(lock_file, 'w') as f:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                
-                # Double-check socket doesn't exist now that we have the lock
-                if os.path.exists(_headless_socket) and test_socket_responsive(_headless_socket):
-                    return _headless_socket
-                
-                # Remove old socket if it exists
+            _headless_process = subprocess.Popen(
+                nvim_cmd,
+                cwd=cwd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setsid if sys.platform != 'win32' else None
+            )
+            _headless_owned = True
+
+            for _ in range(50):
                 if os.path.exists(_headless_socket):
-                    try:
-                        os.unlink(_headless_socket)
-                    except:
-                        pass
-                
-                # Build Neovim command - use simple approach that works
-                config_dir = os.path.expanduser("~/.config/nvim")
-                user_init = os.path.join(config_dir, "init.lua")
-                
-                nvim_cmd = [
-                    "nvim", "--headless", "--listen", _headless_socket,
-                    "-u", user_init,
-                    "-c", "let g:headless_mode=1"
-                ]
-                
-                # Start the headless Neovim process in the project directory
-                try:
-                    _headless_process = subprocess.Popen(
-                        nvim_cmd,
-                        cwd=cwd,  # Start in the project directory for proper LSP context
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        preexec_fn=os.setsid if sys.platform != 'win32' else None
-                    )
-                    
-                    # Wait for socket to be created
-                    for _ in range(50):  # 5 seconds timeout
-                        if os.path.exists(_headless_socket):
-                            time.sleep(0.2)  # Give it a moment to fully initialize
-                            break
-                        time.sleep(0.1)
-                    else:
-                        cleanup_headless()
-                        raise RuntimeError("Headless Neovim failed to create socket")
-                    
-                    # Register cleanup
-                    atexit.register(cleanup_headless)
-                    
-                    return _headless_socket
-                    
-                except Exception as e:
-                    cleanup_headless()
-                    raise RuntimeError(f"Failed to start headless Neovim: {e}")
-        except (IOError, OSError):
-            # Another process has the lock, wait and retry
-            time.sleep(0.5)
-            return ensure_headless_nvim()
+                    time.sleep(0.2)
+                    break
+                time.sleep(0.1)
+            else:
+                cleanup_headless()
+                raise RuntimeError("Headless Neovim failed to create socket")
+
+            atexit.register(cleanup_headless)
+            return _headless_socket
+        except Exception as e:
+            cleanup_headless()
+            raise RuntimeError(f"Failed to start headless Neovim: {e}")
 
 
 def test_socket_responsive(socket_path):
@@ -172,50 +142,19 @@ except:
         return False
 
 
-def cleanup_orphaned_processes():
-    """Clean up orphaned headless Neovim processes for THIS project only."""
-    try:
-        # Get current project hash to target only this project's processes
-        cwd = os.getcwd()
-        project_hash = hashlib.sha256(cwd.encode()).hexdigest()[:8]
-        project_socket_pattern = f'/tmp/nvim-claude-headless-{project_hash}.sock'
-        
-        # Find headless Neovim processes for this specific project
-        result = subprocess.run(
-            ['pgrep', '-f', f'nvim --headless --listen {project_socket_pattern}'],
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode == 0:
-            pids = result.stdout.strip().split('\n')
-            current_pid = _headless_process.pid if _headless_process else None
-            
-            for pid_str in pids:
-                try:
-                    pid = int(pid_str)
-                    # Don't kill our current process, but clean up any others for this project
-                    if pid != current_pid:
-                        # Double-check this process is actually using our project's socket
-                        proc_check = subprocess.run(
-                            ['ps', '-p', str(pid), '-o', 'args='],
-                            capture_output=True,
-                            text=True
-                        )
-                        if proc_check.returncode == 0 and project_socket_pattern in proc_check.stdout:
-                            os.kill(pid, signal.SIGTERM)
-                except (ValueError, ProcessLookupError):
-                    pass
-    except:
-        pass
-
-
 def cleanup_headless():
     """Clean up the headless Neovim instance and LSP servers."""
-    global _headless_process, _headless_socket
+    global _headless_process, _headless_socket, _headless_owned
+
+    if not _headless_owned:
+        _headless_process = None
+        _headless_socket = None
+        return
     
-    # First, try to gracefully stop LSP servers
-    if _headless_socket and os.path.exists(_headless_socket):
+    process_alive = _headless_process and _headless_process.poll() is None
+
+    # First, try to gracefully stop LSP servers.
+    if process_alive and _headless_socket and os.path.exists(_headless_socket):
         try:
             script = f"""
 import pynvim
@@ -260,6 +199,7 @@ except:
         except:
             pass
     _headless_socket = None
+    _headless_owned = False
 
 
 def call_headless_lua(function_name: str, *args):
@@ -285,14 +225,10 @@ try:
     args_json = base64.b64decode(args_b64).decode('utf-8')
     args = json.loads(args_json)
     
-    # Call the Lua function directly
-    # Unpack single argument to avoid double nesting
-    if len(args) == 1:
-        lua_expr = "return require('{LUA_MODULE}').{function_name}(...)"
-        result = nvim.exec_lua(lua_expr, args[0] if isinstance(args[0], list) else [args[0]])
-    else:
-        lua_expr = "return require('{LUA_MODULE}').{function_name}(...)"
-        result = nvim.exec_lua(lua_expr, args)
+    # pynvim accepts Lua varargs. Passing the Python list as one value makes
+    # two-argument methods receive a List followed by nil.
+    lua_expr = "return require('{LUA_MODULE}').{function_name}(...)"
+    result = nvim.exec_lua(lua_expr, *args)
     
     # Convert result to JSON string if needed
     if isinstance(result, str):

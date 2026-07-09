@@ -1,6 +1,8 @@
 # LSP/MCP bridge
 
-The MCP bridge runs diagnostics in a headless Neovim instance. The facade exposes install helpers and a diagnostics API without inline-diff coupling.
+The MCP bridge runs diagnostics in a headless Neovim instance. Each MCP server process owns one project-specific socket and child Neovim; it never reuses, stops, or unlinks another process's socket. The facade exposes install helpers and a diagnostics API without inline-diff coupling.
+
+Diagnostic collection reuses existing buffers without detaching their LSP clients or deleting them. Buffers created by the bridge are unloaded or deleted according to bridge ownership after results are collected.
 
 ## Diagnostics payloads
 

@@ -1,76 +1,106 @@
--- Worktree helpers for background agents: encapsulate branch/stash creation
-
 local M = {}
 
-local utils = require('nvim-claude.utils')
+local utils = require 'nvim-claude.utils'
 local git = utils.git
 
-local function default_branch()
-  return git.current_branch() or git.default_branch()
+local function default_branch(project_root)
+  return git.current_branch(project_root) or git.default_branch(project_root)
 end
 
--- Create a worktree at agent_dir based on fork_from
--- fork_from: { type = 'branch'|'stash', branch? }
--- Returns: success:boolean, info|err
--- info = { base_info:string, fork_info:table, worktree:table }
-function M.create(agent_dir, fork_from, task)
-  local ok, result
-  local base_info = ''
-  local fork_info = {}
+local function restore_main_stash(project_root, stash)
+  if not stash then return true end
+  local applied, apply_err = git.apply_stash(project_root, stash.oid, true)
+  if not applied then return false, apply_err end
+  local dropped, drop_err = git.drop_stash(project_root, stash.oid)
+  if not dropped then return false, drop_err end
+  return true
+end
 
-  if fork_from and fork_from.type == 'stash' then
-    -- Try to stash current changes (including untracked) in main repo
-    local label = 'Agent fork: ' .. (task and task:sub(1, 50) or utils.timestamp())
-    local stash_cmd = string.format('git stash push -u -m %s', vim.fn.shellescape(label))
-    local stash_result = utils.exec(stash_cmd)
+function M.create(agent_dir, fork_from, task, project_root)
+  project_root = project_root or utils.get_project_root()
+  if not project_root then return false, 'No project root found' end
 
-    if stash_result and stash_result:match('Saved working directory') then
-      -- Obtain stash ref
-      local stash_ref = utils.exec('git rev-parse stash@{0}')
-      if stash_ref then stash_ref = stash_ref:gsub('\n', '') end
+  local branch = (fork_from and fork_from.branch) or default_branch(project_root)
+  if not branch then return false, 'No base branch found' end
 
-      -- Create worktree from current branch
-      local branch = default_branch()
-      ok, result = git.create_worktree(agent_dir, branch)
+  if not fork_from or fork_from.type ~= 'stash' then
+    local ok, result = git.create_worktree(agent_dir, branch, project_root)
+    if not ok then return false, result end
+    return true, {
+      base_info = string.format('Forked from: %s branch', branch),
+      fork_info = { type = 'branch', branch = branch },
+      worktree = result,
+    }
+  end
 
-      if ok and stash_ref and stash_ref ~= '' then
-        -- Apply stash in the new worktree using the SHA reference
-        local apply_cmd = string.format('cd %s && git stash apply %s', vim.fn.shellescape(agent_dir), stash_ref)
-        local apply_result = utils.exec(apply_cmd)
-        if apply_result and not apply_result:match('error:') then
-          base_info = string.format('Forked from: %s (with stashed changes including untracked files)', branch)
-          -- Pop the stash from the main repository since it was successfully applied
-          utils.exec('git stash pop')
-          fork_info = { type = 'stash', branch = branch }
-        else
-          base_info = string.format('Forked from: %s (stash apply failed)', branch)
-          fork_info = { type = 'branch', branch = branch }
-        end
-      end
-    else
-      -- No changes to stash, fall back to branch path
-      local branch = default_branch()
-      ok, result = git.create_worktree(agent_dir, branch)
-      base_info = string.format('Forked from: %s branch (no changes to stash)', branch)
-      fork_info = { type = 'branch', branch = branch }
+  local stashed, stash_or_err = git.stash_push(
+    project_root,
+    'Agent fork: ' .. (task and task:sub(1, 50) or utils.timestamp())
+  )
+  if not stashed then return false, 'Failed to stash main worktree: ' .. tostring(stash_or_err) end
+  local stash = stash_or_err
+
+  local created, result = git.create_worktree(agent_dir, branch, project_root)
+  if not created then
+    local restored, restore_err = restore_main_stash(project_root, stash)
+    if not restored then
+      return false, string.format(
+        'Worktree creation failed: %s; main worktree recovery failed: %s (stash %s)',
+        tostring(result),
+        tostring(restore_err),
+        stash and stash.oid or 'none'
+      )
     end
-  else
-    -- Branch flow
-    local branch = (fork_from and fork_from.branch) or default_branch()
-    ok, result = git.create_worktree(agent_dir, branch)
-    base_info = string.format('Forked from: %s branch', branch)
-    fork_info = { type = 'branch', branch = branch }
+    return false, result
   end
 
-  if not ok then
-    return false, (result or 'Failed to create worktree')
+  if stash then
+    local applied, apply_err = git.apply_stash(agent_dir, stash.oid, false)
+    if not applied then
+      git.remove_worktree(agent_dir, project_root)
+      local restored, restore_err = restore_main_stash(project_root, stash)
+      if not restored then
+        return false, string.format(
+          'Failed to apply changes in agent worktree: %s; main recovery failed: %s (stash %s)',
+          tostring(apply_err),
+          tostring(restore_err),
+          stash.oid
+        )
+      end
+      return false, 'Failed to apply changes in agent worktree: ' .. tostring(apply_err)
+    end
+
+    local restored, restore_err = git.apply_stash(project_root, stash.oid, true)
+    if not restored then
+      git.remove_worktree(agent_dir, project_root)
+      return false, string.format(
+        'Failed to restore main worktree: %s (recovery stash %s retained)',
+        tostring(restore_err),
+        stash.oid
+      )
+    end
+    local dropped, drop_err = git.drop_stash(project_root, stash.oid)
+    if not dropped then
+      git.remove_worktree(agent_dir, project_root)
+      return false, string.format(
+        'Main worktree restored, but failed to remove recovery stash %s: %s',
+        stash.oid,
+        tostring(drop_err)
+      )
+    end
   end
 
-  return true, { base_info = base_info, fork_info = fork_info, worktree = result }
+  return true, {
+    base_info = stash
+        and string.format('Forked from: %s (with uncommitted changes)', branch)
+      or string.format('Forked from: %s branch (no uncommitted changes)', branch),
+    fork_info = { type = stash and 'stash' or 'branch', branch = branch },
+    worktree = result,
+  }
 end
 
-function M.remove(path)
-  return git.remove_worktree(path)
+function M.remove(path, project_root)
+  return git.remove_worktree(path, project_root)
 end
 
 return M

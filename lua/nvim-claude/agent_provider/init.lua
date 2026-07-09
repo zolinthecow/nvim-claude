@@ -115,6 +115,12 @@ function M.name()
   return 'claude'
 end
 
+function M.debug_info()
+  local impl = ensure_current()
+  if impl and impl.debug_info then return vim.deepcopy(impl.debug_info()) end
+  return { name = M.name() }
+end
+
 -- Hook installation passthrough
 function M.install_hooks()
   local impl = ensure_current()

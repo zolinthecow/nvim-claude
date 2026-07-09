@@ -3,51 +3,215 @@ local M = {}
 local utils = require 'nvim-claude.utils'
 local logger = require 'nvim-claude.logger'
 local schema = require 'nvim-claude.project_state_schema'
+local uv = vim.uv or vim.loop
 
--- Cache resolved git roots to avoid repeated subprocess calls
--- on hot paths (e.g. frequent project_state.get/set operations).
-local git_root_cache = {}
+local state_cache = nil
+local state_cache_file = nil
+local state_cache_signature = nil
+local loaded_snapshots = setmetatable({}, { __mode = 'k' })
+local FAILED_SNAPSHOT = {}
+
+local LOCK_TIMEOUT_MS = 3000
 
 local function trim_trailing_slash(path)
   return (path or ''):gsub('/+$', '')
 end
 
-local function resolve_git_root(path)
-  if not path or path == '' then
-    return nil
-  end
-  local dir = path
-  if vim.fn.isdirectory(dir) == 0 then
-    dir = vim.fn.fnamemodify(dir, ':h')
-  end
-  if not dir or dir == '' or vim.fn.isdirectory(dir) == 0 then
-    return nil
+local function file_signature(path)
+  local stat = uv.fs_stat(path)
+  if not stat then return 'missing' end
+  local mtime = stat.mtime or {}
+  return table.concat({ stat.size or 0, mtime.sec or 0, mtime.nsec or 0 }, ':')
+end
+
+local function invalidate_state_cache()
+  state_cache = nil
+  state_cache_file = nil
+  state_cache_signature = nil
+end
+
+local function read_states_from_disk(state_file)
+  local stat, stat_err, stat_code = uv.fs_stat(state_file)
+  if not stat then
+    if stat_code == 'ENOENT' then return {} end
+    return nil, 'Failed to inspect state file: ' .. tostring(stat_err or stat_code)
   end
 
-  dir = trim_trailing_slash(dir)
-  if dir == '' then
-    return nil
+  local content, read_err = utils.read_file(state_file)
+  if content == nil then
+    return nil, 'Failed to read state file: ' .. tostring(read_err or 'unknown error')
+  end
+  if content == '' then return {} end
+
+  local ok, decoded = pcall(vim.json.decode, content)
+  if not ok or type(decoded) ~= 'table' then
+    return nil, 'Failed to parse state file: ' .. tostring(decoded)
   end
 
-  local cached = git_root_cache[dir]
-  if type(cached) == 'string' and cached ~= '' then
-    return cached
+  local normalized = schema.normalize_all_states(decoded, M.get_project_key)
+  return normalized
+end
+
+local function load_cached_states()
+  local state_file = M.get_state_file()
+  local signature = file_signature(state_file)
+  if state_cache and state_cache_file == state_file and state_cache_signature == signature then
+    return vim.deepcopy(state_cache)
   end
 
-  local cmd = string.format('cd %s && git rev-parse --show-toplevel 2>/dev/null', vim.fn.shellescape(dir))
-  local out = vim.fn.system(cmd)
-  if vim.v.shell_error ~= 0 or not out or out == '' then
-    return nil
+  local states, err = read_states_from_disk(state_file)
+  if not states then return nil, err end
+
+  state_cache = states
+  state_cache_file = state_file
+  state_cache_signature = signature
+  return vim.deepcopy(states)
+end
+
+local function atomic_write(path, content)
+  utils.ensure_dir(vim.fn.fnamemodify(path, ':h'))
+  local suffix = string.format('%d-%d', uv.os_getpid(), uv.hrtime())
+  local temp_path = path .. '.tmp.' .. suffix
+  local fd, open_err = uv.fs_open(temp_path, 'w', 384)
+  if not fd then return false, open_err end
+
+  local ok, write_err = uv.fs_write(fd, content, 0)
+  local synced, sync_err = nil, nil
+  if ok then synced, sync_err = uv.fs_fsync(fd) end
+  uv.fs_close(fd)
+
+  if not ok or not synced then
+    uv.fs_unlink(temp_path)
+    return false, write_err or sync_err
   end
 
-  local git_root = trim_trailing_slash(out:gsub('%s+$', ''))
-  if git_root ~= '' then
-    git_root_cache[dir] = git_root
-    git_root_cache[git_root] = git_root
-    return git_root
+  local renamed, rename_err = uv.fs_rename(temp_path, path)
+  if not renamed then
+    uv.fs_unlink(temp_path)
+    return false, rename_err
+  end
+  return true
+end
+
+local function acquire_lock(state_file)
+  local lock_dir = state_file .. '.lock'
+  local owner_file = lock_dir .. '/owner'
+  local owner = string.format('%d:%d', uv.os_getpid(), uv.hrtime())
+  local started = uv.hrtime()
+
+  local function process_is_alive(pid)
+    if pid == uv.os_getpid() then return true end
+    local result, err = uv.kill(pid, 0)
+    return result == 0 or tostring(err):match('EPERM') ~= nil
   end
 
-  return nil
+  repeat
+    local created = uv.fs_mkdir(lock_dir, 448)
+    if created then
+      local fd, open_err = uv.fs_open(owner_file, 'w', 384)
+      if not fd then
+        pcall(vim.fn.delete, lock_dir, 'rf')
+        return nil, 'Failed to record project-state lock owner: ' .. tostring(open_err)
+      end
+      local written, write_err = uv.fs_write(fd, owner, 0)
+      uv.fs_close(fd)
+      if not written then
+        pcall(vim.fn.delete, lock_dir, 'rf')
+        return nil, 'Failed to record project-state lock owner: ' .. tostring(write_err)
+      end
+      return function()
+        local current_owner = utils.read_file(owner_file)
+        if current_owner == owner then pcall(vim.fn.delete, lock_dir, 'rf') end
+      end
+    end
+
+    local current_owner = utils.read_file(owner_file)
+    local owner_pid = current_owner and tonumber(current_owner:match('^(%d+):')) or nil
+    if owner_pid and not process_is_alive(owner_pid) then
+      if utils.read_file(owner_file) == current_owner then
+        pcall(vim.fn.delete, lock_dir, 'rf')
+      end
+    end
+    vim.wait(10, function() return false end)
+  until (uv.hrtime() - started) / 1e6 >= LOCK_TIMEOUT_MS
+
+  return nil, 'Timed out waiting for project-state lock'
+end
+
+local function mutate_states(mutator)
+  local state_file = M.get_state_file()
+  utils.ensure_dir(vim.fn.fnamemodify(state_file, ':h'))
+  local release, lock_err = acquire_lock(state_file)
+  if not release then
+    logger.error('project_state', lock_err, { state_file = state_file })
+    return false
+  end
+
+  local ran, saved, operation_err = xpcall(function()
+    invalidate_state_cache()
+    local states, read_err = read_states_from_disk(state_file)
+    if not states then return false, read_err end
+
+    if mutator(states) == false then return false end
+
+    local next_states = schema.normalize_all_states(states, M.get_project_key)
+    local content = vim.json.encode(next_states)
+    local written, write_err = atomic_write(state_file, content)
+    if written then
+      state_cache = vim.deepcopy(next_states)
+      state_cache_file = state_file
+      state_cache_signature = file_signature(state_file)
+    end
+    return written, write_err, next_states
+  end, debug.traceback)
+  release()
+
+  if not ran then
+    logger.error('project_state', 'State mutation failed', { error = saved })
+    return false
+  end
+  if not saved then
+    if operation_err then
+      logger.error('project_state', 'Failed to persist state', { error = operation_err })
+    end
+    return false
+  end
+
+  return true
+end
+
+local DELETE = {}
+
+local function is_nonempty_list(value)
+  if type(value) ~= 'table' then return false end
+  if next(value) == nil then return false end
+  if type(vim.islist) == 'function' then return vim.islist(value) end
+  return vim.tbl_islist(value)
+end
+
+local function apply_snapshot_delta(current, before, after)
+  if vim.deep_equal(before, after) then return vim.deepcopy(current) end
+  if after == nil then return DELETE end
+
+  if type(before) == 'table'
+      and type(after) == 'table'
+      and not is_nonempty_list(before)
+      and not is_nonempty_list(after)
+  then
+    local result = type(current) == 'table' and not is_nonempty_list(current)
+        and vim.deepcopy(current)
+      or {}
+    local keys = {}
+    for key in pairs(before) do keys[key] = true end
+    for key in pairs(after) do keys[key] = true end
+    for key in pairs(keys) do
+      local value = apply_snapshot_delta(result[key], before[key], after[key])
+      result[key] = value == DELETE and nil or value
+    end
+    return next(result) and result or vim.empty_dict()
+  end
+
+  return vim.deepcopy(after)
 end
 
 -- Get the global state directory
@@ -89,8 +253,7 @@ function M.get_project_key(project_root)
     return nil
   end
 
-  local git_root = resolve_git_root(normalized)
-  return git_root or normalized
+  return utils.get_project_root_for_file(normalized) or normalized
 end
 
 -- Get the global state file path
@@ -100,42 +263,39 @@ end
 
 -- Load all project states
 function M.load_all_states()
-  local state_file = M.get_state_file()
-  local content = utils.read_file(state_file)
-  
-  if not content then
-    return {}
+  local states, err = load_cached_states()
+  if states then
+    loaded_snapshots[states] = vim.deepcopy(states)
+    return states
   end
-  
-  local ok, state = pcall(vim.json.decode, content)
-  if not ok then
-    logger.error('load_all_states', 'Failed to parse state file', { error = state })
-    return {}
-  end
-
-  local normalized, changed = schema.normalize_all_states(state or {}, M.get_project_key)
-  if changed then
-    local saved = M.save_all_states(normalized)
-    if not saved then
-      logger.warn('load_all_states', 'Failed to persist normalized state file')
-    end
-  end
-
-  return normalized
+  logger.error('load_all_states', err)
+  local failed = {}
+  loaded_snapshots[failed] = FAILED_SNAPSHOT
+  return failed
 end
 
 -- Save all project states
 function M.save_all_states(states)
-  local state_file = M.get_state_file()
-  local normalized = schema.normalize_all_states(states or {}, M.get_project_key)
-  local content = vim.json.encode(normalized)
-  
-  if not utils.write_file(state_file, content) then
-    logger.error('save_all_states', 'Failed to write state file')
+  local proposed = vim.deepcopy(states or {})
+  local snapshot = type(states) == 'table' and loaded_snapshots[states] or nil
+  if snapshot == FAILED_SNAPSHOT then
+    logger.error('save_all_states', 'Refusing to save state returned from a failed read')
     return false
   end
-  
-  return true
+
+  local saved = mutate_states(function(current)
+    if snapshot then
+      local merged = apply_snapshot_delta(current, snapshot, proposed)
+      for key in pairs(current) do current[key] = nil end
+      for key, value in pairs(merged == DELETE and {} or merged) do current[key] = value end
+      return
+    end
+
+    for key in pairs(current) do current[key] = nil end
+    for key, value in pairs(proposed) do current[key] = value end
+  end)
+  if saved and snapshot then loaded_snapshots[states] = vim.deepcopy(proposed) end
+  return saved
 end
 
 -- Get state for current project
@@ -145,56 +305,54 @@ function M.get_project_state(project_root)
     return nil
   end
   
-  local all_states = M.load_all_states()
-  return all_states[key]
+  local all_states, err = load_cached_states()
+  if not all_states then
+    logger.error('get_project_state', err)
+    return nil
+  end
+  return all_states[key] and vim.deepcopy(all_states[key]) or nil
 end
 
 -- Save state for current project
 function M.save_project_state(project_root, state_data)
-  local key = M.get_project_key(project_root)
-  if not key then
-    logger.error('save_project_state', 'No project key available')
-    return false
-  end
-  
-  local all_states = M.load_all_states()
-  
-  -- Update the specific project's state
-  all_states[key] = vim.tbl_extend('force', all_states[key] or {}, state_data, {
-    last_accessed = os.time()
-  })
-  
-  return M.save_all_states(all_states)
+  return M.update_project(project_root, function(state)
+    return vim.tbl_extend('force', state, state_data or {})
+  end)
 end
 
 -- Generic get/set for any key in project state
 function M.get(project_root, key)
   local state = M.get_project_state(project_root)
-  return state and state[key] or nil
+  return state and vim.deepcopy(state[key]) or nil
 end
 
 function M.set(project_root, key, value)
+  return M.update_project(project_root, function(state)
+    state[key] = value == nil and nil or vim.deepcopy(value)
+    return state
+  end)
+end
+
+function M.update_project(project_root, updater)
   local project_key = M.get_project_key(project_root)
   if not project_key then
-    logger.error('set', 'No project key available')
+    logger.error('update_project', 'No project key available')
     return false
   end
-  
-  local all_states = M.load_all_states()
-  all_states[project_key] = all_states[project_key] or {}
-  
-  if value == nil then
-    -- Explicitly remove the key when value is nil
-    all_states[project_key][key] = nil
-  else
-    -- Set the value normally
-    all_states[project_key][key] = value
+
+  if type(updater) ~= 'function' then
+    logger.error('update_project', 'Updater must be a function')
+    return false
   end
-  
-  -- Update last_accessed
-  all_states[project_key].last_accessed = os.time()
-  
-  return M.save_all_states(all_states)
+
+  return mutate_states(function(all_states)
+    local current = vim.deepcopy(all_states[project_key] or {})
+    local updated = updater(current)
+    if updated == false then return false end
+    if updated ~= nil then current = updated end
+    current.last_accessed = os.time()
+    all_states[project_key] = current
+  end)
 end
 
 
@@ -202,34 +360,28 @@ end
 function M.cleanup_old_projects(days_threshold)
   days_threshold = days_threshold or 30
   local cutoff_time = os.time() - (days_threshold * 24 * 60 * 60)
-  
-  local all_states = M.load_all_states()
   local removed = 0
-  
-  for project_path, state in pairs(all_states) do
-    if not (type(project_path) == 'string' and project_path:sub(1, 2) == '__') then
-      -- Check if project still exists
-      local exists = vim.fn.isdirectory(project_path) == 1
 
-      -- Check last access time
-      local last_accessed = state.last_accessed or 0
+  local saved = mutate_states(function(all_states)
+    for project_path, state in pairs(all_states) do
+      if not (type(project_path) == 'string' and project_path:sub(1, 2) == '__') then
+        local exists = vim.fn.isdirectory(project_path) == 1
+        local last_accessed = state.last_accessed or 0
 
-      if not exists or last_accessed < cutoff_time then
-        all_states[project_path] = nil
-        removed = removed + 1
-        logger.info('cleanup_old_projects', 'Removed old project state', {
-          project = project_path,
-          exists = exists,
-          last_accessed = os.date('%Y-%m-%d', last_accessed)
-        })
+        if not exists or last_accessed < cutoff_time then
+          all_states[project_path] = nil
+          removed = removed + 1
+          logger.info('cleanup_old_projects', 'Removed old project state', {
+            project = project_path,
+            exists = exists,
+            last_accessed = os.date('%Y-%m-%d', last_accessed),
+          })
+        end
       end
     end
-  end
-  
-  if removed > 0 then
-    M.save_all_states(all_states)
-  end
-  
+  end)
+
+  if not saved then return 0 end
   return removed
 end
 
@@ -268,39 +420,42 @@ function M.migrate_local_state(project_root)
   end
   
   logger.info('migrate_local_state', 'Found local state to migrate', { project = project_root })
-  
-  -- Load old inline diff state
-  local old_diff_file = old_dir .. '/inline-diff-state.json'
-  if vim.fn.filereadable(old_diff_file) == 1 then
-    local content = utils.read_file(old_diff_file)
-    if content then
-      local ok, old_state = pcall(vim.json.decode, content)
-      if ok and old_state then
-        M.set(project_root, 'inline_diff_state', old_state)
-        logger.info('migrate_local_state', 'Migrated inline diff state')
+
+  local migrated = false
+  local failed = false
+  local files = {
+    { path = old_dir .. '/inline-diff-state.json', key = 'inline_diff_state' },
+    { path = old_dir .. '/agent-registry.json', key = 'agent_registry' },
+    { path = old_dir .. '/checkpoint-state.json', key = 'checkpoint_state' },
+  }
+
+  for _, item in ipairs(files) do
+    if vim.fn.filereadable(item.path) == 1 then
+      local content = utils.read_file(item.path)
+      local ok, value = false, nil
+      if content then ok, value = pcall(vim.json.decode, content) end
+      if ok and type(value) == 'table' and M.set(project_root, item.key, value) then
+        vim.fn.delete(item.path)
+        migrated = true
+        logger.info('migrate_local_state', 'Migrated legacy state', { key = item.key })
+      else
+        failed = true
+        logger.error('migrate_local_state', 'Failed to migrate legacy state', { path = item.path })
       end
     end
   end
-  
-  -- Load old agent registry
-  local old_registry_file = old_dir .. '/agent-registry.json'
-  if vim.fn.filereadable(old_registry_file) == 1 then
-    local content = utils.read_file(old_registry_file)
-    if content then
-      local ok, old_registry = pcall(vim.json.decode, content)
-      if ok and old_registry then
-        M.set(project_root, 'agent_registry', old_registry)
-        logger.info('migrate_local_state', 'Migrated agent registry')
-      end
-    end
+
+  if not failed then
+    local remaining = vim.fn.readdir(old_dir)
+    if #remaining == 0 then vim.fn.delete(old_dir, 'd') end
   end
-  
-  -- Remove old directory after successful migration
-  local remove_cmd = string.format('rm -rf "%s"', old_dir)
-  utils.exec(remove_cmd)
-  logger.info('migrate_local_state', 'Removed old local state directory')
-  
-  return true
+
+  return migrated and not failed
+end
+
+function M.clear_cache()
+  invalidate_state_cache()
+  utils.clear_project_root_cache()
 end
 
 return M

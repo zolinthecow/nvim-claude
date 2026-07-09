@@ -2,12 +2,32 @@
 
 local M = {}
 
-local nvc = require('nvim-claude')
 local utils = require('nvim-claude.utils')
 local git = utils.git
 local tmux = utils.tmux
 local registry = require('nvim-claude.background_agent.registry')
 local worktree = require('nvim-claude.background_agent.worktree')
+local config = require('nvim-claude.background_agent.config')
+local logger = require('nvim-claude.logger')
+
+local function rollback(project_root, agent_dir, window_id)
+  if window_id then
+    utils.exec('tmux kill-window -t ' .. vim.fn.shellescape(window_id))
+  end
+  if agent_dir and utils.file_exists(agent_dir) then
+    local ok, err = worktree.remove(agent_dir, project_root)
+    if not ok then
+      logger.error('background_agent.create', 'Failed to roll back worktree', {
+        worktree = agent_dir,
+        error = err,
+      })
+    end
+  end
+  local work_dir = agent_dir and vim.fn.fnamemodify(agent_dir, ':h') or nil
+  if work_dir and vim.fn.isdirectory(work_dir) == 1 and #vim.fn.readdir(work_dir) == 0 then
+    vim.fn.delete(work_dir, 'd')
+  end
+end
 
 local function format_task_sections(task_string)
   local formatted = {}
@@ -51,25 +71,27 @@ end
 -- Create the agent worktree, tmux window, files, and registry entry
 function M.create(task, fork_from, setup_commands)
   if not tmux.validate() then return false, 'Not inside tmux' end
+  if type(task) ~= 'string' or vim.trim(task) == '' then return false, 'Task is required' end
 
   local project_root = utils.get_project_root()
-  local cfg = nvc.config and nvc.config.agents or { work_dir = '.agent-work', auto_gitignore = true, max_agents = 5 }
+  if not project_root then return false, 'No project root found' end
+  local cfg = config.get()
   local work_dir = project_root .. '/' .. (cfg.work_dir or '.agent-work')
   local agent_dir = work_dir .. '/' .. utils.agent_dirname(task)
 
-  if cfg.auto_gitignore then
-    git.add_to_gitignore((cfg.work_dir or '.agent-work') .. '/')
+  registry.validate_agents(project_root)
+  local active_count = registry.get_active_count(project_root)
+  if cfg.max_agents and active_count >= cfg.max_agents then
+    return false, string.format('Agent limit reached (%d/%d)', active_count, cfg.max_agents)
   end
 
   if not utils.ensure_dir(work_dir) then
     return false, 'Failed to create work directory'
   end
-  if not utils.ensure_dir(agent_dir) then
-    return false, 'Failed to create agent directory'
-  end
 
-  local ok, info = worktree.create(agent_dir, fork_from, task)
+  local ok, info = worktree.create(agent_dir, fork_from, task, project_root)
   if not ok then
+    rollback(project_root, agent_dir)
     return false, info
   end
 
@@ -77,30 +99,16 @@ function M.create(task, fork_from, setup_commands)
 
   -- Mission log
   local log_content = string.format('Agent Mission Log\n================\n\nTask: %s\nStarted: %s\nStatus: Active\n%s\n\n', task, os.date '%Y-%m-%d %H:%M:%S', base_info)
-  utils.write_file(agent_dir .. '/mission.log', log_content)
-
-  -- Agent limit
-  local active_count = registry.get_active_count()
-  if cfg.max_agents and active_count >= cfg.max_agents then
-    return false, string.format('Agent limit reached (%d/%d)', active_count, cfg.max_agents)
+  if not utils.write_file(agent_dir .. '/mission.log', log_content) then
+    rollback(project_root, agent_dir)
+    return false, 'Failed to write agent mission log'
   end
-
-  -- tmux window (provider-specific name)
-  local agent_provider = require('nvim-claude.agent_provider')
-  local window_name = agent_provider.background.generate_window_name()
-  local window_id = tmux.create_agent_window(window_name, agent_dir)
-  if not window_id then
-    return false, 'Failed to create agent tmux window'
-  end
-
-  local agent_id = registry.register(task, agent_dir, window_id, window_name, info.fork_info or { type = fork_from and fork_from.type or 'branch', branch = fork_from and fork_from.branch or (git.current_branch() or git.default_branch()) })
-
-  -- Update mission log with Agent ID
-  local new_log = (utils.read_file(agent_dir .. '/mission.log') or '') .. string.format('\nAgent ID: %s\n', agent_id)
-  utils.write_file(agent_dir .. '/mission.log', new_log)
 
   -- progress.txt
-  utils.write_file(agent_dir .. '/progress.txt', 'Starting...')
+  if not utils.write_file(agent_dir .. '/progress.txt', 'Starting...') then
+    rollback(project_root, agent_dir)
+    return false, 'Failed to write agent progress file'
+  end
 
   -- agent-instructions.md with optional setup section
   local setup_section = ''
@@ -176,37 +184,66 @@ The file `mission.log` contains additional details about this agent's creation a
     base_info
   )
 
-  utils.write_file(agent_dir .. '/agent-instructions.md', agent_context)
+  if not utils.write_file(agent_dir .. '/agent-instructions.md', agent_context) then
+    rollback(project_root, agent_dir)
+    return false, 'Failed to write agent instructions'
+  end
 
   -- Provider-specific context injection (e.g., CLAUDE.md import)
-  local logger = require('nvim-claude.logger')
+  local agent_provider = require('nvim-claude.agent_provider')
   logger.debug('background_agent.create', 'calling provider.append_to_context', { dir = agent_dir })
-  local ok_append, err_append = pcall(agent_provider.background.append_to_context, agent_dir)
+  local ok_append, append_result = pcall(agent_provider.background.append_to_context, agent_dir)
+  local err_append = ok_append and nil or append_result
   logger.debug('background_agent.create', 'provider.append_to_context returned', { ok = ok_append, err = err_append })
-  do
-    local md_path = agent_dir .. '/CLAUDE.md'
-    local content = utils.read_file(md_path) or ''
-    local has_marker = content:match('@import%s+agent%-instructions%.md') or content:match('See%s+@agent%-instructions%.md')
-    logger.debug('background_agent.create', 'CLAUDE.md after append', {
-      path = md_path,
-      exists = utils.file_exists(md_path),
-      length = #content,
-      head = content:sub(1, 120),
-      has_marker = has_marker and true or false,
-    })
-    if not has_marker then
-      -- Fallback: ensure the import marker exists by prepending it
-      local marker = '@import agent-instructions.md\n\n'
-      local new_content = marker .. content
-      local ok_write = utils.write_file(md_path, new_content)
-      logger.debug('background_agent.create', 'Fallback write of import marker', { path = md_path, ok = ok_write })
-    end
+  if not ok_append or append_result == false then
+    rollback(project_root, agent_dir)
+    return false, 'Failed to prepare provider context: ' .. tostring(err_append or 'provider rejected context')
+  end
+
+  local window_name = agent_provider.background.generate_window_name()
+  local window_id = tmux.create_agent_window(window_name, agent_dir)
+  if not window_id then
+    rollback(project_root, agent_dir)
+    return false, 'Failed to create agent tmux window'
   end
 
   -- Launch in tmux panes
-  tmux.send_to_window(window_id, 'nvim .')
+  if not tmux.send_to_window(window_id, 'nvim .') then
+    rollback(project_root, agent_dir, window_id)
+    return false, 'Failed to launch Neovim in agent window'
+  end
   local formatted_task = format_task_sections(task)
-  agent_provider.background.launch_agent_pane(window_id, agent_dir, formatted_task)
+  local pane_id = agent_provider.background.launch_agent_pane(window_id, agent_dir, formatted_task)
+  if not pane_id then
+    rollback(project_root, agent_dir, window_id)
+    return false, 'Failed to launch agent pane'
+  end
+
+  local fallback_fork = {
+    type = fork_from and fork_from.type or 'branch',
+    branch = fork_from and fork_from.branch or (git.current_branch(project_root) or git.default_branch(project_root)),
+  }
+  local agent_id, register_err = registry.register(
+    task,
+    agent_dir,
+    window_id,
+    window_name,
+    info.fork_info or fallback_fork,
+    project_root,
+    cfg.max_agents
+  )
+  if not agent_id then
+    rollback(project_root, agent_dir, window_id)
+    return false, register_err or 'Failed to register agent'
+  end
+
+  local new_log = (utils.read_file(agent_dir .. '/mission.log') or '') .. string.format('\nAgent ID: %s\n', agent_id)
+  if not utils.write_file(agent_dir .. '/mission.log', new_log) then
+    logger.warn('background_agent.create', 'Failed to append agent id to mission log', { agent_id = agent_id })
+  end
+  if cfg.auto_gitignore and not git.add_to_gitignore((cfg.work_dir or '.agent-work') .. '/', project_root) then
+    logger.warn('background_agent.create', 'Failed to update .gitignore', { project_root = project_root })
+  end
 
   vim.notify(string.format('Background agent started\nID: %s\nTask: %s\nWorkspace: %s\nWindow: %s\n%s', agent_id, task, agent_dir, window_name, base_info), vim.log.levels.INFO)
   return true, agent_id

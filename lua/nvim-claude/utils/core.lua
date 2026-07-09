@@ -1,29 +1,52 @@
 -- Utility functions for nvim-claude
--- TEST EDIT #2: Testing multi-file accept
 local M = {}
+
+local project_root_cache = {}
+
+local function normalize_dir(path)
+  if not path or path == '' then return nil end
+  local resolved = vim.fn.resolve(vim.fn.fnamemodify(path, ':p'))
+  local normalized = (resolved or ''):gsub('/+$', '')
+  if normalized == '' and resolved == '/' then return '/' end
+  return normalized
+end
+
+local function git_root_for_dir(dir)
+  dir = normalize_dir(dir)
+  if not dir or dir == '' then return nil end
+
+  local cached = project_root_cache[dir]
+  if cached then return cached end
+
+  local lookup_dir = dir
+  while lookup_dir and vim.fn.isdirectory(lookup_dir) == 0 do
+    local parent = normalize_dir(vim.fn.fnamemodify(lookup_dir, ':h'))
+    if not parent or parent == lookup_dir then return nil end
+    lookup_dir = parent
+  end
+  if not lookup_dir then return nil end
+
+  local output = vim.fn.system({ 'git', '-C', lookup_dir, 'rev-parse', '--show-toplevel' })
+  if vim.v.shell_error ~= 0 or not output or output == '' then
+    return nil
+  end
+
+  local root = normalize_dir(output:gsub('%s+$', ''))
+  project_root_cache[dir] = root
+  project_root_cache[lookup_dir] = root
+  if root then project_root_cache[root] = root end
+  return root
+end
 
 -- Check if we're in a git repository
 function M.is_git_repo()
-  local handle = io.popen 'git rev-parse --git-dir 2>/dev/null'
-  if handle then
-    local result = handle:read '*a'
-    handle:close()
-    return result ~= ''
-  end
-  return false
+  return git_root_for_dir(vim.fn.getcwd()) ~= nil
 end
 
 -- Get project root (git root or current working directory)
 function M.get_project_root()
-  if M.is_git_repo() then
-    local handle = io.popen 'git rev-parse --show-toplevel 2>/dev/null'
-    if handle then
-      local root = handle:read('*a'):gsub('\n', '')
-      handle:close()
-      return root
-    end
-  end
-  return vim.fn.getcwd()
+  local cwd = normalize_dir(vim.fn.getcwd())
+  return git_root_for_dir(cwd) or cwd
 end
 
 -- Get project root for a specific file path
@@ -43,19 +66,12 @@ function M.get_project_root_for_file(file_path)
     file_dir = vim.fn.fnamemodify(file_path, ':h')
   end
 
-  -- Run git command from the chosen directory
-  local cmd = string.format('cd %s && git rev-parse --show-toplevel 2>/dev/null', vim.fn.shellescape(file_dir))
-  local handle = io.popen(cmd)
-  if handle then
-    local root = handle:read('*a'):gsub('\n', '')
-    handle:close()
-    if root ~= '' then
-      return root
-    end
-  end
+  file_dir = normalize_dir(file_dir)
+  return git_root_for_dir(file_dir) or file_dir
+end
 
-  -- Fallback to file's directory if not in git
-  return file_dir
+function M.clear_project_root_cache()
+  project_root_cache = {}
 end
 
 -- Create directory if it doesn't exist
@@ -70,9 +86,9 @@ end
 
 -- Read file contents
 function M.read_file(path)
-  local file = io.open(path, 'r')
+  local file, err = io.open(path, 'r')
   if not file then
-    return nil
+    return nil, err
   end
   local content = file:read '*a'
   file:close()

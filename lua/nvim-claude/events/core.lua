@@ -4,7 +4,7 @@ local M = {}
 
 local utils = require 'nvim-claude.utils'
 local inline_diff = require 'nvim-claude.inline_diff'
-local session = require 'nvim-claude.events.session'
+local review_state = require 'nvim-claude.review_state'
 
 local function is_directory(path)
   if not path or path == '' then
@@ -23,7 +23,7 @@ local function add_to_session(file_path)
   if not git_root then
     return
   end
-  session.add_turn_file(git_root, file_path)
+  review_state.add_turn_file(git_root, file_path)
 end
 
 -- Ensure baseline exists; optionally update baseline file entry with current content
@@ -50,7 +50,7 @@ function M.pre_tool_use(file_path, opts)
   if file_path and not dir_path and (has_prior or readable) then
     local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
     -- Only update if not already tracked as edited (baseline captured previously)
-    if not session.is_edited_file(git_root, relative) then
+    if not review_state.is_edited_file(git_root, relative) then
       local content = opts.prior_content
       if content == nil and readable then
         content = utils.read_file(file_path)
@@ -86,7 +86,7 @@ function M.post_tool_use(file_path)
     end
 
     local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-    session.add_edited_file(git_root, relative)
+    review_state.add_edited_file(git_root, relative)
     add_to_session(file_path)
 
     -- If buffer is loaded, refresh inline diff via façade (schedule to avoid re-entrancy)
@@ -145,7 +145,7 @@ function M.track_deleted_file(file_path)
     local content = utils.read_file(file_path) or ''
     local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
     inline_diff.update_baseline_file(git_root, relative, content)
-    session.add_edited_file(git_root, relative)
+    review_state.add_edited_file(git_root, relative)
     add_to_session(file_path)
     logger.info('track_deleted_file', 'Tracked pre-delete file', { file = relative, project = git_root })
   else
@@ -163,8 +163,8 @@ function M.untrack_failed_deletion(file_path)
   end
   local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
   local logger = require 'nvim-claude.logger'
-  if session.is_edited_file(git_root, relative) then
-    session.remove_edited_file(git_root, relative)
+  if review_state.is_edited_file(git_root, relative) then
+    review_state.remove_edited_file(git_root, relative)
     logger.info('untrack_failed_deletion', 'Untracked after failed deletion', { file = relative, project = git_root })
   end
   return true
@@ -192,9 +192,24 @@ function M.user_prompt_submit(prompt)
       git_root_override = require('nvim-claude.utils').get_project_root_for_file(target)
     end
   end
-  -- If preview mode is active for this project, accept it first
-  if checkpoint.is_preview_mode(git_root_override) then
-    checkpoint.accept_checkpoint(git_root_override)
+  local status = checkpoint.get_status(git_root_override)
+  if status.mode then
+    local resolved
+    if status.mode == 'preview'
+        or status.mode == 'accepting'
+        or status.mode == 'accepted_cleanup_pending'
+    then
+      resolved = checkpoint.accept_checkpoint(git_root_override)
+    else
+      resolved = checkpoint.exit_preview_mode(git_root_override)
+    end
+    if not resolved then
+      logger.error('user_prompt_submit_hook', 'Active checkpoint transaction could not be resolved', {
+        mode = status.mode,
+        git_root = git_root_override,
+      })
+      return false
+    end
   end
   local id = checkpoint.create_checkpoint(prompt, git_root_override)
   if id then
@@ -203,7 +218,7 @@ function M.user_prompt_submit(prompt)
   else
     logger.warn('user_prompt_submit_hook', 'Failed to create checkpoint')
   end
-  return true
+  return id ~= nil
 end
 
 return M

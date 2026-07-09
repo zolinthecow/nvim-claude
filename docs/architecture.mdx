@@ -1,11 +1,28 @@
 # Architecture overview
 
-This repo uses a small set of core systems with strict facades between them. Inline diffs, checkpoints, and MCP diagnostics all rely on git-backed state in `project-state.lua`.
+The plugin is split into feature packages under `lua/nvim-claude`. A package may use its own private modules, but callers cross a feature boundary only through that feature's public facade (`init.lua`) or an explicitly registered adapter or contract.
+
+## Dependency direction
+
+The intended direction is:
+
+1. `utils` contains leaf helpers.
+2. `core` contains shared logging and atomic project-state storage and may use `utils`.
+3. Feature state such as `review_state` builds on `core` and `utils`.
+4. Features such as `inline_diff`, `checkpoint`, `agent_provider`, `background_agent`, and `lsp_mcp` depend only on their declared lower-level facades.
+5. `events` coordinates provider events and review workflows.
+6. The top-level app composes features and injects callbacks where a reverse dependency would otherwise create a cycle.
+
+The exact allowlist and public entrypoints live in `scripts/check_dependency_direction.lua`. CI rejects private cross-package imports, undeclared edges, and package cycles.
+
+```sh no-doctest
+nvim --headless -u NONE -l scripts/check_dependency_direction.lua
+```
 
 ## Core systems
 
 - Inline diffs compare the working tree against a baseline commit stored at `refs/nvim-claude/baseline`.
-- Events hooks create the baseline and track edited files.
+- Events hooks create the baseline and record edits through the public `review_state` facade.
 - Checkpoints store prompt snapshots under `refs/nvim-claude/checkpoints/*`.
 - Background agents run in isolated git worktrees with a per-project registry.
 - MCP diagnostics run in headless Neovim to avoid UI freezes.
@@ -22,3 +39,5 @@ local project_state = require('nvim-claude.project-state')
 local dir = project_state.get_global_state_dir()
 assert(type(dir) == 'string' and dir:match('nvim%-claude/projects'))
 ```
+
+All feature state shares one JSON document, so writes must use `project_state.update_project`. That operation takes a cross-process lock, rereads the latest document, and atomically replaces it. Feature code must not perform read-modify-write sequences with `load_all_states` and `save_all_states`.

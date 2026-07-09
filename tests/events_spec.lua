@@ -6,6 +6,7 @@ local utils = require('nvim-claude.utils')
 local inline_diff = require('nvim-claude.inline_diff')
 local events = require('nvim-claude.events')
 local session = require('nvim-claude.events.session')
+local checkpoint = require('nvim-claude.checkpoint')
 local project_state = require('nvim-claude.project-state')
 
 -- Stub logger to avoid writing to restricted locations during tests
@@ -115,6 +116,27 @@ describe('events core', function()
     session.add_edited_file(proj_key, rel)
     -- invoke and ensure no error; specific persistence asserted elsewhere
     events.untrack_failed_deletion(root .. '/' .. rel)
+  end)
+
+  it('does not checkpoint a prompt after preview acceptance fails', function()
+    local original_status = checkpoint.get_status
+    local original_accept = checkpoint.accept_checkpoint
+    local original_create = checkpoint.create_checkpoint
+    local created = false
+    checkpoint.get_status = function() return { mode = 'preview' } end
+    checkpoint.accept_checkpoint = function() return false end
+    checkpoint.create_checkpoint = function()
+      created = true
+      return 'unexpected'
+    end
+
+    local ok = events.user_prompt_submit('next prompt')
+
+    checkpoint.get_status = original_status
+    checkpoint.accept_checkpoint = original_accept
+    checkpoint.create_checkpoint = original_create
+    falsy(ok)
+    falsy(created)
   end)
 end)
 

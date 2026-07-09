@@ -7,9 +7,19 @@ The plugin uses a strict facade pattern. Import other features through their `in
 ```lua
 local events = require('nvim-claude.events')
 local inline_diff = require('nvim-claude.inline_diff')
+local review_state = require('nvim-claude.review_state')
 
 assert(type(events.pre_tool_use) == 'function')
 assert(type(inline_diff.accept_all_files) == 'function')
+assert(type(review_state.list_edited_files) == 'function')
+```
+
+When a feature needs a callback into a higher layer, define a small injected contract and wire it in `nvim-claude.setup`. Do not add a reverse import to reach the higher layer.
+
+Run the boundary checker after moving modules or adding imports:
+
+```sh no-doctest
+nvim --headless -u NONE -l scripts/check_dependency_direction.lua
 ```
 
 ## Shell hooks

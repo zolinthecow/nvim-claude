@@ -18,22 +18,10 @@ function M.register(claude)
     local lines = { 'Agent Provider Debug Info:', '' }
     local provider_name = agent_provider.name() or 'unknown'
     table.insert(lines, 'Provider: ' .. provider_name)
-    -- Attempt to print provider config details if available
     local details = {}
-    if provider_name == 'claude' then
-      local ok, cfg = pcall(require, 'nvim-claude.agent_provider.providers.claude.config')
-      if ok and cfg then
-        table.insert(details, 'spawn_command=' .. tostring(cfg.spawn_command))
-        table.insert(details, 'background_spawn=' .. tostring(cfg.background_spawn))
-        table.insert(details, 'pane_title=' .. tostring(cfg.pane_title))
-      end
-    elseif provider_name == 'opencode' then
-      local ok, cfg = pcall(require, 'nvim-claude.agent_provider.providers.opencode.config')
-      if ok and cfg then
-        table.insert(details, 'spawn_command=' .. tostring(cfg.spawn_command))
-        table.insert(details, 'background_spawn=' .. tostring(cfg.background_spawn))
-        table.insert(details, 'pane_title=' .. tostring(cfg.pane_title))
-      end
+    local info = agent_provider.debug_info and agent_provider.debug_info() or {}
+    for _, key in ipairs({ 'spawn_command', 'background_spawn', 'pane_title', 'process_pattern' }) do
+      if info[key] ~= nil then table.insert(details, key .. '=' .. tostring(info[key])) end
     end
     if #details > 0 then table.insert(lines, 'Config: ' .. table.concat(details, ', ')) end
     table.insert(lines, '')

@@ -1,0 +1,16 @@
+# Review state
+
+`review_state` owns the persisted set of files awaiting review and the per-turn file list. Event adapters record changes through this facade; diff and checkpoint workflows read or clear them through the same contract.
+
+Edited-file methods accept project-relative or absolute paths. The facade canonicalizes them against the explicit project root, rejects paths outside that root, and persists one normalized relative-path map.
+
+```lua
+local review_state = require('nvim-claude.review_state')
+
+assert(type(review_state.list_edited_files) == 'function')
+assert(type(review_state.remove_edited_files) == 'function')
+assert(type(review_state.get_turn_files) == 'function')
+assert(type(review_state.clear) == 'function')
+```
+
+Feature code must import `nvim-claude.review_state`, not `events.session` or `project-state` directly.

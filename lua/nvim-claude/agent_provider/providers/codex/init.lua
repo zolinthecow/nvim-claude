@@ -12,12 +12,27 @@ local otel = require('nvim-claude.agent_provider.providers.codex.otel_listener')
 local relay = require('nvim-claude.agent_provider.providers.codex.relay')
 
 function M.setup(opts)
+  opts = opts or {}
   cfg.setup(opts)
+  local sink_ok, sink_err = otel.setup({ event_sink = opts.event_sink })
+  if not sink_ok then
+    vim.notify('nvim-claude: Codex event sink unavailable: ' .. sink_err, vim.log.levels.WARN)
+  end
   if cfg.use_daemon then
     relay.ensure_running()
   else
     otel.ensure(cfg.otel_port)
   end
+end
+
+function M.debug_info()
+  return {
+    name = M.name,
+    spawn_command = cfg.spawn_command,
+    background_spawn = cfg.background_spawn,
+    pane_title = cfg.pane_title,
+    process_pattern = cfg.process_pattern,
+  }
 end
 
 M.install_hooks = hooks.install

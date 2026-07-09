@@ -7,6 +7,7 @@ local status = require 'nvim-claude.background_agent.status'
 local runner = require 'nvim-claude.background_agent.runner'
 local creator = require 'nvim-claude.background_agent.create'
 local maintenance = require 'nvim-claude.background_agent.maintenance'
+local config = require 'nvim-claude.background_agent.config'
 
 -- Public status API (used by statusline and others)
 function M.get_status()
@@ -15,16 +16,17 @@ end
 
 -- Public registry helpers (expose common ops explicitly as needed)
 function M.registry_setup(cfg)
-  return registry.setup(cfg)
+  config.setup(cfg)
+  return registry.setup()
 end
-function M.registry_validate()
-  return registry.validate_agents()
+function M.registry_validate(project_root)
+  return registry.validate_agents(project_root)
 end
-function M.registry_agents()
-  return registry.get_project_agents()
+function M.registry_agents(project_root)
+  return registry.get_project_agents(project_root)
 end
-function M.registry_active_count()
-  return registry.get_active_count()
+function M.registry_active_count(project_root)
+  return registry.get_active_count(project_root)
 end
 function M.registry_format(agent)
   return registry.format_agent(agent)
@@ -58,8 +60,9 @@ end
 
 -- Kill all active agents with confirmation
 function M.kill_all()
-  M.registry_validate()
-  local agents = M.registry_agents()
+  local project_root = require('nvim-claude.utils').get_project_root()
+  M.registry_validate(project_root)
+  local agents = M.registry_agents(project_root)
   local active = {}
   for _, a in ipairs(agents) do if a.status == 'active' then table.insert(active, a) end end
   if #active == 0 then

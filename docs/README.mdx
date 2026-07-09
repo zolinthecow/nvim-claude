@@ -4,7 +4,7 @@ These docs are colocated with code and are meant to stay executable. Every fence
 
 ## Core principles
 
-- Facades (`nvim-claude.events`, `nvim-claude.inline_diff`, `nvim-claude.utils`) are the public API.
+- Facades (`nvim-claude.events`, `nvim-claude.inline_diff`, `nvim-claude.review_state`, `nvim-claude.utils`) are the public API.
 - Inline diffs are backed by a git baseline commit at `refs/nvim-claude/baseline`.
 - Project state is stored globally under `stdpath('data')/nvim-claude/projects`.
 
@@ -23,6 +23,7 @@ These docs are colocated with code and are meant to stay executable. Every fence
 - `lua/nvim-claude/README.mdx`
 - `lua/nvim-claude/events/README.mdx`
 - `lua/nvim-claude/inline_diff/README.mdx`
+- `lua/nvim-claude/review_state/README.mdx`
 - `lua/nvim-claude/utils/README.mdx`
 - `lua/nvim-claude/rpc/README.mdx`
 - `lua/nvim-claude/background_agent/README.mdx`
@@ -32,17 +33,19 @@ These docs are colocated with code and are meant to stay executable. Every fence
 - `lua/nvim-claude/chat/README.mdx`
 - `lua/nvim-claude/commands/README.mdx`
 - `lua/nvim-claude/debug/README.mdx`
-- `lua/nvim-claude/cursor_cpp/README.mdx`
+- `lua/nvim-claude/cursor_cpp/README.md`
 
 ## Facade usage
 
 ```lua
 local events = require('nvim-claude.events')
 local inline_diff = require('nvim-claude.inline_diff')
+local review_state = require('nvim-claude.review_state')
 local utils = require('nvim-claude.utils')
 
 assert(type(events.setup) == 'function')
 assert(type(inline_diff.compute_diff) == 'function')
+assert(type(review_state.list_edited_files) == 'function')
 assert(type(utils.get_project_root) == 'function')
 ```
 
@@ -62,6 +65,7 @@ test -f 'shim/README.mdx'
 test -f 'lua/nvim-claude/README.mdx'
 test -f 'lua/nvim-claude/events/README.mdx'
 test -f 'lua/nvim-claude/inline_diff/README.mdx'
+test -f 'lua/nvim-claude/review_state/README.mdx'
 test -f 'lua/nvim-claude/utils/README.mdx'
 test -f 'lua/nvim-claude/rpc/README.mdx'
 test -f 'lua/nvim-claude/background_agent/README.mdx'
@@ -71,5 +75,5 @@ test -f 'lua/nvim-claude/lsp_mcp/README.mdx'
 test -f 'lua/nvim-claude/chat/README.mdx'
 test -f 'lua/nvim-claude/commands/README.mdx'
 test -f 'lua/nvim-claude/debug/README.mdx'
-test -f 'lua/nvim-claude/cursor_cpp/README.mdx'
+test -f 'lua/nvim-claude/cursor_cpp/README.md'
 ```

@@ -1,242 +1,257 @@
--- Agent registry module for nvim-claude (moved under background_agent)
 local M = {}
-local utils = require('nvim-claude.utils')
 
--- Registry data
-M.agents = {}
+local utils = require 'nvim-claude.utils'
+local logger = require 'nvim-claude.logger'
+local project_state = require 'nvim-claude.project-state'
 
--- Initialize registry
-function M.setup(config)
-  -- Registry will be loaded per-project when needed
-  -- No global setup needed
-  
-  -- Clean up old global registry if it exists
-  local old_registry = vim.fn.stdpath('data') .. '/nvim-claude/registry.json'
-  if utils.file_exists(old_registry) then
-    vim.fn.delete(old_registry)
-    -- Also try to remove the directory if empty
-    vim.fn.delete(vim.fn.stdpath('data') .. '/nvim-claude', 'd')
-  end
+local function resolve_root(project_root)
+  local root = project_root or utils.get_project_root()
+  if not root or root == '' then return nil end
+  return project_state.get_project_key(root)
 end
 
--- Load registry from disk
-function M.load()
-  local project_root = utils.get_project_root()
-  if not project_root then
-    M.agents = {}
-    return
-  end
-  
-  -- Load from global storage
-  local project_state = require('nvim-claude.project-state')
-  M.agents = project_state.get(project_root, 'agent_registry') or {}
-  
-  -- Validate loaded agents
-  M.validate_agents()
+local function read_agents(project_root)
+  local root = resolve_root(project_root)
+  if not root then return nil, {} end
+  local agents = project_state.get(root, 'agent_registry')
+  return root, type(agents) == 'table' and agents or {}
 end
 
--- Save registry to disk
-function M.save()
-  local project_root = utils.get_project_root()
-  if not project_root then
+local function update_agents(project_root, updater)
+  local root = resolve_root(project_root)
+  if not root then return false end
+  return project_state.update_project(root, function(state)
+    local agents = type(state.agent_registry) == 'table' and state.agent_registry or {}
+    local updated = updater(agents, root)
+    if updated == false then return false end
+    state.agent_registry = updated or agents
+    return state
+  end)
+end
+
+function M.setup(opts, project_root)
+  opts = opts or {}
+  local old_registry = opts.legacy_path or (vim.fn.stdpath('data') .. '/nvim-claude/registry.json')
+  if not utils.file_exists(old_registry) then return true end
+
+  local content, read_err = utils.read_file(old_registry)
+  local decoded_ok, decoded = false, nil
+  if content then decoded_ok, decoded = pcall(vim.json.decode, content) end
+  local legacy = type(decoded) == 'table' and (decoded.agents or decoded) or nil
+  if type(legacy) ~= 'table' then
+    logger.error('background_agent.registry', 'Failed to parse legacy registry', {
+      path = old_registry,
+      error = read_err or decoded,
+    })
     return false
   end
-  
-  -- Save to global storage
-  local project_state = require('nvim-claude.project-state')
-  return project_state.set(project_root, 'agent_registry', M.agents)
+
+  local saved = update_agents(project_root, function(agents)
+    for id, agent in pairs(legacy) do
+      if agents[id] == nil and type(agent) == 'table' then agents[id] = vim.deepcopy(agent) end
+    end
+    return agents
+  end)
+  if not saved then return false end
+  return vim.fn.delete(old_registry) == 0
 end
 
--- Validate agents (remove stale entries)
-function M.validate_agents()
-  local valid_agents = {}
+function M.load(project_root)
+  local _, agents = read_agents(project_root)
+  return agents
+end
+
+function M.save(project_root, agents)
+  if agents == nil and type(project_root) == 'table' then
+    agents = project_root
+    project_root = nil
+  end
+  agents = type(agents) == 'table' and vim.deepcopy(agents) or {}
+  return update_agents(project_root, function() return agents end)
+end
+
+function M.check_window_exists(window_id)
+  if not window_id or window_id == '' then return false end
+  local output = utils.exec("tmux list-windows -a -F '#{window_id}'")
+  if not output then return false end
+  for line in output:gmatch('[^\n]+') do
+    if line == window_id then return true end
+  end
+  return false
+end
+
+function M.validate_agents(project_root)
   local now = os.time()
-  
-  for id, agent in pairs(M.agents) do
-    -- Check if agent directory still exists
-    local mission_log_path = agent.work_dir .. '/mission.log'
-    local mission_exists = utils.file_exists(mission_log_path)
-    
-    if mission_exists then
-      -- Check if tmux window still exists
-      local window_exists = M.check_window_exists(agent.window_id)
-      
-      if window_exists then
-        agent.status = 'active'
-        
-        -- Update progress from file for active agents
-        local progress_file = agent.work_dir .. '/progress.txt'
-        local progress_content = utils.read_file(progress_file)
-        if progress_content and progress_content ~= '' then
-          agent.progress = progress_content:gsub('\n$', '')  -- Remove trailing newline
+  local changed = false
+  local saved = update_agents(project_root, function(agents)
+    local valid = {}
+    for id, agent in pairs(agents) do
+      if type(agent) == 'table' and agent.work_dir then
+        local mission_exists = utils.file_exists(agent.work_dir .. '/mission.log')
+        if mission_exists then
+          local copy = vim.deepcopy(agent)
+          if copy.status == 'active' then
+            if M.check_window_exists(copy.window_id) then
+              local progress = utils.read_file(copy.work_dir .. '/progress.txt')
+              if progress and progress ~= '' then copy.progress = progress:gsub('\n$', '') end
+            else
+              copy.status = 'completed'
+              copy.end_time = copy.end_time or now
+              copy.last_update = now
+            end
+          end
+          valid[id] = copy
         end
-        
-        valid_agents[id] = agent
-      else
-        -- Window closed, mark as completed
-        agent.status = 'completed'
-        agent.end_time = agent.end_time or now
-        valid_agents[id] = agent
       end
     end
-  end
-  
-  M.agents = valid_agents
-  M.save()
+    if vim.deep_equal(agents, valid) then return false end
+    changed = true
+    return valid
+  end)
+  return not changed or saved
 end
 
--- Check if tmux window exists
-function M.check_window_exists(window_id)
-  if not window_id then return false end
-  
-  local cmd = string.format("tmux list-windows -F '#{window_id}' | grep -q '^%s$'", window_id)
-  local result = os.execute(cmd)
-  return result == 0
-end
-
--- Register a new agent
-function M.register(task, work_dir, window_id, window_name, fork_info)
-  local id = utils.timestamp() .. '-' .. math.random(1000, 9999)
-  local agent = {
-    id = id,
-    task = task,
-    work_dir = work_dir,
-    window_id = window_id,
-    window_name = window_name,
-    start_time = os.time(),
-    status = 'active',
-    progress = 'Starting...',  -- Add progress field
-    last_update = os.time(),
-    fork_info = fork_info,  -- Store branch/stash info
-  }
-  
-  M.agents[id] = agent
-  M.save()
-  
+function M.register(task, work_dir, window_id, window_name, fork_info, project_root, max_agents)
+  local id = string.format('%s-%s', utils.timestamp(), string.format('%.0f', vim.loop.hrtime()):sub(-10))
+  local rejected = false
+  local saved = update_agents(project_root, function(agents, root)
+    if max_agents then
+      local active = 0
+      for _, agent in pairs(agents) do
+        if agent.status == 'active' then active = active + 1 end
+      end
+      if active >= max_agents then
+        rejected = true
+        return false
+      end
+    end
+    agents[id] = {
+      id = id,
+      task = task,
+      work_dir = work_dir,
+      window_id = window_id,
+      window_name = window_name,
+      project_root = root,
+      start_time = os.time(),
+      status = 'active',
+      progress = 'Starting...',
+      last_update = os.time(),
+      fork_info = fork_info,
+    }
+    return agents
+  end)
+  if rejected then return nil, 'Agent limit reached' end
+  if not saved then return nil, 'Failed to persist agent registry' end
   return id
 end
 
--- Get agent by ID
-function M.get(id)
-  return M.agents[id]
+function M.get(id, project_root)
+  local _, agents = read_agents(project_root)
+  return agents[id]
 end
 
--- Get all agents for current project
-function M.get_project_agents()
-  -- Load registry for current project
-  M.load()
-  
-  local project_agents = {}
-  
-  -- All agents in the registry are for this project now
-  for id, agent in pairs(M.agents) do
-    -- Include the registry ID with the agent
-    agent._registry_id = id
-    table.insert(project_agents, agent)
+function M.get_project_agents(project_root)
+  local _, agents = read_agents(project_root)
+  local result = {}
+  for id, agent in pairs(agents) do
+    local copy = vim.deepcopy(agent)
+    copy._registry_id = id
+    table.insert(result, copy)
   end
-  
-  return project_agents
+  return result
 end
 
--- Get active agents count
-function M.get_active_count()
+function M.get_active_count(project_root)
+  local _, agents = read_agents(project_root)
   local count = 0
-  for _, agent in pairs(M.agents) do
-    if agent.status == 'active' then
-      count = count + 1
-    end
+  for _, agent in pairs(agents) do
+    if agent.status == 'active' then count = count + 1 end
   end
   return count
 end
 
--- Update agent status
-function M.update_status(id, status)
-  if M.agents[id] then
-    M.agents[id].status = status
-    if status == 'completed' or status == 'failed' then
-      M.agents[id].end_time = os.time()
+function M.update_status(id, status, project_root)
+  local found = false
+  local saved = update_agents(project_root, function(agents)
+    local agent = agents[id]
+    if not agent then return false end
+    found = true
+    agent.status = status
+    if status == 'completed' or status == 'failed' or status == 'killed' then
+      agent.end_time = os.time()
     end
-    M.agents[id].last_update = os.time()
-    M.save()
-  end
+    agent.last_update = os.time()
+    return agents
+  end)
+  return found and saved
 end
 
--- Update agent progress
-function M.update_progress(id, progress)
-  if M.agents[id] then
-    M.agents[id].progress = progress
-    M.agents[id].last_update = os.time()
-    M.save()
-  end
+function M.update_progress(id, progress, project_root)
+  local found = false
+  local saved = update_agents(project_root, function(agents)
+    local agent = agents[id]
+    if not agent then return false end
+    found = true
+    agent.progress = progress
+    agent.last_update = os.time()
+    return agents
+  end)
+  return found and saved
 end
 
--- Remove agent
-function M.remove(id)
-  M.agents[id] = nil
-  M.save()
+function M.remove(id, project_root)
+  local found = false
+  local saved = update_agents(project_root, function(agents)
+    if not agents[id] then return false end
+    found = true
+    agents[id] = nil
+    return agents
+  end)
+  return found and saved
 end
 
--- Clean up old agents
-function M.cleanup(days)
-  if not days or days < 0 then return end
-  
+function M.cleanup(days, project_root)
+  if not days or days < 0 then return 0 end
+  local root, agents = read_agents(project_root)
+  if not root then return 0 end
   local cutoff = os.time() - (days * 24 * 60 * 60)
   local removed = 0
-  
-  for id, agent in pairs(M.agents) do
+  for id, agent in pairs(agents) do
     if agent.status ~= 'active' and agent.end_time and agent.end_time < cutoff then
-      -- Remove work directory
+      local worktree_removed = true
       if agent.work_dir and utils.file_exists(agent.work_dir) then
-        local cmd = string.format('rm -rf "%s"', agent.work_dir)
-        utils.exec(cmd)
+        worktree_removed = utils.git.remove_worktree(agent.work_dir, root)
       end
-      
-      M.agents[id] = nil
-      removed = removed + 1
+      if worktree_removed and M.remove(id, root) then removed = removed + 1 end
     end
   end
-  
-  if removed > 0 then
-    M.save()
-  end
-  
   return removed
 end
 
--- Format agent for display
 function M.format_agent(agent)
-  local age = os.difftime(os.time(), agent.start_time)
-  local age_str
-  
+  local age = os.difftime(os.time(), agent.start_time or os.time())
+  local age_string
   if age < 60 then
-    age_str = string.format('%ds', age)
+    age_string = string.format('%ds', age)
   elseif age < 3600 then
-    age_str = string.format('%dm', math.floor(age / 60))
+    age_string = string.format('%dm', math.floor(age / 60))
   elseif age < 86400 then
-    age_str = string.format('%dh', math.floor(age / 3600))
+    age_string = string.format('%dh', math.floor(age / 3600))
   else
-    age_str = string.format('%dd', math.floor(age / 86400))
+    age_string = string.format('%dd', math.floor(age / 86400))
   end
-  
-  local progress_str = ''
-  if agent.progress and agent.status == 'active' then
-    progress_str = string.format(' | %s', agent.progress)
-  end
-  
-  -- Clean up task to single line
-  local task_line = agent.task:match('[^\n]*') or ''
-  if task_line == '' then
-    task_line = agent.task:gsub('\n', ' ')
-  end
-  local task_preview = task_line:sub(1, 50) .. (task_line:len() > 50 and '...' or '')
-  
+
+  local progress = ''
+  if agent.progress and agent.status == 'active' then progress = ' | ' .. agent.progress end
+  local task = tostring(agent.task or 'Unknown task'):match('[^\n]*') or 'Unknown task'
+  if #task > 50 then task = task:sub(1, 50) .. '...' end
   return string.format(
     '[%s] %s (%s) - %s%s',
-    agent.status:upper(),
-    task_preview,
-    age_str,
+    tostring(agent.status or 'unknown'):upper(),
+    task,
+    age_string,
     agent.window_name or 'unknown',
-    progress_str
+    progress
   )
 end
 
