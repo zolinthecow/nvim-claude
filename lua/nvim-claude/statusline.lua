@@ -11,11 +11,6 @@ end
 function M.lualine_component()
   return {
     M.get_agent_status,
-    cond = function()
-      -- Only show if there are active agents
-      local status = M.get_agent_status()
-      return status ~= ''
-    end,
     on_click = function()
       -- Open agent list on click
       vim.cmd('ClaudeAgents')

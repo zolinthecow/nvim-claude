@@ -6,12 +6,19 @@
 local uv = vim.loop
 
 local utils = require 'nvim-claude.utils'
-local events = require 'nvim-claude.events'
 local logger = require 'nvim-claude.logger'
 local inline_diff = require 'nvim-claude.inline_diff'
 local apply_patch_replay = require 'nvim-claude.agent_provider.providers.codex.apply_patch_replay'
 
 local M = {}
+local event_sink = nil
+
+local event_sink_methods = {
+  'is_edited_file',
+  'pre_tool_use',
+  'post_tool_use',
+  'user_prompt_submit',
+}
 
 local state = {
   server = nil,
@@ -30,6 +37,18 @@ end
 
 local function log_warn(message, data)
   logger.warn('codex_otel', message, data)
+end
+
+function M.setup(opts)
+  local sink = opts and opts.event_sink
+  if type(sink) ~= 'table' then return false, 'event_sink must be a table' end
+  for _, method in ipairs(event_sink_methods) do
+    if type(sink[method]) ~= 'function' then
+      return false, 'event_sink.' .. method .. ' must be a function'
+    end
+  end
+  event_sink = sink
+  return true
 end
 
 local function get_tool_arguments(attrs)
@@ -186,7 +205,7 @@ local function normalize_relative_path(path)
   return trimmed ~= '' and trimmed or nil
 end
 
-local function normalize_git_root(path_hint)
+local function normalize_git_root(path_hint, allow_fallback)
   local checked = {}
   local function try(path)
     if not path or path == '' or checked[path] then
@@ -211,11 +230,15 @@ local function normalize_git_root(path_hint)
     return nil
   end
 
-  local candidates = {
-    path_hint,
-    state.default_git_root,
-    utils.get_project_root(),
-  }
+  local candidates = {}
+  if path_hint and path_hint ~= '' then table.insert(candidates, path_hint) end
+  if allow_fallback ~= false then
+    if state.default_git_root and state.default_git_root ~= '' then
+      table.insert(candidates, state.default_git_root)
+    end
+    local current_root = utils.get_project_root()
+    if current_root and current_root ~= '' then table.insert(candidates, current_root) end
+  end
   for _, candidate in ipairs(candidates) do
     local root = try(candidate)
     if root then
@@ -269,6 +292,10 @@ local function reconstruct_prior_from_update(git_root, abs_path, relative_path, 
 end
 
 local function handle_apply_patch_operation(git_root, operation, attrs)
+  if not event_sink then
+    log_warn('apply_patch result without event sink')
+    return false
+  end
   local relative = normalize_relative_path(operation.move_path or operation.path)
   if not relative then
     log_warn('apply_patch operation missing path', { attrs = sanitize_attrs(attrs) })
@@ -277,7 +304,7 @@ local function handle_apply_patch_operation(git_root, operation, attrs)
 
   local abs_path = git_root .. '/' .. relative
   local tracked = false
-  local ok, is_tracked = pcall(events.is_edited_file, git_root, relative)
+  local ok, is_tracked = pcall(event_sink.is_edited_file, git_root, relative)
   if ok and is_tracked then
     tracked = true
   end
@@ -298,8 +325,8 @@ local function handle_apply_patch_operation(git_root, operation, attrs)
   end
 
   if tracked then
-    events.pre_tool_use(abs_path)
-    events.post_tool_use(abs_path)
+    event_sink.pre_tool_use(abs_path)
+    event_sink.post_tool_use(abs_path)
     return true
   end
 
@@ -308,7 +335,7 @@ local function handle_apply_patch_operation(git_root, operation, attrs)
       file = relative,
       type = operation.type,
     })
-    events.post_tool_use(abs_path)
+    event_sink.post_tool_use(abs_path)
     return false
   end
 
@@ -316,8 +343,8 @@ local function handle_apply_patch_operation(git_root, operation, attrs)
   if prior_content ~= nil then
     opts = { prior_content = prior_content }
   end
-  events.pre_tool_use(abs_path, opts)
-  events.post_tool_use(abs_path)
+  event_sink.pre_tool_use(abs_path, opts)
+  event_sink.post_tool_use(abs_path)
   return true
 end
 
@@ -361,9 +388,22 @@ local function handle_tool_result(attrs)
 end
 
 local function handle_user_prompt(attrs)
+  if not event_sink then
+    log_warn('user prompt without event sink')
+    return
+  end
   local prompt = attrs['prompt']
-  local git_root = utils.get_project_root()
+  local root_hint = attrs.cwd
+    or attrs.git_root
+    or attrs.project_root
+    or attrs['project.root']
+    or attrs['project.cwd']
+    or attrs.root
+    or attrs.file_path
+    or attrs.target_file
+  local git_root = normalize_git_root(root_hint, false)
   if not git_root or git_root == '' then
+    log_warn('user prompt without project context', { attrs = sanitize_attrs(attrs) })
     return
   end
   if not prompt or prompt == '' then
@@ -375,7 +415,7 @@ local function handle_user_prompt(attrs)
 
   local original = vim.fn.getenv 'TARGET_FILE'
   vim.fn.setenv('TARGET_FILE', git_root)
-  pcall(events.user_prompt_submit, prompt)
+  pcall(event_sink.user_prompt_submit, prompt)
   if original and original ~= vim.NIL and original ~= '' then
     vim.fn.setenv('TARGET_FILE', original)
   else
@@ -400,7 +440,7 @@ local function process_log_record(attrs)
   end
 end
 
-local function process_payload(payload)
+local function process_payload(payload, project_root)
   local resource_logs = payload.resourceLogs or payload.resource_logs
   if type(resource_logs) ~= 'table' then
     return
@@ -420,6 +460,15 @@ local function process_payload(payload)
                 attrs[key] = value
               end
             end
+            if project_root
+              and attrs.cwd == nil
+              and attrs.git_root == nil
+              and attrs.project_root == nil
+              and attrs['project.root'] == nil
+              and attrs['project.cwd'] == nil
+            then
+              attrs.project_root = project_root
+            end
             if record.body then
               attrs['body'] = decode_any_value(record.body)
             end
@@ -431,9 +480,10 @@ local function process_payload(payload)
   end
 end
 
--- Expose for external relay (daemon) to forward OTEL payloads into Neovim
-function M.process_payload(payload)
-  return process_payload(payload)
+-- The relay passes the git root it resolved from the Codex session. Raw payload
+-- project attributes take precedence; the relay root fills otherwise unscoped records.
+function M.process_payload(payload, project_root)
+  return process_payload(payload, project_root)
 end
 
 local function send_response(client, status_line)
@@ -496,7 +546,7 @@ local function handle_client(client)
         vim.schedule(function()
           local ok, decoded = pcall(vim.json.decode, body)
           if ok and decoded then
-            local success, err = pcall(process_payload, decoded)
+            local success, err = pcall(process_payload, decoded, state.default_git_root)
             if not success then
               logger.error('codex_otel', 'failed to process payload', { error = err })
             end

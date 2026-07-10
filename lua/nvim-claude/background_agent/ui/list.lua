@@ -4,11 +4,13 @@ local M = {}
 
 local registry = require('nvim-claude.background_agent.registry')
 local ba_diff = require('nvim-claude.background_agent.diff')
-local tmux = require('nvim-claude.utils').tmux
+local utils = require('nvim-claude.utils')
+local tmux = utils.tmux
 
 local function fetch_active_agents()
-  registry.validate_agents()
-  local agents = registry.get_project_agents()
+  local project_root = utils.get_project_root()
+  registry.validate_agents(project_root)
+  local agents = registry.get_project_agents(project_root)
   local active = {}
   for _, a in ipairs(agents) do
     if a.status == 'active' then table.insert(active, a) end

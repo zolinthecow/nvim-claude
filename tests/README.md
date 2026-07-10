@@ -1,4 +1,4 @@
-# nvim-claude Tests (current focus: hunks action plans)
+# nvim-claude Tests
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@
 
 2. **Git** - Must be installed and available in PATH
 
-3. **Neovim 0.9+** - Required for extmark API
+3. **Neovim 0.10+** - Required by the LSP and hook adapters
 
 ## Running Tests
 
@@ -23,9 +23,15 @@ cd /path/to/nvim-claude
 ./scripts/run_tests.sh
 ```
 
-### Run directly with Neovim (headless)
+### Run one spec directly with Neovim (headless)
 ```bash
-nvim --headless -u tests/minimal_init.lua -c "PlenaryBustedFile tests/hunks_spec.lua" -c "qa!"
+nvim --headless -u tests/minimal_init.lua -c "PlenaryBustedFile tests/inline_diff_unit_spec.lua" -c "qa!"
+```
+
+### Check package boundaries
+
+```bash
+nvim --headless -u NONE -l scripts/check_dependency_direction.lua
 ```
 
 ### Run the OpenCode integration harness
@@ -37,17 +43,15 @@ This drives the generated OpenCode plugin against a headless Neovim RPC server a
 
 ## Test Structure
 
-- `tests/hunks_spec.lua` - Action plan tests for hunks.lua
-- `scripts/run_opencode_integration_test.sh` - End-to-end OpenCode plugin event harness
-
-## Tests Cover (so far)
-
-1. **Hunk Action Plans**
-   - accept/reject individual hunks (existing/new files)
-   - accept/reject all in file
-   - batch accept/reject across open buffers
-
-We’ll add more focused suites (executor, renderer, façade) as refactor completes.
+- `tests/inline_diff_unit_spec.lua` covers hunk plans, executor ordering, loaded-buffer behavior, empty/deleted files, and global batch actions.
+- `tests/checkpoint_background_spec.lua` covers recoverable checkpoint transactions, exact index restoration, registry isolation, and worktree rollback.
+- `tests/events_spec.lua` covers the event and review-state lifecycle.
+- `tests/project_state_spec.lua` covers atomic storage, corrupt input, and cross-process updates.
+- `tests/project_state_schema_spec.lua` covers persisted-state normalization.
+- `tests/provider_safety_spec.lua` covers non-destructive Claude/Codex/OpenCode configuration.
+- `tests/lsp_mcp_spec.lua` covers diagnostic buffer ownership and filetype detection.
+- `tests/e2e_spec.lua` covers repository-level inline-diff workflows.
+- `scripts/run_opencode_integration_test.sh` drives the generated OpenCode plugin end to end.
 
 ## Troubleshooting
 
@@ -57,6 +61,6 @@ We’ll add more focused suites (executor, renderer, façade) as refactor comple
 
 ## Adding New Tests
 
-1. Add test case to `tests/hunks_spec.lua` or create a new spec file.
+1. Add a test to the closest `tests/*_spec.lua` file or create a focused spec.
 2. Keep tests focused on a single module/contract.
 3. Use temporary git repos and headless buffers as shown.

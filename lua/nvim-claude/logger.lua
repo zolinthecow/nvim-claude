@@ -2,17 +2,33 @@
 local M = {}
 
 local utils = require 'nvim-claude.utils'
+local log_dirs = {}
+local level_values = { DEBUG = 10, INFO = 20, WARN = 30, ERROR = 40 }
+
+local function configured_level()
+  local value = vim.g.nvim_claude_log_level or vim.env.NVIM_CLAUDE_LOG_LEVEL or 'INFO'
+  value = tostring(value):upper()
+  return level_values[value] and value or 'INFO'
+end
+
+local function should_log(level)
+  return (level_values[level] or level_values.INFO) >= level_values[configured_level()]
+end
+
 local function project_log_dir()
   local project_root = utils.get_project_root()
   if not project_root then
     return nil
   end
-  local project_state = require 'nvim-claude.project-state'
-  local project_key = project_state.get_project_key(project_root)
+
+  if log_dirs[project_root] then return log_dirs[project_root] end
+
+  local project_key = vim.fn.resolve(vim.fn.expand(project_root)):gsub('/+$', '')
   local key_hash = vim.fn.sha256(project_key)
   local short_hash = key_hash:sub(1, 8)
   local dir = vim.fn.stdpath 'data' .. '/nvim-claude/logs/' .. short_hash
   utils.ensure_dir(dir)
+  log_dirs[project_root] = dir
   return dir
 end
 
@@ -43,6 +59,9 @@ end
 
 -- Write log entry
 function M.log(level, component, message, data)
+  level = tostring(level or 'INFO'):upper()
+  if not should_log(level) then return end
+
   local log_file = M.get_log_file()
   local log_dir = vim.fn.fnamemodify(log_file, ':h')
 
@@ -72,7 +91,14 @@ end
 
 -- Convenience methods
 function M.debug(component, message, data)
-  M.log('DEBUG', component, message, data)
+  if should_log('DEBUG') then M.log('DEBUG', component, message, data) end
+end
+
+function M.set_level(level)
+  level = tostring(level or ''):upper()
+  if not level_values[level] then return false end
+  vim.g.nvim_claude_log_level = level
+  return true
 end
 
 function M.info(component, message, data)

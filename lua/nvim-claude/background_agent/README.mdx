@@ -2,6 +2,14 @@
 
 Background agents run Claude tasks in isolated git worktrees and track progress in a registry. The facade (`nvim-claude.background_agent`) exposes registry helpers, UI entrypoints, and runner actions without leaking internal modules.
 
+## Reliability contract
+
+- Registry reads and mutations are scoped to an explicit project root and use the project-state atomic update API.
+- Validation always loads the persisted project registry before saving, so statusline and list refreshes cannot replace it with an empty process-local table.
+- Agent limits are checked before creating directories, worktrees, tmux windows, or stashes.
+- Creation failures remove the tmux window and worktree. Stash-based forks restore the main worktree and index before returning.
+- Worktree creation never writes `.claude/settings.json`, so tracked project settings remain unchanged.
+
 ## Registry formatting
 
 Use `registry_format` to render an agent summary for UI lists or statusline output.

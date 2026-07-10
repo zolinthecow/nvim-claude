@@ -2,6 +2,15 @@
 
 Primary checks are doctests, headless Neovim tests, and provider integration harnesses.
 
+## Fast checks
+
+Run all Plenary specs and the package-boundary checker:
+
+```sh no-doctest
+./scripts/run_tests.sh
+nvim --headless -u NONE -l scripts/check_dependency_direction.lua
+```
+
 ## Doctest run
 
 ```sh

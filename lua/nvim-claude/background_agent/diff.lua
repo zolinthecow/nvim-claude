@@ -17,7 +17,7 @@ local function restore_cwd_on_close(original_cwd)
     group = restore_dir_group,
     once = true,
     callback = function()
-      vim.cmd('cd ' .. original_cwd)
+      vim.cmd('cd ' .. vim.fn.fnameescape(original_cwd))
     end,
   })
   vim.api.nvim_create_autocmd('BufWinLeave', {
@@ -27,7 +27,7 @@ local function restore_cwd_on_close(original_cwd)
     callback = function()
       vim.defer_fn(function()
         if vim.fn.getcwd() ~= original_cwd then
-          vim.cmd('cd ' .. original_cwd)
+          vim.cmd('cd ' .. vim.fn.fnameescape(original_cwd))
         end
       end, 100)
     end,
@@ -41,7 +41,7 @@ local function open_in_main(agent)
   end
 
   local original_cwd = vim.fn.getcwd()
-  vim.cmd('cd ' .. agent.work_dir)
+  vim.cmd('cd ' .. vim.fn.fnameescape(agent.work_dir))
 
   local has_diffview = pcall(require, 'diffview')
   if has_diffview then
@@ -85,7 +85,7 @@ function M.open(agent)
 end
 
 function M.open_by_id(agent_id)
-  local agent = registry.get(agent_id)
+  local agent = registry.get(agent_id, utils.get_project_root())
   if not agent then return false end
   return M.open(agent)
 end

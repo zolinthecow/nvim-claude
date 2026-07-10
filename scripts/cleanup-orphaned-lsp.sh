@@ -3,48 +3,47 @@
 
 echo "[$(date)] Starting cleanup of orphaned processes..."
 
-# Get current project hash for targeted cleanup
+# Get current project hash for targeted cleanup.
 CWD=$(pwd)
 PROJECT_HASH=$(echo -n "$CWD" | shasum -a 256 | cut -c1-8)
-PROJECT_SOCKET="/tmp/nvim-claude-headless-${PROJECT_HASH}.sock"
+SOCKET_PREFIX="/tmp/nvim-claude-headless-${PROJECT_HASH}"
 
-# Kill orphaned headless Neovim instances for THIS project only (keep only the most recent)
-HEADLESS_PIDS=$(pgrep -f "nvim --headless --listen $PROJECT_SOCKET" | sort -n)
-if [ ! -z "$HEADLESS_PIDS" ]; then
-    HEADLESS_COUNT=$(echo "$HEADLESS_PIDS" | wc -l)
-    echo "  Found $HEADLESS_COUNT headless instances for current project"
-    
-    if [ "$HEADLESS_COUNT" -gt 1 ]; then
-        # Keep the last one (most recent), kill the rest
-        echo "$HEADLESS_PIDS" | head -n $((HEADLESS_COUNT - 1)) | while read pid; do
-            if [ ! -z "$pid" ]; then
-                echo "  Killing orphaned headless Neovim for this project: PID $pid"
-                kill -TERM "$pid" 2>/dev/null
-            fi
-        done
+FOUND=0
+shopt -s nullglob
+for socket in "${SOCKET_PREFIX}"-*.sock; do
+    FOUND=1
+    owner_pid=${socket%.sock}
+    owner_pid=${owner_pid##*-}
+    case "$owner_pid" in
+        *[!0-9]*|'') continue ;;
+    esac
+
+    if kill -0 "$owner_pid" 2>/dev/null; then
+        echo "  Keeping socket owned by live MCP process $owner_pid"
+        continue
     fi
-else
+
+    pgrep -f "nvim --headless --listen $socket" 2>/dev/null | while read -r pid; do
+        [ -n "$pid" ] || continue
+        echo "  Stopping orphaned headless Neovim: PID $pid"
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    rm -f "$socket"
+done
+
+if [ "$FOUND" -eq 0 ]; then
     echo "  No headless instances found for current project"
 fi
 
-# Clean up stale socket files for THIS project
-PROJECT_LOCK="/tmp/nvim-claude-headless-${PROJECT_HASH}.lock"
-
-if [ -e "$PROJECT_SOCKET" ]; then
-    # Check if socket is actually in use
-    if ! lsof "$PROJECT_SOCKET" >/dev/null 2>&1; then
-        echo "  Removing stale socket for this project: $PROJECT_SOCKET"
-        rm -f "$PROJECT_SOCKET"
-    fi
+# Remove artifacts from the former shared-socket implementation only when no
+# process has the legacy socket open.
+LEGACY_SOCKET="${SOCKET_PREFIX}.sock"
+LEGACY_LOCK="${SOCKET_PREFIX}.lock"
+if [ -e "$LEGACY_SOCKET" ] && ! lsof "$LEGACY_SOCKET" >/dev/null 2>&1; then
+    rm -f "$LEGACY_SOCKET"
 fi
-
-# Clean up stale lock files for THIS project
-if [ -e "$PROJECT_LOCK" ]; then
-    # Check if lock is older than 10 minutes
-    if [ "$(find "$PROJECT_LOCK" -mmin +10 2>/dev/null)" ]; then
-        echo "  Removing stale lock for this project: $PROJECT_LOCK"
-        rm -f "$PROJECT_LOCK"
-    fi
+if [ -e "$LEGACY_LOCK" ] && [ "$(find "$LEGACY_LOCK" -mmin +10 2>/dev/null)" ]; then
+    rm -f "$LEGACY_LOCK"
 fi
 
 # Clean up ShaDa temp files

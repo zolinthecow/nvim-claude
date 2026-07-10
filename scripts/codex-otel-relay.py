@@ -209,6 +209,7 @@ class NeovimRouter:
             nvim.exec_lua(
                 'return require("nvim-claude.agent_provider.providers.codex.otel_listener").process_payload(...)',
                 payload,
+                git_root,
             )
         except Exception as exc:
             log(f"[relay] exec_lua failed for {git_root}: {exc}")

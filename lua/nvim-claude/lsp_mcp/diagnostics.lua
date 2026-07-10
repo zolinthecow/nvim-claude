@@ -29,12 +29,43 @@ local function normalize_paths_arg(file_paths)
   return {}
 end
 
+local function acquire_file_buffer(path)
+  local full = vim.fn.fnamemodify(path, ':p')
+  local bufnr = vim.fn.bufnr(full)
+  local created = bufnr == -1
+  if created then bufnr = vim.fn.bufadd(full) end
+
+  local was_loaded = vim.api.nvim_buf_is_loaded(bufnr)
+  if not was_loaded then vim.fn.bufload(bufnr) end
+  return bufnr, { created = created, was_loaded = was_loaded }
+end
+
+local function prepare_buffer(bufnr, managed)
+  if vim.bo[bufnr].filetype == '' then
+    vim.api.nvim_buf_call(bufnr, function() vim.cmd 'filetype detect' end)
+  end
+  if not managed then return end
+  pcall(vim.api.nvim_exec_autocmds, 'BufReadPost', { buffer = bufnr })
+  pcall(vim.api.nvim_exec_autocmds, 'BufEnter', { buffer = bufnr })
+  pcall(vim.api.nvim_exec_autocmds, 'InsertLeave', { buffer = bufnr })
+  pcall(vim.api.nvim_exec_autocmds, 'TextChanged', { buffer = bufnr })
+end
+
+local function release_file_buffer(bufnr, lifecycle)
+  if not lifecycle or not vim.api.nvim_buf_is_valid(bufnr) then return end
+  if lifecycle.created then
+    pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+  elseif not lifecycle.was_loaded then
+    pcall(vim.api.nvim_buf_delete, bufnr, { unload = true })
+  end
+end
+
 -- Create temp buffers for files, attach LSP, wait bounded, collect diagnostics, cleanup
 function M.get_for_files(file_paths)
   local files = normalize_paths_arg(file_paths)
 
   local files_to_check = {}
-  local temp_buffers = {}
+  local managed_buffers = {}
 
   if not files or #files == 0 then
     -- Optional: try loaded buffers; headless instances typically have none
@@ -42,10 +73,7 @@ function M.get_for_files(file_paths)
       if vim.api.nvim_buf_is_loaded(buf) then
         local name = vim.api.nvim_buf_get_name(buf)
         if name ~= '' and vim.fn.filereadable(name) == 1 then
-          local tmp = vim.fn.bufadd(name)
-          vim.fn.bufload(tmp)
-          temp_buffers[tmp] = true
-          table.insert(files_to_check, { path = name, bufnr = tmp })
+          table.insert(files_to_check, { path = name, bufnr = buf })
         end
       end
     end
@@ -60,10 +88,11 @@ function M.get_for_files(file_paths)
           if vim.fn.filereadable(rel) == 1 then full = rel end
         end
         if vim.fn.filereadable(full) == 1 then
-          local tmp = vim.fn.bufadd(full)
-          vim.fn.bufload(tmp)
-          temp_buffers[tmp] = true
-          table.insert(files_to_check, { path = full, bufnr = tmp })
+          local bufnr, lifecycle = acquire_file_buffer(full)
+          if lifecycle.created or not lifecycle.was_loaded then
+            managed_buffers[bufnr] = lifecycle
+          end
+          table.insert(files_to_check, { path = full, bufnr = bufnr })
         end
       end
     end
@@ -71,14 +100,7 @@ function M.get_for_files(file_paths)
     -- Trigger LSP attach for each buffer by simulating common events
     for _, info in ipairs(files_to_check) do
       local b = info.bufnr
-      vim.cmd('buffer ' .. b)
-      vim.api.nvim_buf_call(b, function()
-        vim.cmd('filetype detect')
-        pcall(vim.api.nvim_exec_autocmds, 'BufReadPost', { buffer = b })
-        pcall(vim.api.nvim_exec_autocmds, 'BufEnter', { buffer = b })
-        pcall(vim.api.nvim_exec_autocmds, 'InsertLeave', { buffer = b })
-        pcall(vim.api.nvim_exec_autocmds, 'TextChanged', { buffer = b })
-      end)
+      prepare_buffer(b, managed_buffers[b] ~= nil)
     end
     -- Single aggregated wait for all buffers to get at least one client
     local function all_attached()
@@ -218,7 +240,7 @@ function M.get_for_files(file_paths)
   end
 
   -- Collect diagnostics
-  local out = {}
+  local out = vim.empty_dict()
   for _, info in ipairs(files_to_check) do
     local diags = vim.diagnostic.get(info.bufnr)
     local diag_details = {}
@@ -243,54 +265,24 @@ function M.get_for_files(file_paths)
   end
 
   -- Cleanup
-  for bufnr, _ in pairs(temp_buffers) do
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      local clients = vim.lsp.get_clients({ bufnr = bufnr })
-      for _, client in ipairs(clients) do
-        pcall(vim.lsp.buf_detach_client, bufnr, client.id)
-      end
-      pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
-    end
-  end
+  for bufnr, lifecycle in pairs(managed_buffers) do release_file_buffer(bufnr, lifecycle) end
 
   return vim.json.encode(out)
 end
 
 function M.get_context(file_path, line)
-  if not file_path or vim.fn.filereadable(file_path) == 0 then
+  if type(file_path) ~= 'string' or file_path == '' or vim.fn.filereadable(file_path) == 0 then
     return vim.json.encode({ error = 'File not found' })
   end
 
-  -- Always create a temp buffer (do not reuse existing)
-  local tmp = vim.fn.bufadd('')
-  local temp = true
-
-  -- If a buffer already exists for this path, prefer its content and filetype
-  local existing = vim.fn.bufnr(file_path)
-  local ft = ''
-  if existing ~= -1 then
-    local content = vim.api.nvim_buf_get_lines(existing, 0, -1, false)
-    vim.api.nvim_buf_set_lines(tmp, 0, -1, false, content)
-    ft = vim.bo[existing].filetype
-  else
-    local content = vim.fn.readfile(file_path)
-    vim.api.nvim_buf_set_lines(tmp, 0, -1, false, content)
-  end
-
-  local unique_name = file_path .. '.mcp-temp-' .. tmp
-  vim.api.nvim_buf_set_name(tmp, unique_name)
-
-  if ft ~= '' then
-    vim.bo[tmp].filetype = ft
-  else
-    vim.api.nvim_buf_call(tmp, function() vim.cmd('filetype detect') end)
-  end
+  local tmp, lifecycle = acquire_file_buffer(file_path)
+  prepare_buffer(tmp, lifecycle.created or not lifecycle.was_loaded)
 
   -- Wait briefly for LSP to attach/populate
   vim.wait(500, function() return #vim.lsp.get_clients({ bufnr = tmp }) > 0 end, 50)
   vim.wait(500, function() return false end)
 
-  local lnum = math.max(0, (line or 1) - 1)
+  local lnum = math.max(0, (tonumber(line) or 1) - 1)
   local diags = vim.diagnostic.get(tmp, { lnum = lnum })
 
   local start_line = math.max(0, lnum - 5)
@@ -307,13 +299,7 @@ function M.get_context(file_path, line)
     filetype = vim.bo[tmp].filetype,
   })
 
-  if temp and vim.api.nvim_buf_is_valid(tmp) then
-    local clients = vim.lsp.get_clients({ bufnr = tmp })
-    for _, client in ipairs(clients) do
-      pcall(vim.lsp.buf_detach_client, tmp, client.id)
-    end
-    pcall(vim.api.nvim_buf_delete, tmp, { force = true })
-  end
+  release_file_buffer(tmp, lifecycle)
 
   return result
 end
@@ -321,15 +307,11 @@ end
 function M.get_summary()
   -- Build a summary over buffers we just checked (headless may have none)
   local files_to_check = {}
-  local temp_buffers = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(buf) then
       local name = vim.api.nvim_buf_get_name(buf)
       if name ~= '' and vim.fn.filereadable(name) == 1 then
-        local tmp = vim.fn.bufadd(name)
-        vim.fn.bufload(tmp)
-        temp_buffers[tmp] = true
-        table.insert(files_to_check, { path = name, bufnr = tmp })
+        table.insert(files_to_check, { path = name, bufnr = buf })
       end
     end
   end
@@ -357,24 +339,14 @@ function M.get_summary()
     end
   end
 
-  for bufnr, _ in pairs(temp_buffers) do
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      local clients = vim.lsp.get_clients({ bufnr = bufnr })
-      for _, client in ipairs(clients) do
-        pcall(vim.lsp.buf_detach_client, bufnr, client.id)
-      end
-      pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
-    end
-  end
-
   return vim.json.encode(summary)
 end
 
 function M.get_session()
+  local review_state = require('nvim-claude.review_state')
   local utils = require('nvim-claude.utils')
-  local events = require('nvim-claude.events')
   local git_root = utils.get_project_root() or vim.fn.getcwd()
-  local files = events.get_turn_files(git_root)
+  local files = review_state.get_turn_files(git_root)
   return M.get_for_files(files)
 end
 

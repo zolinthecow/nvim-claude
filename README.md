@@ -14,20 +14,20 @@ A powerful Neovim plugin for seamless integration with Claude AI. Chat with Clau
 ## Requirements
 
 ### Required
-- Neovim >= 0.9.0
+- Neovim >= 0.10.0
 - [Claude Code CLI](https://claude.ai/download) - The `claude` command must be in your PATH
 - Tmux (for chat interface and background agents)
 - Git (for diff management and worktrees)
-- [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) - Required dependency
 - Python 3.10+ - For MCP server and RPC communication (automatically set up by `:ClaudeInstallMCP`)
 
 ### Optional but Recommended
 - [diffview.nvim](https://github.com/sindrets/diffview.nvim) - For reviewing agent changes
+- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) - For Telescope-backed pickers when available
 - [which-key.nvim](https://github.com/folke/which-key.nvim) - For keybinding hints
 
 ### Notes
 - The plugin stores state globally in `~/.local/share/nvim/nvim-claude/projects/`
-- Project state is keyed by absolute path 
+- Project state is keyed by absolute path
 - On macOS, Claude Code CLI can be installed from the Claude desktop app
 - The plugin uses git worktrees for agent isolation, so Git 2.5+ is recommended
 
@@ -44,8 +44,7 @@ A powerful Neovim plugin for seamless integration with Claude AI. Chat with Clau
     })
   end,
   dependencies = {
-    'nvim-telescope/telescope.nvim'  -- Required
-    'nvim-lua/plenary.nvim',         -- Required
+    'nvim-telescope/telescope.nvim', -- Optional
     'sindrets/diffview.nvim',        -- Optional: for enhanced diff viewing
   },
 }
@@ -75,8 +74,7 @@ use {
     })
   end,
   requires = {
-    'nvim-telescope/telescope.nvim'  -- Required
-    'nvim-lua/plenary.nvim',          -- Required
+    'nvim-telescope/telescope.nvim',  -- Optional
     'sindrets/diffview.nvim',          -- Optional
   }
 }

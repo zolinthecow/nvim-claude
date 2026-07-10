@@ -2,8 +2,6 @@
 
 local M = {}
 
-local utils = require 'nvim-claude.utils'
-
 -- Ensure consistent newline endings to avoid phantom diffs
 local function normalize(text)
   text = text or ''
@@ -53,41 +51,40 @@ local function parse_diff(diff_text)
   return hunks
 end
 
+function M.parse_unified_diff(diff_text)
+  return parse_diff(diff_text)
+end
+
 -- Compute diff hunks between two texts
-function M.compute_diff(old_text, new_text)
+function M.compute_diff(old_text, new_text, opts)
+  opts = opts or {}
   old_text = normalize(old_text)
   new_text = normalize(new_text)
 
-  -- Write texts to temp files
-  local old_file = '/tmp/nvim-claude-old.txt'
-  local new_file = '/tmp/nvim-claude-new.txt'
-
-  utils.write_file(old_file, old_text)
-  utils.write_file(new_file, new_text)
-
-  -- Use git diff with histogram algorithm for better code diffs
-  local cmd = string.format('git diff --no-index --no-prefix --unified=1 --diff-algorithm=histogram "%s" "%s" 2>/dev/null || true', old_file, new_file)
-  local diff_output = utils.exec(cmd)
+  local ok, diff_output = pcall(vim.diff, old_text, new_text, {
+    algorithm = 'histogram',
+    ctxlen = 1,
+    result_type = 'unified',
+  })
+  if not ok then
+    return nil, tostring(diff_output)
+  end
 
   local hunks = parse_diff(diff_output or '')
-  if (not hunks or #hunks == 0) and old_text ~= '' and new_text == '' then
-    -- Fallback: synthetic deletion-only hunk (entire file deleted)
-    local lines = {}
-    for _, l in ipairs(vim.split(old_text, '\n', { plain = true })) do
-      if l ~= '' then table.insert(lines, '-' .. l) end
-    end
-    table.insert(lines, '') -- ensure trailing context
+  if #hunks == 0 and opts.old_exists ~= nil and opts.new_exists ~= nil and opts.old_exists ~= opts.new_exists then
     hunks = {
       {
-        old_start = 1,
-        old_count = #lines,
-        new_start = 1,
+        old_start = opts.old_exists and 1 or 0,
+        old_count = 0,
+        new_start = opts.new_exists and 1 or 0,
         new_count = 0,
-        lines = lines,
-        header = string.format('@@ -1,%d +0,0 @@', #lines),
+        lines = {},
+        header = '@@ -0,0 +0,0 @@',
+        file_presence = true,
       },
     }
   end
+
   return { hunks = hunks }
 end
 

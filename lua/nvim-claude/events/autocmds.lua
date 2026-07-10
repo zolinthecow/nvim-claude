@@ -3,7 +3,7 @@
 local M = {}
 
 local utils = require 'nvim-claude.utils'
-local session = require 'nvim-claude.events.session'
+local review_state = require 'nvim-claude.review_state'
 local inline_diff = require 'nvim-claude.inline_diff'
 
 local function show_diff_if_tracked(bufnr)
@@ -26,25 +26,30 @@ local function show_diff_if_tracked(bufnr)
   end
 
   local relative = file_path:gsub('^' .. vim.pesc(git_root) .. '/', '')
-  if not session.is_edited_file(git_root, relative) then
+  if not review_state.is_edited_file(git_root, relative) then
     return
   end
 
-  -- Get baseline content (empty if file absent in baseline)
-  local cmd = string.format("cd '%s' && git show %s:'%s' 2>/dev/null", git_root, baseline_ref, relative)
-  local baseline_content = utils.exec(cmd) or ''
-  if baseline_content:match '^fatal:' or baseline_content:match '^error:' then
-    baseline_content = ''
-  end
+  local base = inline_diff.read_baseline_file(git_root, relative, baseline_ref)
+  if not base then return end
 
   local current_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), '\n')
-  local d = inline_diff.compute_diff(baseline_content, current_content)
-  if not d or not d.hunks or #d.hunks == 0 then
+  local d = inline_diff.compute_diff(base.content, current_content, {
+    old_exists = base.exists,
+    new_exists = true,
+  })
+  if not d then return end
+  if not d.hunks or #d.hunks == 0 then
     -- No actual diff vs baseline; untrack stale entry
-    session.remove_edited_file(git_root, relative)
+    review_state.remove_edited_file(git_root, relative)
     return
   end
-  inline_diff.show_inline_diff(bufnr, baseline_content, current_content, { preserve_cursor = true })
+  inline_diff.show_inline_diff(bufnr, base.content, current_content, {
+    diff = d,
+    old_exists = base.exists,
+    new_exists = true,
+    preserve_cursor = true,
+  })
 end
 
 function M.setup_file_open_autocmd()

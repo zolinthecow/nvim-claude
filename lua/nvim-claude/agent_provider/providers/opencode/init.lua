@@ -13,6 +13,16 @@ function M.setup(opts)
   cfg.setup(opts)
 end
 
+function M.debug_info()
+  return {
+    name = M.name,
+    spawn_command = cfg.spawn_command,
+    background_spawn = cfg.background_spawn,
+    pane_title = cfg.pane_title,
+    process_pattern = cfg.process_pattern,
+  }
+end
+
 M.install_hooks = hooks.install
 M.uninstall_hooks = hooks.uninstall
 

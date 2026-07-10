@@ -22,9 +22,9 @@ if ! nvim --headless -u tests/minimal_init.lua +"lua require('plenary')" +qa! >/
   exit 1
 fi
 
-# Run the specific spec file
+# Run the inline-diff action and lifecycle spec file
 nvim --headless -u tests/minimal_init.lua \
-  -c "PlenaryBustedFile tests/hunks_spec.lua" \
+  -c "PlenaryBustedFile tests/inline_diff_unit_spec.lua" \
   -c "qa!"
 
 echo "✅ hunks.lua tests finished"

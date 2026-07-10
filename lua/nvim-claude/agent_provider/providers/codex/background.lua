@@ -6,6 +6,30 @@ local cfg = require('nvim-claude.agent_provider.providers.codex.config')
 local logger = require('nvim-claude.logger')
 
 local M = {}
+local uv = vim.uv or vim.loop
+
+local function remove_tree(path)
+  pcall(vim.fn.delete, path, 'rf')
+end
+
+local function prepare_codex_home()
+  local path = vim.fn.tempname() .. '-nvim-claude-codex'
+  if not utils.ensure_dir(path) then return nil, 'failed to create temporary CODEX_HOME' end
+  pcall(uv.fs_chmod, path, 448)
+
+  local source_home = vim.env.CODEX_HOME or vim.fn.expand('~/.codex')
+  local source_auth = source_home .. '/auth.json'
+  if vim.fn.filereadable(source_auth) == 1 then
+    local ok, err = uv.fs_copyfile(source_auth, path .. '/auth.json')
+    if not ok then
+      remove_tree(path)
+      return nil, err or 'failed to copy Codex authentication'
+    end
+    pcall(uv.fs_chmod, path .. '/auth.json', 384)
+  end
+
+  return path
+end
 
 function M.generate_window_name()
   return 'codex-' .. utils.timestamp()
@@ -52,65 +76,40 @@ function M.launch_agent_pane(window_id, cwd, initial_text)
   if not window_id then return nil end
   local pane_id = tmux.split_window(window_id, 'h', 40)
   if not pane_id then return nil end
-  -- Use shell-escaped cd to handle spaces/special chars in paths
-  tmux.send_to_pane(pane_id, 'cd ' .. vim.fn.shellescape(cwd))
-  -- Prepare isolated Codex HOME for the agent: copy user's ~/.codex then strip hooks
-  local user_codex = vim.fn.expand('~/.codex')
-  local agent_codex = cwd .. '/.codex'
-  pcall(function()
-    if vim.fn.isdirectory(user_codex) == 1 then
-      -- Copy only if agent dir missing or empty
-      if vim.fn.isdirectory(agent_codex) == 0 or vim.fn.glob(agent_codex .. '/*') == '' then
-        utils.ensure_dir(agent_codex)
-        utils.exec(string.format('cp -R %s/ %s 2>/dev/null', vim.fn.shellescape(user_codex), vim.fn.shellescape(agent_codex)))
-      end
-      -- Strip hooks from agent config.toml to prevent background hooks from running
-      local cfg_path = agent_codex .. '/config.toml'
-      if vim.fn.filereadable(cfg_path) == 1 then
-        local content = utils.read_file(cfg_path) or ''
-        if content ~= '' then
-          local lines = {}
-          for l in (content .. '\n'):gmatch('([^\n]*)\n') do table.insert(lines, l) end
-          local start_idx, end_idx = nil, nil
-          local in_hooks = false
-          for i, l in ipairs(lines) do
-            local is_header = l:match('^%s*%[') ~= nil
-            local is_hooks_header = l:match('^%s*%[%[?hooks') ~= nil
-            if is_header and is_hooks_header then
-              if not in_hooks then start_idx = i; in_hooks = true end
-            elseif is_header and in_hooks and (not is_hooks_header) then
-              end_idx = i; break
-            end
-          end
-          if in_hooks and not end_idx then end_idx = #lines + 1 end
-          local new_content = content
-          if start_idx then
-            local before = table.concat(vim.list_slice(lines, 1, start_idx - 1), '\n')
-            local after = table.concat(vim.list_slice(lines, end_idx, #lines), '\n')
-            new_content = ''
-            if before ~= '' then new_content = before .. '\n' end
-            if after ~= '' then new_content = new_content .. after .. '\n' end
-          end
-          utils.write_file(cfg_path, new_content)
-        end
-      end
-    end
-  end)
+  if not tmux.send_to_pane(pane_id, 'cd ' .. vim.fn.shellescape(cwd)) then
+    tmux.kill_pane(pane_id)
+    return nil
+  end
 
-  -- Prepare task text via a temp file to avoid quoting issues with special characters/newlines
-  local task = initial_text or ''
-  local task_file = cwd .. '/.codex-task.txt'
-  utils.write_file(task_file, task)
+  local codex_home, prepare_err = prepare_codex_home()
+  if not codex_home then
+    logger.error('provider.codex.background', 'failed to prepare isolated CODEX_HOME', { error = prepare_err })
+    tmux.kill_pane(pane_id)
+    return nil
+  end
 
-  -- Isolate Codex config so background agents do NOT trigger hooks
-  local codex_home = agent_codex
-  utils.ensure_dir(codex_home)
-  local env_prefix = 'CODEX_HOME=' .. vim.fn.shellescape(codex_home) .. ' '
-  local spawn = (cfg.background_spawn or 'codex --full-auto')
-  -- Pass the task as a single argv using command substitution; quoting preserves whitespace/newlines
-  local cmd = env_prefix .. spawn .. ' ' .. '"$(cat ' .. vim.fn.shellescape(task_file) .. ')"'
-  -- Use tmux buffer paste to avoid key interpretation/quoting issues
-  tmux.send_text_to_pane(pane_id, cmd)
+  local task_file = codex_home .. '/task.txt'
+  if not utils.write_file(task_file, initial_text or '') then
+    remove_tree(codex_home)
+    tmux.kill_pane(pane_id)
+    return nil
+  end
+  pcall(uv.fs_chmod, task_file, 384)
+
+  local cleanup = 'rm -rf -- ' .. vim.fn.shellescape(codex_home)
+  local cmd = table.concat({
+    '(',
+    'trap ' .. vim.fn.shellescape(cleanup) .. ' EXIT;',
+    'trap \'exit 129\' HUP INT TERM;',
+    'export CODEX_HOME=' .. vim.fn.shellescape(codex_home) .. ';',
+    (cfg.background_spawn or 'codex --full-auto') .. ' "$(cat ' .. vim.fn.shellescape(task_file) .. ')"',
+    ')',
+  }, ' ')
+  if not tmux.send_to_pane(pane_id, cmd) then
+    remove_tree(codex_home)
+    tmux.kill_pane(pane_id)
+    return nil
+  end
   return pane_id
 end
 

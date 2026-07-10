@@ -2,6 +2,14 @@
 
 Agent providers abstract Claude/Codex/OpenCode integrations behind a single facade. The provider handles hooks, chat transport, and background agent spawning.
 
+Provider installers own only the entries carrying their exact command path or management marker. They preserve unrelated Claude permissions and hooks, refuse to replace user-owned Codex telemetry or MCP tables, and leave malformed configuration unchanged. Shell deletion hooks parse plain `rm` arguments as data and skip compound commands, expansions, and globs.
+
+Codex background agents use a temporary `CODEX_HOME` outside the git worktree. Only `auth.json` is copied when present; the temporary home and prompt file are removed when the agent command exits.
+
+The Codex provider receives its event dependency at composition time as `codex.event_sink`. The sink contract is `pre_tool_use(path, opts)`, `post_tool_use(path)`, `is_edited_file(root, relative_path)`, and `user_prompt_submit(prompt)`; provider internals do not import the events feature.
+
+The external Codex relay calls `process_payload(payload, resolved_project_root)`. Prompt records use their own `cwd`/project attribute first, then that session-derived relay root; records with neither are dropped instead of falling back to Neovim's ambient directory.
+
 ## Selecting a provider
 
 ```lua
@@ -13,6 +21,9 @@ agent_provider.setup({
 })
 
 assert(agent_provider.name() == 'claude')
+
+local info = agent_provider.debug_info()
+assert(info.name == 'claude' and info.spawn_command == 'claude')
 
 local window_name = agent_provider.background.generate_window_name()
 assert(type(window_name) == 'string' and window_name ~= '')

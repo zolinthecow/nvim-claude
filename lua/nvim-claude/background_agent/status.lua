@@ -3,12 +3,19 @@
 local M = {}
 
 local registry = require('nvim-claude.background_agent.registry')
+local utils = require('nvim-claude.utils')
+local last_validation = {}
 
 -- Compose a concise status string for statusline integrations
 function M.get_status()
-  -- Refresh registry view
-  registry.validate_agents()
-  local agents = registry.get_project_agents()
+  local project_root = utils.get_project_root()
+  local now = vim.loop.hrtime()
+  local previous = last_validation[project_root] or 0
+  if now - previous >= 1e9 then
+    registry.validate_agents(project_root)
+    last_validation[project_root] = now
+  end
+  local agents = registry.get_project_agents(project_root)
 
   local active_count = 0
   local latest_progress = nil
@@ -41,4 +48,3 @@ function M.get_status()
 end
 
 return M
-

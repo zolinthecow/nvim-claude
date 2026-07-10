@@ -26,6 +26,9 @@ end
 function M.create_baseline(message, git_root)
   return baseline.create_baseline(message, git_root)
 end
+function M.read_baseline_file(git_root, relative_path, ref)
+  return baseline.read_file(git_root, relative_path, ref)
+end
 
 -- Update a single file's content inside the current baseline commit
 -- Returns true on success
@@ -67,25 +70,13 @@ end
 
 -- --- Navigation ---
 function M.jump_to_hunk(bufnr, idx, silent)
-  local d = exec.get_diff_state(bufnr)
-  if not d then
-    return
-  end
-  nav.jump_to_hunk(bufnr or vim.api.nvim_get_current_buf(), d, idx, silent)
+  return exec.jump_to_hunk(bufnr or vim.api.nvim_get_current_buf(), idx, silent)
 end
 function M.next_hunk(bufnr)
-  local d = exec.get_diff_state(bufnr)
-  if not d then
-    return
-  end
-  nav.next_hunk(bufnr or vim.api.nvim_get_current_buf(), d)
+  return exec.next_hunk(bufnr or vim.api.nvim_get_current_buf())
 end
 function M.prev_hunk(bufnr)
-  local d = exec.get_diff_state(bufnr)
-  if not d then
-    return
-  end
-  nav.prev_hunk(bufnr or vim.api.nvim_get_current_buf(), d)
+  return exec.prev_hunk(bufnr or vim.api.nvim_get_current_buf())
 end
 
 -- --- Accept / Reject operations ---
@@ -129,22 +120,34 @@ function M.accept_all_files()
   local result = hunks.accept_all_files()
   if not result or result.ok == false then
     vim.notify('No Claude-edited files to accept', vim.log.levels.INFO)
-    return
+    return false
+  end
+  local applied = exec.run_actions(result.actions)
+  if not applied.ok then
+    vim.notify('Failed to accept all Claude-edited files: ' .. applied.error, vim.log.levels.ERROR)
+    return false
   end
   exec.clear_all_visuals()
   nav.close_current_deleted_view_if_any()
   vim.notify('Accepted all Claude-edited files', vim.log.levels.INFO)
+  return true
 end
 
 function M.reject_all_files()
   local result = hunks.reject_all_files()
   if not result or result.ok == false then
     vim.notify('No Claude-edited files to reject', vim.log.levels.INFO)
-    return
+    return false
+  end
+  local applied = exec.run_actions(result.actions)
+  if not applied.ok then
+    vim.notify('Failed to reject all Claude-edited files: ' .. applied.error, vim.log.levels.ERROR)
+    return false
   end
   exec.clear_all_visuals()
   nav.open_restored_if_was_deleted_view(result.root)
   vim.notify('Rejected all Claude-edited files', vim.log.levels.INFO)
+  return true
 end
 
 -- Clear persistence state for inline diffs (project-state)
@@ -164,8 +167,8 @@ function M.prev_diff_file()
 end
 
 -- Light re-export for internal consumers needing pure diff computation
-function M.compute_diff(old_text, new_text)
-  return require('nvim-claude.inline_diff.diff').compute_diff(old_text, new_text)
+function M.compute_diff(old_text, new_text, opts)
+  return require('nvim-claude.inline_diff.diff').compute_diff(old_text, new_text, opts)
 end
 
 return M

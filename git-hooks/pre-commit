@@ -1,13 +1,25 @@
 #!/bin/bash
 # Pre-commit hook to automatically accept all Claude inline diffs
 
-# Get the directory where this script is located
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve symlinks so `.git/hooks/pre-commit -> .../git-hooks/pre-commit`
+# still finds the plugin's RPC wrapper.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    case "$SOURCE" in
+        /*) ;;
+        *) SOURCE="$SOURCE_DIR/$SOURCE" ;;
+    esac
+done
+PLUGIN_ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 
-# Check if we're in a Neovim instance with Claude diffs
-if [ -f ".nvim-claude/inline-diff-state.json" ]; then
-    # Use nvim-rpc to accept all changes
-    "$HOOK_DIR/scripts/nvim-rpc.sh" --remote-expr 'luaeval("require(\"nvim-claude.inline-diff\").accept_all_files()")' 2>/dev/null
+# Keep the review baseline in sync with a commit when an editor for this
+# project is available. A missing editor must never block the commit.
+if [ -x "$PLUGIN_ROOT/rpc/nvim-rpc.sh" ]; then
+    TARGET_FILE="$PWD" "$PLUGIN_ROOT/rpc/nvim-rpc.sh" \
+        --remote-expr 'luaeval("require(\"nvim-claude.inline_diff\").accept_all_files()")' \
+        >/dev/null 2>&1 || true
 fi
 
 # Continue with normal commit

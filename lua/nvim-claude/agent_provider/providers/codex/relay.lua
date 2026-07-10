@@ -58,8 +58,12 @@ end
 
 local function is_running(pid)
   if not pid then return false end
-  local ok = pcall(function() return uv.kill(pid, 0) end)
-  return ok == true
+  local ok, result = pcall(uv.kill, pid, 0)
+  if not ok or result ~= 0 then return false end
+
+  local command = vim.fn.system({ 'ps', '-p', tostring(pid), '-o', 'command=' })
+  if vim.v.shell_error ~= 0 then return false end
+  return command:find(script_path(), 1, true) ~= nil
 end
 
 local function write_pid(pid)
@@ -138,6 +142,7 @@ function M.ensure_running()
   if is_running(existing) then
     return true
   end
+  if existing then remove_pid() end
 
   -- If something else already holds the port, avoid spinning up a daemon that will fail immediately
   if check_port(cfg.otel_port) then
@@ -151,14 +156,13 @@ end
 -- Public: stop the daemon if running
 function M.stop()
   local pid = read_pid()
-  if not pid then
+  if not pid or not is_running(pid) then
+    if pid then remove_pid() end
     vim.notify('nvim-claude: Codex OTEL relay not running', vim.log.levels.INFO)
     return false
   end
-  local ok = pcall(function()
-    uv.kill(pid, vim.loop.constants.SIGTERM or 15)
-  end)
-  if ok then
+  local ok, result = pcall(uv.kill, pid, vim.loop.constants.SIGTERM or 15)
+  if ok and result == 0 then
     remove_pid()
     vim.notify('nvim-claude: Stopped Codex OTEL relay', vim.log.levels.INFO)
     return true

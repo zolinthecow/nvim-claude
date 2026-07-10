@@ -279,6 +279,14 @@ function M.normalize_all_states(states, normalize_project_key)
       project_key = key
     end
 
+    -- Persist state for temporarily unavailable projects. Existence cleanup is
+    -- explicit; a disconnected volume or removed worktree must not make an
+    -- unrelated read erase state.
+    if not project_key and key:sub(1, 1) == '/' then
+      project_key = key:gsub('/+$', '')
+      if project_key == '' then project_key = '/' end
+    end
+
     if project_key and project_key ~= '' then
       local entry = M.normalize_project_entry(raw_entry, project_key)
       normalized[project_key] = merge_entries(normalized[project_key], entry)

@@ -18,11 +18,12 @@ assert(value.ok == true)
 
 ## Logging
 
-`logger.lua` is used across modules to emit structured diagnostics.
+`logger.lua` is used across modules to emit structured diagnostics. The default level is `INFO`; set `vim.g.nvim_claude_log_level = 'DEBUG'` or `NVIM_CLAUDE_LOG_LEVEL=DEBUG` only while troubleshooting so hot review paths do not perform debug I/O.
 
 ```lua
 local logger = require('nvim-claude.logger')
 assert(type(logger.debug) == 'function')
+assert(type(logger.set_level) == 'function')
 ```
 
 ## Settings

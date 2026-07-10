@@ -1,10 +1,10 @@
 # Inline diff system
 
-Inline diffs are driven by a git baseline commit (`refs/nvim-claude/baseline`). The inline-diff facade delegates to internal modules for diff computation, rendering, and accept/reject operations.
+Inline diffs are driven by a git baseline commit (`refs/nvim-claude/baseline`). The inline-diff facade delegates to internal modules for in-process diff computation, rendering, and accept/reject operations.
 
 ## Baseline handling
 
-The baseline commit is created from a temporary git index snapshot. Subsequent edits update files inside that baseline commit so diffs compare the working tree against the original state.
+The baseline commit is created from a temporary git index snapshot. Subsequent edits update files inside that baseline commit so diffs compare the working tree against the original state. Text hunks are computed with `vim.diff`; hunk actions splice validated line ranges without temporary repositories or patch files.
 
 ```lua
 local inline_diff = require('nvim-claude.inline_diff')
@@ -23,19 +23,24 @@ assert(found)
 
 ## Accept / reject flows
 
-Accepting or rejecting hunks updates the baseline commit and clears visuals. These APIs live on the facade to keep callers isolated from internal modules.
+Accepting or rejecting hunks executes an ordered action plan. Execution stops at the first failed buffer, disk, baseline, or state effect, so a failed effect never clears edited-file tracking. Navigation and actions share executor-owned selection state.
 
 ```lua
 local inline_diff = require('nvim-claude.inline_diff')
 
 assert(type(inline_diff.accept_current_hunk) == 'function')
 assert(type(inline_diff.reject_current_hunk) == 'function')
+assert(type(inline_diff.jump_to_hunk) == 'function')
+assert(type(inline_diff.read_baseline_file) == 'function')
 ```
+
+File existence is tracked separately from file content. An existing empty file is restored or accepted as an empty blob; only a file absent from the baseline is deleted when rejected.
 
 ## Persistence
 
-Diff state and baseline refs persist via `inline_diff/persistence.lua` and `project-state.lua`.
+Baseline refs persist via `inline_diff/persistence.lua`. The public `review_state` feature owns the edited-file and per-turn review lists.
 
 ```sh
 test -f 'lua/nvim-claude/inline_diff/persistence.lua'
+test -f 'lua/nvim-claude/review_state/init.lua'
 ```

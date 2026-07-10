@@ -24,4 +24,4 @@ events.clear_edited_files(root)
 
 ## Facade discipline
 
-Other modules should import `require('nvim-claude.events')` and avoid reaching into internal files directly.
+Event consumers should import `require('nvim-claude.events')`. Workflows that only need persisted review state should import `require('nvim-claude.review_state')`; no feature should reach into `events.session` directly.

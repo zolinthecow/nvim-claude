@@ -2,10 +2,10 @@
 
 local M = {}
 
-local nvc = require('nvim-claude')
 local utils = require('nvim-claude.utils')
 local git = utils.git
 local registry = require('nvim-claude.background_agent.registry')
+local config = require('nvim-claude.background_agent.config')
 
 -- Rebuild agent registry by scanning work_dir for worktrees
 function M.rebuild_registry()
@@ -15,18 +15,16 @@ function M.rebuild_registry()
     return 0
   end
 
-  local cfg = nvc.config and nvc.config.agents or { work_dir = '.agent-work' }
+  local cfg = config.get()
   local work_dir = project_root .. '/' .. (cfg.work_dir or '.agent-work')
   if not utils.file_exists(work_dir) then
     vim.notify('No agent work directory found', vim.log.levels.INFO)
     return 0
   end
 
-  -- Reset registry for a clean rebuild
-  registry.agents = {}
-
   local agent_dirs = vim.fn.glob(work_dir .. '/agent-*', false, true)
   local rebuilt = 0
+  local rebuilt_agents = {}
 
   for _, dir in ipairs(agent_dirs) do
     if vim.fn.isdirectory(dir) == 1 and vim.fn.filereadable(dir .. '/.git') == 1 then
@@ -49,14 +47,30 @@ function M.rebuild_registry()
       local task = dir_name:match('agent%-[%d%-]+%-(.+)') or 'Unknown task'
       task = task:gsub('%-', ' ')
 
-      -- Register via normal API (start_time set now)
-      registry.register(task, dir, window_id, window_name, { type = 'unknown', branch = git.default_branch() })
+      local id = dir_name
+      rebuilt_agents[id] = {
+        id = id,
+        task = task,
+        work_dir = dir,
+        window_id = window_id,
+        window_name = window_name,
+        project_root = project_root,
+        start_time = os.time(),
+        last_update = os.time(),
+        status = window_id and 'active' or 'completed',
+        progress = utils.read_file(dir .. '/progress.txt') or '',
+        fork_info = { type = 'unknown', branch = git.default_branch(project_root) },
+      }
       rebuilt = rebuilt + 1
     end
   end
 
+  local saved = registry.save(project_root, rebuilt_agents)
+  if not saved then
+    vim.notify('Failed to save rebuilt agent registry', vim.log.levels.ERROR)
+    return 0
+  end
   if rebuilt > 0 then
-    registry.save()
     vim.notify(string.format('Rebuilt registry with %d agents', rebuilt), vim.log.levels.INFO)
   else
     vim.notify('No agent worktrees found to rebuild', vim.log.levels.INFO)
@@ -68,7 +82,7 @@ end
 function M.clean_orphans()
   local project_root = utils.get_project_root()
   if not project_root then return 0 end
-  local cfg = nvc.config and nvc.config.agents or { work_dir = '.agent-work' }
+  local cfg = config.get()
   local work_dir = project_root .. '/' .. (cfg.work_dir or '.agent-work')
   if not utils.file_exists(work_dir) then
     vim.notify('No agent work directory found', vim.log.levels.INFO)
@@ -77,7 +91,7 @@ function M.clean_orphans()
 
   local dirs = vim.fn.readdir(work_dir)
   local orphans = {}
-  local agents = registry.get_project_agents()
+  local agents = registry.get_project_agents(project_root)
   local tracked = {}
   for _, a in ipairs(agents) do tracked[a.work_dir] = true end
   for _, d in ipairs(dirs) do
@@ -92,43 +106,49 @@ function M.clean_orphans()
   end
   local removed = 0
   for _, dir in ipairs(orphans) do
-    git.remove_worktree(dir)
-    removed = removed + 1
+    local ok = git.remove_worktree(dir, project_root)
+    if ok then removed = removed + 1 end
   end
   vim.notify(string.format('Removed %d orphaned directories', removed), vim.log.levels.INFO)
   return removed
 end
 
 function M.cleanup_completed()
+  local project_root = utils.get_project_root()
   local removed = 0
-  for _, agent in ipairs(registry.get_project_agents()) do
+  for _, agent in ipairs(registry.get_project_agents(project_root)) do
     if agent.status == 'completed' then
+      local worktree_removed = true
       if agent.work_dir and utils.file_exists(agent.work_dir) then
-        git.remove_worktree(agent.work_dir)
+        worktree_removed = git.remove_worktree(agent.work_dir, project_root)
       end
-      registry.remove(agent.id)
-      removed = removed + 1
+      if worktree_removed and registry.remove(agent.id or agent._registry_id, project_root) then
+        removed = removed + 1
+      end
     end
   end
   return removed
 end
 
 function M.cleanup_all_inactive()
+  local project_root = utils.get_project_root()
   local removed = 0
-  for _, agent in ipairs(registry.get_project_agents()) do
+  for _, agent in ipairs(registry.get_project_agents(project_root)) do
     if agent.status ~= 'active' then
+      local worktree_removed = true
       if agent.work_dir and utils.file_exists(agent.work_dir) then
-        git.remove_worktree(agent.work_dir)
+        worktree_removed = git.remove_worktree(agent.work_dir, project_root)
       end
-      registry.remove(agent.id)
-      removed = removed + 1
+      if worktree_removed and registry.remove(agent.id or agent._registry_id, project_root) then
+        removed = removed + 1
+      end
     end
   end
   return removed
 end
 
 function M.cleanup_older_than(days)
-  return registry.cleanup(days)
+  return registry.cleanup(days, utils.get_project_root())
 end
 
 return M

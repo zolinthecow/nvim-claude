@@ -1,32 +1,49 @@
--- Git operations module (utils namespace)
 local M = {}
-local utils = require('nvim-claude.utils.core')
+
+local utils = require 'nvim-claude.utils.core'
 
 M.config = {}
+
+local function run(project_root, command)
+  local prefix = ''
+  if project_root and project_root ~= '' then
+    prefix = 'cd ' .. vim.fn.shellescape(project_root) .. ' && '
+  end
+  return utils.exec(prefix .. command)
+end
+
+local function normalize_path(path)
+  return vim.fn.resolve(vim.fn.fnamemodify(path, ':p')):gsub('/+$', '')
+end
+
+local function rev_parse(project_root, ref)
+  local result, err = run(
+    project_root,
+    'git rev-parse --verify --quiet ' .. vim.fn.shellescape(ref)
+  )
+  if err or not result then return nil end
+  result = vim.trim(result)
+  return result ~= '' and result or nil
+end
 
 function M.setup(config)
   M.config = config or {}
 end
 
--- Check if git worktrees are supported
-function M.supports_worktrees()
-  local result = utils.exec('git worktree list 2>/dev/null')
-  return result ~= nil and not result:match('error')
+function M.supports_worktrees(project_root)
+  local result = run(project_root, 'git worktree list --porcelain')
+  return result ~= nil
 end
 
--- Get list of existing worktrees
-function M.list_worktrees()
-  local result = utils.exec('git worktree list --porcelain')
+function M.list_worktrees(project_root)
+  local result = run(project_root, 'git worktree list --porcelain')
   if not result then return {} end
 
   local worktrees = {}
   local current = {}
-
   for line in result:gmatch('[^\n]+') do
     if line:match('^worktree ') then
-      if current.path then
-        table.insert(worktrees, current)
-      end
+      if current.path then table.insert(worktrees, current) end
       current = { path = line:match('^worktree (.+)') }
     elseif line:match('^HEAD ') then
       current.head = line:match('^HEAD (.+)')
@@ -34,154 +51,204 @@ function M.list_worktrees()
       current.branch = line:match('^branch (.+)')
     end
   end
-
-  if current.path then
-    table.insert(worktrees, current)
-  end
-
+  if current.path then table.insert(worktrees, current) end
   return worktrees
 end
 
--- Create a new worktree
-function M.create_worktree(path, branch)
-  branch = branch or M.default_branch()
+function M.create_worktree(path, branch, project_root)
+  project_root = project_root or utils.get_project_root()
+  branch = branch or M.default_branch(project_root)
+  if not project_root or not branch then
+    return false, 'Could not resolve project root or base branch'
+  end
 
-  -- Check if worktree already exists
-  local worktrees = M.list_worktrees()
-  for _, wt in ipairs(worktrees) do
-    if wt.path == path then
-      return true, wt
+  local normalized = normalize_path(path)
+  for _, worktree in ipairs(M.list_worktrees(project_root)) do
+    if normalize_path(worktree.path) == normalized then
+      return false, 'Worktree already exists: ' .. path
     end
   end
 
-  -- Generate unique branch name for the worktree
-  local worktree_branch = 'agent-' .. utils.timestamp()
-
-  -- Create worktree with new branch based on specified branch
-  local cmd = string.format('git worktree add -b "%s" "%s" "%s" 2>&1', worktree_branch, path, branch)
-  local result, err = utils.exec(cmd)
-
-  if err then
-    return false, result
+  if vim.fn.isdirectory(path) == 1 and #vim.fn.readdir(path) > 0 then
+    return false, 'Worktree directory is not empty: ' .. path
   end
 
-  -- For background agents, ensure no hooks by creating empty .claude directory
-  -- This prevents inline diffs from triggering
-  local claude_dir = path .. '/.claude'
-  if vim.fn.isdirectory(claude_dir) == 0 then
-    vim.fn.mkdir(claude_dir, 'p')
-  end
+  local suffix = string.format('%.0f', vim.loop.hrtime()):sub(-10)
+  local worktree_branch = string.format('agent-%s-%s', utils.timestamp(), suffix)
+  local command = table.concat({
+    'git worktree add -b',
+    vim.fn.shellescape(worktree_branch),
+    vim.fn.shellescape(path),
+    vim.fn.shellescape(branch),
+  }, ' ')
+  local _, err = run(project_root, command)
+  if err then return false, err end
 
-  -- Create empty settings.json to disable hooks
-  local empty_settings = '{"hooks": {}}'
-  utils.write_file(claude_dir .. '/settings.json', empty_settings)
-
-  return true, { path = path, branch = worktree_branch, base_branch = branch }
+  return true, {
+    path = path,
+    branch = worktree_branch,
+    base_branch = branch,
+    created = true,
+  }
 end
 
--- Remove a worktree
-function M.remove_worktree(path)
-  -- First try to remove as git worktree
-  local cmd = string.format('git worktree remove "%s" --force 2>&1', path)
-  local result, err = utils.exec(cmd)
+function M.remove_worktree(path, project_root)
+  project_root = project_root or utils.get_project_root()
+  if not path or path == '' then return false, 'Missing worktree path' end
 
-  -- If it's not a worktree or already removed, just delete the directory
-  if err or result:match('not a working tree') then
-    local rm_cmd = string.format('rm -rf "%s"', path)
-    utils.exec(rm_cmd)
+  local normalized = normalize_path(path)
+  local registered = false
+  local removable_branch = nil
+  for _, worktree in ipairs(M.list_worktrees(project_root)) do
+    if normalize_path(worktree.path) == normalized then
+      registered = true
+      removable_branch = worktree.branch and worktree.branch:match('^refs/heads/(agent%-.+)$') or nil
+      break
+    end
   end
 
-  return true
-end
-
--- Add entry to .gitignore
-function M.add_to_gitignore(pattern)
-  local gitignore_path = utils.get_project_root() .. '/.gitignore'
-
-  -- Read existing content
-  local content = utils.read_file(gitignore_path) or ''
-
-  -- Check if pattern already exists
-  if content:match('\n' .. pattern:gsub('([%(%)%.%%%+%-%*%?%[%]%^%$])', '%%%1') .. '\n') or
-     content:match('^' .. pattern:gsub('([%(%)%.%%%+%-%*%?%[%]%^%$])', '%%%1') .. '\n') then
+  if registered then
+    local _, err = run(
+      project_root,
+      'git worktree remove --force ' .. vim.fn.shellescape(path)
+    )
+    if err then return false, err end
+    if removable_branch then
+      local _, branch_err = run(
+        project_root,
+        'git branch -D ' .. vim.fn.shellescape(removable_branch)
+      )
+      if branch_err then return false, branch_err end
+    end
     return true
   end
 
-  -- Append pattern
-  if not content:match('\n$') and content ~= '' then
-    content = content .. '\n'
+  if vim.loop.fs_stat(path) then
+    local deleted = vim.fn.delete(path, 'rf')
+    if deleted ~= 0 then return false, 'Failed to remove directory: ' .. path end
   end
-  content = content .. pattern .. '\n'
-
-  return utils.write_file(gitignore_path, content)
+  return true
 end
 
--- Get current branch
-function M.current_branch()
-  local result = utils.exec('git branch --show-current 2>/dev/null')
-  if result then
-    return result:gsub('\n', '')
+function M.find_stash_oid_by_label(project_root, label)
+  if not label or label == '' then return nil end
+  local output = run(project_root, "git stash list --format='%H%x09%gs'")
+  for line in (output or ''):gmatch('[^\n]+') do
+    local oid, subject = line:match('^([0-9a-fA-F]+)\t(.+)$')
+    if oid and subject and subject:sub(-#label) == label then return oid end
   end
   return nil
 end
 
--- Get default branch (usually main or master)
-function M.default_branch()
-  -- Try to get the default branch from remote
-  local result = utils.exec('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null')
-  if result and result ~= '' then
-    local branch = result:match('refs/remotes/origin/(.+)')
-    if branch then
-      return branch:gsub('\n', '')
-    end
-  end
+function M.stash_push(project_root, label, label_is_unique)
+  local before = rev_parse(project_root, 'refs/stash')
+  local unique_label = label_is_unique and label or string.format(
+      '%s [%s]',
+      label,
+      string.format('%.0f', vim.loop.hrtime())
+    )
+  local _, err = run(
+    project_root,
+    'git stash push --include-untracked --message ' .. vim.fn.shellescape(unique_label)
+  )
+  if err then return false, err end
 
-  -- Fallback: check if main or master exists
-  local main_exists = utils.exec('git show-ref --verify --quiet refs/heads/main')
-  if main_exists and main_exists == '' then
-    return 'main'
-  end
-
-  local master_exists = utils.exec('git show-ref --verify --quiet refs/heads/master')
-  if master_exists and master_exists == '' then
-    return 'master'
-  end
-
-  -- Final fallback
-  return 'main'
+  local located_oid = M.find_stash_oid_by_label(project_root, unique_label)
+  if located_oid then return true, { oid = located_oid, label = unique_label } end
+  local after = rev_parse(project_root, 'refs/stash')
+  if after and after ~= before then return true, { oid = after, label = unique_label } end
+  return true, nil
 end
 
--- Get git status
-function M.status(path)
-  local cmd = 'git status --porcelain'
-  if path then
-    cmd = string.format('cd "%s" && %s', path, cmd)
+function M.find_stash_ref(project_root, stash_oid)
+  if not stash_oid or stash_oid == '' then return nil end
+  if stash_oid:match('^stash@{%d+}$') then return stash_oid end
+  local output = run(project_root, "git stash list --format='%gd%x09%H'")
+  if not output then return nil end
+  for line in output:gmatch('[^\n]+') do
+    local ref, oid = line:match('^(stash@{%d+})\t([0-9a-fA-F]+)$')
+    if ref and oid and oid:lower() == stash_oid:lower() then return ref end
+  end
+  return nil
+end
+
+function M.apply_stash(project_root, stash_oid, restore_index)
+  if not stash_oid or stash_oid == '' then return true end
+  local index_flag = restore_index and ' --index' or ''
+  local _, err = run(
+    project_root,
+    'git stash apply' .. index_flag .. ' ' .. vim.fn.shellescape(stash_oid)
+  )
+  if err then return false, err end
+  return true
+end
+
+function M.drop_stash(project_root, stash_oid)
+  if not stash_oid or stash_oid == '' then return true end
+  local ref = M.find_stash_ref(project_root, stash_oid)
+  if not ref then return true end
+  local _, err = run(project_root, 'git stash drop ' .. vim.fn.shellescape(ref))
+  if err then return false, err end
+  return true
+end
+
+function M.restore_stash(project_root, stash_oid)
+  local applied, apply_err = M.apply_stash(project_root, stash_oid, true)
+  if not applied then return false, apply_err end
+  return M.drop_stash(project_root, stash_oid)
+end
+
+function M.add_to_gitignore(pattern, project_root)
+  project_root = project_root or utils.get_project_root()
+  if not project_root then return false end
+  local gitignore_path = project_root .. '/.gitignore'
+  local content = utils.read_file(gitignore_path) or ''
+  local escaped = vim.pesc(pattern)
+  if content:match('^' .. escaped .. '\n') or content:match('\n' .. escaped .. '\n') then
+    return true
+  end
+  if content ~= '' and not content:match('\n$') then content = content .. '\n' end
+  return utils.write_file(gitignore_path, content .. pattern .. '\n')
+end
+
+function M.current_branch(project_root)
+  local result = run(project_root, 'git branch --show-current')
+  if not result then return nil end
+  result = vim.trim(result)
+  return result ~= '' and result or nil
+end
+
+function M.default_branch(project_root)
+  local result = run(project_root, 'git symbolic-ref refs/remotes/origin/HEAD')
+  if result and result ~= '' then
+    local branch = result:match('refs/remotes/origin/(.+)')
+    if branch then return vim.trim(branch) end
   end
 
-  local result = utils.exec(cmd)
-  if not result then return {} end
+  if rev_parse(project_root, 'refs/heads/main') then return 'main' end
+  if rev_parse(project_root, 'refs/heads/master') then return 'master' end
+  return M.current_branch(project_root) or 'main'
+end
 
+function M.status(path)
+  local result = run(path, 'git status --porcelain')
+  if not result then return {} end
   local files = {}
   for line in result:gmatch('[^\n]+') do
     local status, file = line:match('^(..) (.+)$')
-    if status and file then
-      table.insert(files, { status = status, file = file })
-    end
+    if status and file then table.insert(files, { status = status, file = file }) end
   end
-
   return files
 end
 
--- Get diff between two paths
 function M.diff(path1, path2)
-  local cmd = string.format(
-    'git diff --no-index --name-status "%s" "%s" 2>/dev/null',
-    path1,
-    path2
-  )
-  local result = utils.exec(cmd)
+  local command = table.concat({
+    'git diff --no-index --name-status',
+    vim.fn.shellescape(path1),
+    vim.fn.shellescape(path2),
+  }, ' ')
+  local result = utils.exec(command)
   return result or ''
 end
 
 return M
-

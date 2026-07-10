@@ -3,11 +3,14 @@
 local M = {}
 
 local utils = require 'nvim-claude.utils'
-local cfg = require('nvim-claude.agent_provider.providers.codex.config')
+local cfg = require 'nvim-claude.agent_provider.providers.codex.config'
+
+local marker_begin = '# BEGIN nvim-claude managed Codex configuration'
+local marker_end = '# END nvim-claude managed Codex configuration'
+local legacy_marker = '# Managed by nvim-claude (Codex provider)'
 
 local function codex_home()
-  local home = vim.env.CODEX_HOME or (vim.fn.expand('~') .. '/.codex')
-  return home
+  return vim.env.CODEX_HOME or (vim.fn.expand('~') .. '/.codex')
 end
 
 local function config_path()
@@ -23,186 +26,264 @@ end
 
 local function ensure_home()
   local home = codex_home()
-  if vim.fn.isdirectory(home) == 0 then
-    vim.fn.mkdir(home, 'p')
-  end
-  return home
+  if vim.fn.isdirectory(home) == 1 then return true end
+  return vim.fn.mkdir(home, 'p') == 1
 end
 
-local function otel_block()
+local function toml_string(value)
+  value = tostring(value)
+    :gsub('\\', '\\\\')
+    :gsub('"', '\\"')
+    :gsub('\n', '\\n')
+    :gsub('\r', '\\r')
+    :gsub('\t', '\\t')
+  return '"' .. value .. '"'
+end
+
+local function managed_block()
   local endpoint = string.format('http://127.0.0.1:%d/v1/logs', cfg.otel_port or 4318)
-  local t = {}
-  table.insert(t, '# Managed by nvim-claude (Codex provider)')
-  table.insert(t, '[otel]')
-  table.insert(t, string.format('environment = %q', cfg.otel_environment or 'dev'))
-  table.insert(t, string.format('log_user_prompt = %s', cfg.otel_log_user_prompt and 'true' or 'false'))
-  table.insert(t,
-    string.format('exporter = { otlp-http = { endpoint = %q, protocol = "json", headers = {} } }', endpoint))
-  table.insert(t, '')
-  return table.concat(t, '\n')
+  local python = vim.fn.stdpath('data') .. '/nvim-claude/mcp-env/bin/python'
+  local server_script = plugin_root() .. 'mcp-server/nvim-lsp-server.py'
+  return table.concat({
+    marker_begin,
+    '[otel]',
+    'environment = ' .. toml_string(cfg.otel_environment or 'dev'),
+    'log_user_prompt = ' .. (cfg.otel_log_user_prompt and 'true' or 'false'),
+    'exporter = { otlp-http = { endpoint = ' .. toml_string(endpoint) .. ', protocol = "json", headers = {} } }',
+    '',
+    '[mcp_servers.nvim-lsp]',
+    'command = ' .. toml_string(python),
+    'args = [' .. toml_string(server_script) .. ']',
+    marker_end,
+  }, '\n')
 end
 
-local function read_config_lines()
-  local path = config_path()
-  local content = utils.read_file(path) or ''
+local function split_lines(content)
   local lines = {}
-  for l in (content .. '\n'):gmatch('([^\n]*)\n') do table.insert(lines, l) end
+  if content == '' then return lines end
+  for line in (content .. '\n'):gmatch('(.-)\n') do
+    table.insert(lines, (line:gsub('\r$', '')))
+  end
   return lines
 end
 
-local function remove_hooks_sections(lines)
+local function header_text(line)
+  return vim.trim((line:gsub('%s+#.*$', '')))
+end
+
+local function is_header(line)
+  return header_text(line):match('^%[%[?.-%]%]?$') ~= nil
+end
+
+local function section_end(lines, start_index)
+  for index = start_index + 1, #lines do
+    if is_header(lines[index]) then return index - 1 end
+  end
+  return #lines
+end
+
+local function remove_range(lines, first, last)
   local result = {}
-  local i = 1
-  while i <= #lines do
-    local line = lines[i]
-    if line:match('^%s*%[%[?hooks') then
-      i = i + 1
-      while i <= #lines do
-        local peek = lines[i]
-        if peek:match('^%s*%[%[?hooks') then
-          i = i + 1
-        elseif peek:match('^%s*%[.+%]%s*$') then
-          break
-        else
-          i = i + 1
-        end
-      end
-    else
-      table.insert(result, line)
-      i = i + 1
-    end
+  for index, line in ipairs(lines) do
+    if index < first or index > last then table.insert(result, line) end
   end
   return result
 end
 
-local function strip_otel_blocks(lines)
-  local result = {}
-  local skip = false
-  for _, line in ipairs(lines) do
-    if skip then
-      if line:match('^%s*%[.+%]%s*$') then
-        skip = false
-        table.insert(result, line)
-      end
-    else
-      if line:match('^%s*# Managed by nvim%-claude %(Codex provider%)%s*$') then
-        skip = true
-      elseif line:match('^%s*%[otel%]%s*$') then
-        skip = true
+local function marker_range(lines)
+  local starts = {}
+  local finishes = {}
+  for index, line in ipairs(lines) do
+    local trimmed = vim.trim(line)
+    if trimmed == marker_begin then table.insert(starts, index) end
+    if trimmed == marker_end then table.insert(finishes, index) end
+  end
+
+  if #starts == 0 and #finishes == 0 then return nil end
+  if #starts ~= 1 or #finishes ~= 1 or starts[1] >= finishes[1] then
+    return false, 'Malformed nvim-claude markers in Codex config'
+  end
+  return { first = starts[1], last = finishes[1] }
+end
+
+local function remove_managed_marker(lines)
+  local range, err = marker_range(lines)
+  if range == false then return nil, err end
+  if not range then return lines, false end
+  return remove_range(lines, range.first, range.last), true
+end
+
+local function remove_legacy_sections(lines)
+  local changed = false
+  local index = 1
+  while index <= #lines do
+    if vim.trim(lines[index]) == legacy_marker
+      and lines[index + 1]
+      and header_text(lines[index + 1]) == '[otel]'
+    then
+      lines = remove_range(lines, index, section_end(lines, index + 1))
+      changed = true
+    elseif header_text(lines[index]) == '[mcp_servers.nvim-lsp]' then
+      local last = section_end(lines, index)
+      local section = table.concat(vim.list_slice(lines, index, last), '\n')
+      if section:match('nvim%-claude') and section:match('nvim%-lsp%-server%.py') then
+        lines = remove_range(lines, index, last)
+        changed = true
       else
-        table.insert(result, line)
+        index = last + 1
       end
+    else
+      index = index + 1
     end
   end
-  if skip then
-    -- block ran to EOF; drop trailing comment/newlines
-  end
-  return result
+  return lines, changed
 end
 
-local function write_otel_config()
-  ensure_home()
-  local lines = read_config_lines()
-  lines = remove_hooks_sections(lines)
-  lines = strip_otel_blocks(lines)
-
-  local content = table.concat(lines, '\n')
-  content = content:gsub('%s+$', '')
-  if content ~= '' then content = content .. '\n\n' end
-  local new_content = content .. otel_block()
-  return utils.write_file(config_path(), new_content)
-end
-
--- Write or update MCP server entry for Codex to use our LSP server
-local function write_mcp_server()
-  ensure_home()
-  local path = config_path()
-  local content = utils.read_file(path) or ''
-  local lines = {}
-  for l in (content .. '\n'):gmatch('([^\n]*)\n') do table.insert(lines, l) end
-
-  -- Compute paths
-  local python = (vim.fn.stdpath('data') .. '/nvim-claude/mcp-env/bin/python')
-  local root = plugin_root()
-  local server_script = root .. 'mcp-server/nvim-lsp-server.py'
-
-  -- Build block
-  local block = {
-    '[mcp_servers.nvim-lsp]',
-    string.format('command = %q', python),
-    string.format('args = [%q]', server_script),
-  }
-  local new_block = table.concat(block, '\n')
-
-  -- Locate existing [mcp_servers.nvim-lsp] block
-  local start_idx, end_idx = nil, nil
-  for i, l in ipairs(lines) do
-    if l:match('^%s*%[mcp_servers%.nvim%-lsp%]%s*$') then start_idx = i break end
-  end
-  if start_idx then
-    end_idx = #lines + 1
-    for j = start_idx + 1, #lines do
-      if lines[j]:match('^%s*%[.+%]%s*$') then end_idx = j; break end
+local function has_target_section(lines)
+  for _, line in ipairs(lines) do
+    if header_text(line) == '[otel]' then return true, '[otel]' end
+    if header_text(line) == '[mcp_servers.nvim-lsp]' then
+      return true, '[mcp_servers.nvim-lsp]'
     end
   end
-
-  local new_content
-  if start_idx then
-    local before = table.concat(vim.list_slice(lines, 1, start_idx - 1), '\n')
-    local after = table.concat(vim.list_slice(lines, end_idx, #lines), '\n')
-    new_content = ''
-    if before ~= '' then new_content = before .. '\n' end
-    new_content = new_content .. new_block .. '\n'
-    if after ~= '' then new_content = new_content .. after .. '\n' end
-  else
-    new_content = content
-    if new_content ~= '' and not new_content:match('\n$') then new_content = new_content .. '\n' end
-    new_content = new_content .. new_block .. '\n'
-  end
-  return utils.write_file(path, new_content)
+  return false
 end
 
-function M.install()
-  local ok = write_otel_config()
-  if not ok then
-    vim.notify('nvim-claude: Failed to configure Codex OpenTelemetry exporter', vim.log.levels.ERROR)
-    return false
-  end
-
-  -- Write MCP server entry
-  local ok_mcp = write_mcp_server()
-  if ok_mcp then
-    vim.notify('nvim-claude: Codex telemetry + MCP server installed in ~/.codex/config.toml', vim.log.levels.INFO)
-  else
-    vim.notify('nvim-claude: Codex telemetry enabled; failed to write MCP server entry', vim.log.levels.WARN)
+local function validate_toml(content)
+  if content == '' then return true end
+  local managed_python = vim.fn.stdpath('data') .. '/nvim-claude/mcp-env/bin/python'
+  local python = vim.fn.executable(managed_python) == 1 and managed_python or vim.fn.exepath('python3')
+  if python == '' then return false, 'python3 is required to validate Codex config safely' end
+  local output = vim.fn.system({
+    python,
+    '-c',
+    table.concat({
+      'import sys',
+      'try:',
+      '    import tomllib',
+      'except ModuleNotFoundError:',
+      '    import tomli as tomllib',
+      'try:',
+      '    tomllib.loads(sys.stdin.read())',
+      'except Exception as error:',
+      '    print(error, file=sys.stderr)',
+      '    raise SystemExit(1)',
+    }, '\n'),
+  }, content)
+  if vim.v.shell_error ~= 0 then
+    output = vim.trim(output or '')
+    return false, output ~= '' and output or 'Invalid TOML'
   end
   return true
 end
 
-function M.uninstall()
-  -- Best-effort: remove [otel] block entirely
+local function read_config()
   local path = config_path()
   local content = utils.read_file(path)
-  if not content or content == '' then return true end
-  local lines = {}
-  for l in (content .. '\n'):gmatch('([^\n]*)\n') do table.insert(lines, l) end
-  local start_idx, end_idx = nil, nil
-  for i, l in ipairs(lines) do if l:match('^%s*%[otel%]%s*$') then start_idx = i break end end
-  if start_idx then
-    end_idx = #lines + 1
-    for j = start_idx + 1, #lines do if lines[j]:match('^%s*%[.+%]%s*$') then end_idx = j; break end end
-    local before = table.concat(vim.list_slice(lines, 1, start_idx - 1), '\n')
-    local after = table.concat(vim.list_slice(lines, end_idx, #lines), '\n')
-    local new_content = ''
-    if before ~= '' then new_content = before .. '\n' end
-    if after ~= '' then new_content = new_content .. after .. '\n' end
-    local ok = utils.write_file(path, new_content)
-    if not ok then
-      vim.notify('nvim-claude: Failed to update ~/.codex/config.toml', vim.log.levels.WARN)
-      return false
-    end
+  if content == nil and utils.file_exists(path) then
+    return nil, 'Failed to read ' .. path
   end
-  vim.notify('nvim-claude: Codex OpenTelemetry config removed from ~/.codex/config.toml', vim.log.levels.INFO)
+  return content or ''
+end
+
+local function write_config_atomic(content)
+  if not ensure_home() then return false, 'Failed to create ' .. codex_home() end
+  local path = config_path()
+  local temp_path = string.format('%s.nvim-claude.%d.%d', path, vim.fn.getpid(), vim.loop.hrtime())
+  if not utils.write_file(temp_path, content) then
+    return false, 'Failed to write temporary Codex config'
+  end
+
+  local stat = vim.loop.fs_stat(path)
+  local mode = stat and stat.mode and (stat.mode % 512) or 384
+  pcall(vim.loop.fs_chmod, temp_path, mode)
+  local ok, err = vim.loop.fs_rename(temp_path, path)
+  if not ok then
+    pcall(vim.fn.delete, temp_path)
+    return false, err or 'Failed to replace Codex config'
+  end
+  return true
+end
+
+local function config_with_managed_block(content)
+  local valid, validation_err = validate_toml(content)
+  if not valid then return nil, 'Existing Codex config is invalid: ' .. validation_err end
+
+  local lines, marker_err = remove_managed_marker(split_lines(content))
+  if not lines then return nil, marker_err end
+  lines = remove_legacy_sections(lines)
+  local conflict, section = has_target_section(lines)
+  if conflict then
+    return nil, section .. ' is user-managed; refusing to overwrite it'
+  end
+
+  local base = table.concat(lines, '\n'):gsub('%s+$', '')
+  local result = (base ~= '' and (base .. '\n\n') or '') .. managed_block() .. '\n'
+  valid, validation_err = validate_toml(result)
+  if not valid then return nil, 'Generated Codex config is invalid: ' .. validation_err end
+  return result
+end
+
+function M.install()
+  local content, read_err = read_config()
+  if content == nil then
+    vim.notify('nvim-claude: ' .. read_err, vim.log.levels.ERROR)
+    return false
+  end
+
+  local updated, update_err = config_with_managed_block(content)
+  if not updated then
+    vim.notify('nvim-claude: ' .. update_err, vim.log.levels.ERROR)
+    return false
+  end
+
+  local ok, write_err = write_config_atomic(updated)
+  if not ok then
+    vim.notify('nvim-claude: ' .. write_err, vim.log.levels.ERROR)
+    return false
+  end
+  vim.notify('nvim-claude: Codex telemetry + MCP server installed in ~/.codex/config.toml', vim.log.levels.INFO)
+  return true
+end
+
+function M.uninstall()
+  local content, read_err = read_config()
+  if content == nil then
+    vim.notify('nvim-claude: ' .. read_err, vim.log.levels.ERROR)
+    return false
+  end
+  if content == '' then return true end
+
+  local valid, validation_err = validate_toml(content)
+  if not valid then
+    vim.notify('nvim-claude: Existing Codex config is invalid: ' .. validation_err, vim.log.levels.ERROR)
+    return false
+  end
+
+  local lines, marker_err = remove_managed_marker(split_lines(content))
+  if not lines then
+    vim.notify('nvim-claude: ' .. marker_err, vim.log.levels.ERROR)
+    return false
+  end
+  local marker_changed = #lines ~= #split_lines(content)
+  local legacy_changed
+  lines, legacy_changed = remove_legacy_sections(lines)
+  if not marker_changed and not legacy_changed then return true end
+
+  local updated = table.concat(lines, '\n'):gsub('%s+$', '')
+  if updated ~= '' then updated = updated .. '\n' end
+  valid, validation_err = validate_toml(updated)
+  if not valid then
+    vim.notify('nvim-claude: Refusing to write invalid Codex config: ' .. validation_err, vim.log.levels.ERROR)
+    return false
+  end
+
+  local ok, write_err = write_config_atomic(updated)
+  if not ok then
+    vim.notify('nvim-claude: ' .. write_err, vim.log.levels.ERROR)
+    return false
+  end
+  vim.notify('nvim-claude: Codex telemetry + MCP config removed from ~/.codex/config.toml', vim.log.levels.INFO)
   return true
 end
 

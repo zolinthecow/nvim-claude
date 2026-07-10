@@ -41,10 +41,9 @@ end
 -- Test 3: Check dependencies
 print('\n3. Checking dependencies...')
 local deps = {
-  { name = 'plenary', module = 'plenary' },
-  { name = 'neovim-remote (nvr)', command = 'nvr' },
   { name = 'tmux', command = 'tmux' },
   { name = 'git', command = 'git' },
+  { name = 'python3', command = 'python3' },
 }
 
 for _, dep in ipairs(deps) do

@@ -8,34 +8,59 @@ on:
 
 jobs:
   e2e:
-    name: E2E Tests (Headless Neovim)
+    name: E2E Tests (Neovim ${{ matrix.neovim }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        neovim: [v0.10.4, stable]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v1
 
-      - name: Install Neovim
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y neovim git
+          sudo apt-get install -y curl git
+
+      - name: Install Neovim
+        run: |
+          curl -fsSL "https://github.com/neovim/neovim/releases/download/${{ matrix.neovim }}/nvim-linux-x86_64.tar.gz" -o /tmp/nvim.tar.gz
+          tar -C /tmp -xzf /tmp/nvim.tar.gz
+          echo "/tmp/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
+          /tmp/nvim-linux-x86_64/bin/nvim --version
 
       - name: Install plenary.nvim
         run: |
           mkdir -p "$HOME/.local/share/nvim/lazy"
           git clone --depth 1 https://github.com/nvim-lua/plenary.nvim "$HOME/.local/share/nvim/lazy/plenary.nvim"
 
-      - name: Install doctests CLI
+      - name: Install doctests source
         run: |
-          bun add -g @zolinthecow/doctests
+          git clone https://github.com/zolinthecow/doctests.git /tmp/doctests
+          git -C /tmp/doctests checkout 443382be28a582866ca62e847c85112464d63b2a
+
+      - name: Check dependency direction
+        run: |
+          nvim --headless -u NONE -l scripts/check_dependency_direction.lua
 
       - name: Run doctests
         run: |
-          doctests --config doctest.config.toml
+          bun /tmp/doctests/src/cli.ts --config doctest.config.toml
 
-      - name: Run E2E tests
+      - name: Run test suite
         run: |
-          bash ./scripts/run_e2e_tests.sh
+          bash ./scripts/run_tests.sh
 
+      - name: Run OpenCode integration harness
+        run: |
+          bash ./scripts/run_opencode_integration_test.sh
+
+      - name: Validate Python sources
+        run: |
+          python3 -m py_compile mcp-server/nvim-lsp-server.py rpc/nvim_rpc.py scripts/codex-otel-relay.py

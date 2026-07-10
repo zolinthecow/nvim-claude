@@ -5,7 +5,9 @@ local M = {}
 
 local utils = require 'nvim-claude.utils'
 local persistence = require 'nvim-claude.inline_diff.persistence'
-local project_state = require 'nvim-claude.project-state'
+local review_state = require 'nvim-claude.review_state'
+
+local validated_refs = {}
 
 local function sanitize_ref(ref)
   if not ref then return nil end
@@ -31,10 +33,13 @@ local function clear_persisted_ref(git_root, raw_ref, source)
   end
   -- Reset edited-file tracking since it is tied to the cleared baseline
   if git_root then
-    project_state.set(git_root, 'claude_edited_files', vim.empty_dict())
-    project_state.set(git_root, 'session_edited_files', {})
+    validated_refs[git_root] = nil
+    review_state.clear(git_root)
   end
-  utils.exec(string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root))
+  utils.exec(string.format(
+    'cd %s && git update-ref -d refs/nvim-claude/baseline 2>/dev/null',
+    vim.fn.shellescape(git_root)
+  ))
 end
 
 local function project_root_or_nil()
@@ -53,13 +58,20 @@ function M.get_baseline_ref(git_root)
     local persisted_raw = state.baseline_ref or state.stash_ref
     local persisted = sanitize_ref(persisted_raw)
     if persisted then
+      if validated_refs[git_root] == persisted then return persisted end
       -- Validate the object actually exists; stale refs cause git errors later
-      local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, persisted)
+      local exists_cmd = string.format(
+        'cd %s && git cat-file -e %s 2>/dev/null',
+        vim.fn.shellescape(git_root),
+        vim.fn.shellescape(persisted)
+      )
       local _, exists_err = utils.exec(exists_cmd)
       if not exists_err then
+        validated_refs[git_root] = persisted
         return persisted
       end
       clear_persisted_ref(git_root, persisted_raw, 'missing_object')
+      return nil
     end
     clear_persisted_ref(git_root, persisted_raw, 'persistence')
   end
@@ -70,29 +82,39 @@ end
 -- Set baseline ref (project-state is authoritative; git ref is a mirror/pin).
 function M.set_baseline_ref(git_root, ref)
   git_root = git_root or project_root_or_nil()
-  if not git_root then return end
+  if not git_root then return false end
   
   -- Validate ref to prevent storing error messages
   if ref and (ref:match('^fatal:') or ref:match('^error:') or not ref:match('^[a-f0-9]+$')) then
     local logger = require('nvim-claude.logger')
     logger.error('baseline', 'Invalid baseline ref rejected', { ref = ref, git_root = git_root })
-    return
+    return false
   end
 
   if ref and ref:match('^[a-f0-9]+$') then
-    local exists_cmd = string.format('cd "%s" && git cat-file -e %s 2>/dev/null', git_root, ref)
+    local exists_cmd = string.format(
+      'cd %s && git cat-file -e %s 2>/dev/null',
+      vim.fn.shellescape(git_root),
+      vim.fn.shellescape(ref)
+    )
     local _, exists_err = utils.exec(exists_cmd)
     if exists_err then
       local logger = require('nvim-claude.logger')
       logger.error('baseline', 'Invalid baseline ref rejected', { ref = ref, git_root = git_root })
-      return
+      return false
     end
 
     -- Persist authoritative baseline first.
-    persistence.save_state({ baseline_ref = ref }, git_root)
+    if not persistence.save_state({ baseline_ref = ref }, git_root) then
+      return false
+    end
 
     -- Keep git ref as a best-effort mirror/pin.
-    local cmd = string.format('cd "%s" && git update-ref refs/nvim-claude/baseline %s', git_root, ref)
+    local cmd = string.format(
+      'cd %s && git update-ref refs/nvim-claude/baseline %s',
+      vim.fn.shellescape(git_root),
+      vim.fn.shellescape(ref)
+    )
     local _, update_err = utils.exec(cmd)
     if update_err then
       local logger = require('nvim-claude.logger')
@@ -102,14 +124,20 @@ function M.set_baseline_ref(git_root, ref)
         error = update_err,
       })
     end
+    validated_refs[git_root] = ref
   else
     local state = persistence.get_state(git_root) or {}
     state.baseline_ref = nil
     state.stash_ref = nil
-    persistence.set_state(git_root, state)
+    if not persistence.set_state(git_root, state) then
+      return false
+    end
 
     -- Clear mirrored git ref best-effort.
-    local cmd = string.format('cd "%s" && git update-ref -d refs/nvim-claude/baseline 2>/dev/null', git_root)
+    local cmd = string.format(
+      'cd %s && git update-ref -d refs/nvim-claude/baseline 2>/dev/null',
+      vim.fn.shellescape(git_root)
+    )
     local _, update_err = utils.exec(cmd)
     if update_err then
       local logger = require('nvim-claude.logger')
@@ -118,12 +146,37 @@ function M.set_baseline_ref(git_root, ref)
         error = update_err,
       })
     end
+    validated_refs[git_root] = nil
   end
+  return true
 end
 
 -- Clear only the baseline (keeps other inline_diff_state keys, if any)
 function M.clear_baseline_ref(git_root)
-  M.set_baseline_ref(git_root, nil)
+  return M.set_baseline_ref(git_root, nil)
+end
+
+function M.read_file(git_root, relative_path, ref)
+  git_root = git_root or project_root_or_nil()
+  ref = ref or (git_root and M.get_baseline_ref(git_root))
+  if not git_root or not ref or not relative_path then
+    return nil, 'missing baseline context'
+  end
+
+  local object = ref .. ':' .. relative_path
+  local cmd = string.format(
+    'cd %s && git show %s',
+    vim.fn.shellescape(git_root),
+    vim.fn.shellescape(object)
+  )
+  local content, err = utils.exec(cmd)
+  if content ~= nil then
+    return { exists = true, content = content }
+  end
+  if err and (err:match 'does not exist' or err:match 'exists on disk, but not in' or err:match 'Path .+ does not exist') then
+    return { exists = false, content = '' }
+  end
+  return nil, err or 'failed to read baseline file'
 end
 
 -- Create a new baseline commit from a snapshot of working dir (without HEAD move)
@@ -135,177 +188,188 @@ function M.create_baseline(message, git_root)
     return nil 
   end
 
-  -- Build a commit from a temporary index snapshot of the working directory
-  local temp_index = string.format('/tmp/nvim-claude-baseline-%d.index', os.time())
-  -- Copy current index to temp
-  utils.exec(string.format('cd "%s" && cp .git/index "%s" 2>/dev/null || true', git_root, temp_index))
+  -- Build a commit from a temporary index snapshot of the working directory.
+  local temp_index = vim.fn.tempname() .. '.index'
+  local function cleanup()
+    if vim.fn.filereadable(temp_index) == 1 then vim.fn.delete(temp_index) end
+  end
+  local index_env = 'GIT_INDEX_FILE=' .. vim.fn.shellescape(temp_index) .. ' '
+  local _, read_err = utils.exec(string.format(
+    'cd %s && (%sgit read-tree HEAD 2>/dev/null || %sgit read-tree --empty)',
+    vim.fn.shellescape(git_root),
+    index_env,
+    index_env
+  ))
+  if read_err then
+    logger.error('baseline', 'Failed to initialize baseline index', { error = read_err, git_root = git_root })
+    cleanup()
+    return nil
+  end
   -- Stage all files into the temp index
-  local add_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git add -A', git_root, temp_index)
+  local add_cmd = string.format(
+    'cd %s && %sgit add -A',
+    vim.fn.shellescape(git_root),
+    index_env
+  )
   local _, add_err = utils.exec(add_cmd)
   if add_err then 
     logger.error('baseline', 'Failed to stage files for baseline', { error = add_err, git_root = git_root })
+    cleanup()
     return nil 
   end
   -- Write tree from temp index
-  local tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree', git_root, temp_index)
+  local tree_cmd = string.format(
+    'cd %s && %sgit write-tree',
+    vim.fn.shellescape(git_root),
+    index_env
+  )
   local tree_sha, tree_err = utils.exec(tree_cmd)
   if tree_err or not tree_sha then 
     logger.error('baseline', 'Failed to write tree for baseline', { error = tree_err or 'no tree sha', git_root = git_root })
+    cleanup()
     return nil 
   end
   tree_sha = tree_sha:gsub('%s+', '')
   -- Create a commit with no parent (snapshot)
-  local commit_cmd = string.format('cd "%s" && git commit-tree %s -m "%s"', git_root, tree_sha, message)
+  local commit_cmd = string.format(
+    'cd %s && git commit-tree %s -m %s',
+    vim.fn.shellescape(git_root),
+    vim.fn.shellescape(tree_sha),
+    vim.fn.shellescape(message or 'nvim-claude baseline')
+  )
   local commit_sha, commit_err = utils.exec(commit_cmd)
   if commit_err or not commit_sha then 
     logger.error('baseline', 'Failed to create baseline commit', { error = commit_err or 'no commit sha', git_root = git_root })
+    cleanup()
     return nil 
   end
   commit_sha = commit_sha:gsub('%s+', '')
   -- Validate commit SHA before storing
   if not commit_sha:match('^[a-f0-9]+$') then
     logger.error('baseline', 'Invalid commit SHA from git commit-tree', { commit_sha = commit_sha, git_root = git_root })
+    cleanup()
     return nil
   end
   -- Update git ref + persist + cache
-  M.set_baseline_ref(git_root, commit_sha)
+  if not M.set_baseline_ref(git_root, commit_sha) then
+    cleanup()
+    return nil
+  end
+  cleanup()
   logger.info('baseline', 'Created baseline commit', { commit_sha = commit_sha, git_root = git_root })
   return commit_sha
 end
 
--- Update baseline commit tree for a specific file path with provided content
--- Returns true on success
-function M.update_baseline_with_content(git_root, relative_path, content, current_baseline_ref)
+function M.apply_changes(git_root, changes, current_baseline_ref)
   git_root = git_root or project_root_or_nil()
-  if not git_root then return false end
+  if not git_root then return false, 'no project root' end
+  if not current_baseline_ref or not current_baseline_ref:match '^[a-f0-9]+$' then
+    return false, 'invalid baseline ref'
+  end
+  if not changes or #changes == 0 then return true end
 
-  local temp_dir = '/tmp/nvim-claude-baseline-' .. os.time() .. '-' .. math.random(10000)
-  local success, err = pcall(function()
-    vim.fn.mkdir(temp_dir, 'p')
+  local temp_dir = vim.fn.tempname()
+  local temp_index = temp_dir .. '/index'
+  local ok, result = pcall(function()
+    if vim.fn.mkdir(temp_dir, 'p') ~= 1 then
+      error('failed to create temporary baseline directory')
+    end
 
-    -- Set up temporary index file
-    local temp_index = temp_dir .. '/index'
+    local _, read_err = utils.exec(string.format(
+      'cd %s && GIT_INDEX_FILE=%s git read-tree %s',
+      vim.fn.shellescape(git_root),
+      vim.fn.shellescape(temp_index),
+      vim.fn.shellescape(current_baseline_ref)
+    ))
+    if read_err then error('failed to read baseline tree: ' .. read_err) end
 
-    -- Read the tree from current baseline into temporary index
-    local read_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git read-tree %s', git_root, temp_index, current_baseline_ref)
-    local _, read_err = utils.exec(read_tree_cmd)
-    if read_err then error('Failed to read baseline tree: ' .. read_err) end
+    for i, change in ipairs(changes) do
+      if not change.relative_path or change.relative_path == '' then
+        error('baseline change is missing a relative path')
+      end
+      if change.exists == false then
+        local _, remove_err = utils.exec(string.format(
+          'cd %s && GIT_INDEX_FILE=%s git update-index --remove -- %s',
+          vim.fn.shellescape(git_root),
+          vim.fn.shellescape(temp_index),
+          vim.fn.shellescape(change.relative_path)
+        ))
+        if remove_err then error('failed to remove baseline file: ' .. remove_err) end
+      else
+        local content_file = temp_dir .. '/content-' .. i
+        if not utils.write_file(content_file, change.content or '') then
+          error('failed to write temporary baseline content')
+        end
+        local object, hash_err = utils.exec(string.format(
+          'cd %s && git hash-object -w %s',
+          vim.fn.shellescape(git_root),
+          vim.fn.shellescape(content_file)
+        ))
+        object = object and object:gsub('%s+$', '') or nil
+        if hash_err or not object or not object:match '^[a-f0-9]+$' then
+          error('failed to hash baseline content: ' .. (hash_err or 'invalid object id'))
+        end
+        local _, update_err = utils.exec(string.format(
+          'cd %s && GIT_INDEX_FILE=%s git update-index --add --cacheinfo 100644,%s,%s',
+          vim.fn.shellescape(git_root),
+          vim.fn.shellescape(temp_index),
+          object,
+          vim.fn.shellescape(change.relative_path)
+        ))
+        if update_err then error('failed to update baseline file: ' .. update_err) end
+      end
+    end
 
-    -- Write content to temporary file
-    local temp_file = temp_dir .. '/content'
-    utils.write_file(temp_file, content)
+    local tree, tree_err = utils.exec(string.format(
+      'cd %s && GIT_INDEX_FILE=%s git write-tree',
+      vim.fn.shellescape(git_root),
+      vim.fn.shellescape(temp_index)
+    ))
+    tree = tree and tree:gsub('%s+$', '') or nil
+    if tree_err or not tree or not tree:match '^[a-f0-9]+$' then
+      error('failed to write baseline tree: ' .. (tree_err or 'invalid tree id'))
+    end
 
-    -- Update the specific file in the temporary index
-    local update_cmd = string.format(
-      'cd "%s" && GIT_INDEX_FILE="%s" git update-index --add --cacheinfo 100644,$(git hash-object -w "%s"),"%s"',
-      git_root,
-      temp_index,
-      temp_file,
-      relative_path
-    )
-    local _, update_err = utils.exec(update_cmd)
-    if update_err then error('Failed to update file in index: ' .. update_err) end
-
-    -- Create tree from temporary index
-    local write_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree', git_root, temp_index)
-    local new_tree_hash, tree_err = utils.exec(write_tree_cmd)
-    if tree_err or not new_tree_hash then error('Failed to write tree: ' .. (tree_err or 'unknown error')) end
-    new_tree_hash = new_tree_hash:gsub('%s+$', '')
-
-    -- Create new commit
-    local commit_message = string.format('nvim-claude: updated baseline for %s at %s', relative_path, os.date '%Y-%m-%d %H:%M:%S')
-    local commit_cmd2 = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', git_root, new_tree_hash, current_baseline_ref, commit_message)
-    local new_commit_hash, commit_err = utils.exec(commit_cmd2)
-    if commit_err or not new_commit_hash then error('Failed to create commit: ' .. (commit_err or 'unknown error')) end
-    new_commit_hash = new_commit_hash:gsub('%s+$', '')
-
-    -- Update baseline ref/cache/persist
-    M.set_baseline_ref(git_root, new_commit_hash)
+    local commit, commit_err = utils.exec(string.format(
+      'cd %s && git commit-tree %s -p %s -m %s',
+      vim.fn.shellescape(git_root),
+      tree,
+      current_baseline_ref,
+      vim.fn.shellescape('nvim-claude: update baseline')
+    ))
+    commit = commit and commit:gsub('%s+$', '') or nil
+    if commit_err or not commit or not commit:match '^[a-f0-9]+$' then
+      error('failed to create baseline commit: ' .. (commit_err or 'invalid commit id'))
+    end
+    if not M.set_baseline_ref(git_root, commit) then
+      error('failed to persist baseline ref')
+    end
+    return commit
   end)
 
-  -- Cleanup temp directory
   if vim.fn.isdirectory(temp_dir) == 1 then
     vim.fn.delete(temp_dir, 'rf')
   end
-
-  return success
+  if not ok then
+    require('nvim-claude.logger').error('baseline', 'Failed to update baseline', {
+      error = result,
+      git_root = git_root,
+    })
+    return false, tostring(result)
+  end
+  return true, result
 end
 
--- Remove a file from the baseline commit tree and advance the baseline ref
+function M.update_baseline_with_content(git_root, relative_path, content, current_baseline_ref)
+  return M.apply_changes(git_root, {
+    { relative_path = relative_path, exists = true, content = content or '' },
+  }, current_baseline_ref)
+end
+
 function M.remove_from_baseline(git_root, relative_path, current_baseline_ref)
-  local logger = require('nvim-claude.logger')
-  git_root = git_root or project_root_or_nil()
-  if not git_root then 
-    logger.warn('baseline', 'No git root for baseline removal', { relative_path = relative_path })
-    return false 
-  end
-  
-  -- Validate current baseline ref
-  if not current_baseline_ref or not current_baseline_ref:match('^[a-f0-9]+$') then
-    logger.error('baseline', 'Invalid baseline ref for removal', { 
-      current_baseline_ref = current_baseline_ref,
-      relative_path = relative_path 
-    })
-    return false
-  end
-
-  local temp_dir = '/tmp/nvim-claude-baseline-' .. os.time() .. '-' .. math.random(10000)
-  local success, err = pcall(function()
-    vim.fn.mkdir(temp_dir, 'p')
-
-    local temp_index = temp_dir .. '/index'
-    -- Read the tree from current baseline into temporary index
-    local read_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git read-tree %s', git_root, temp_index, current_baseline_ref)
-    local _, read_err = utils.exec(read_tree_cmd)
-    if read_err then 
-      logger.error('baseline', 'Failed to read tree in remove', { error = read_err, baseline_ref = current_baseline_ref })
-      error('Failed to read baseline tree: ' .. read_err) 
-    end
-
-    -- Remove the specific path from the index
-    local rm_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git update-index --remove "%s"', git_root, temp_index, relative_path)
-    local _, rm_err = utils.exec(rm_cmd)
-    if rm_err then 
-      logger.error('baseline', 'Failed to remove from index', { error = rm_err, file = relative_path })
-      error('Failed to remove file from index: ' .. rm_err) 
-    end
-
-    -- Write new tree and commit
-    local write_tree_cmd = string.format('cd "%s" && GIT_INDEX_FILE="%s" git write-tree', git_root, temp_index)
-    local new_tree_hash, tree_err = utils.exec(write_tree_cmd)
-    if tree_err or not new_tree_hash then 
-      logger.error('baseline', 'Failed to write tree in remove', { error = tree_err or 'no tree hash' })
-      error('Failed to write tree: ' .. (tree_err or 'unknown')) 
-    end
-    new_tree_hash = new_tree_hash:gsub('%s+$', '')
-
-    local commit_message = string.format('nvim-claude: removed %s from baseline at %s', relative_path, os.date('%Y-%m-%d %H:%M:%S'))
-    local commit_cmd2 = string.format('cd "%s" && git commit-tree %s -p %s -m "%s"', git_root, new_tree_hash, current_baseline_ref, commit_message)
-    local new_commit_hash, commit_err = utils.exec(commit_cmd2)
-    if commit_err or not new_commit_hash then 
-      logger.error('baseline', 'Failed to create commit in remove', { 
-        error = commit_err or 'no commit hash',
-        file = relative_path 
-      })
-      error('Failed to create commit: ' .. (commit_err or 'unknown')) 
-    end
-    new_commit_hash = new_commit_hash:gsub('%s+$', '')
-    
-    -- Validate commit hash
-    if not new_commit_hash:match('^[a-f0-9]+$') then
-      logger.error('baseline', 'Invalid commit hash in remove', { new_commit_hash = new_commit_hash })
-      error('Invalid commit hash: ' .. new_commit_hash)
-    end
-
-    M.set_baseline_ref(git_root, new_commit_hash)
-    logger.info('baseline', 'Removed file from baseline', { file = relative_path, new_ref = new_commit_hash })
-  end)
-
-  if vim.fn.isdirectory(temp_dir) == 1 then
-    vim.fn.delete(temp_dir, 'rf')
-  end
-
-  return success
+  return M.apply_changes(git_root, {
+    { relative_path = relative_path, exists = false },
+  }, current_baseline_ref)
 end
 
 return M

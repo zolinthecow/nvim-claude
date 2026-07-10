@@ -8,19 +8,20 @@ local M = {}
 function M.create_checkpoint(prompt_text, git_root)
   return core.create_checkpoint(prompt_text, git_root)
 end
-function M.list_checkpoints() return core.list_checkpoints() end
+function M.list_checkpoints(git_root) return core.list_checkpoints(git_root) end
 
 -- State helpers (minimal)
 function M.is_preview_mode(git_root)
   return core.is_preview_mode(git_root)
 end
-function M.get_status()
-  local s = core.load_state() or {}
+function M.get_status(git_root)
+  local s = core.load_state(git_root) or {}
   return {
     mode = s.mode,
     preview_checkpoint = s.preview_checkpoint,
     original_ref = s.original_ref,
     preview_stash = s.preview_stash,
+    stash_oid = s.stash_oid,
   }
 end
 

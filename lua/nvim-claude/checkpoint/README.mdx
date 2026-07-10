@@ -1,6 +1,13 @@
 # Checkpoints
 
-Checkpoints snapshot the git state for each user prompt. The facade exposes simple status helpers while the core module manages git refs and preview state.
+Checkpoints snapshot the git state for each user prompt. The facade exposes simple status helpers while the core module manages git refs and recoverable preview transactions.
+
+## Preview transaction contract
+
+- Entering preview stashes tracked, staged, unstaged, and untracked changes without mutating the user's index directly.
+- Returning applies the recovery stash with `--index`, then locates and drops its current `stash@{n}` entry by object ID.
+- Failed checkout, apply, merge, or cleanup operations return `false` and retain `checkpoint_state` with the recovery stash object ID.
+- State is cleared only after the original ref, worktree, index, and stash list have all been restored successfully.
 
 ## Status snapshot
 
@@ -16,12 +23,13 @@ project_state.set(root, 'checkpoint_state', {
   mode = 'preview',
   preview_checkpoint = 'cp_demo',
   original_ref = 'deadbeef',
-  preview_stash = 'stash@{0}'
+  stash_oid = '0123456789abcdef'
 })
 
 local status = checkpoint.get_status()
 assert(status.mode == 'preview')
 assert(status.preview_checkpoint == 'cp_demo')
+assert(status.stash_oid == '0123456789abcdef')
 
 project_state.set(root, 'checkpoint_state', nil)
 ```
