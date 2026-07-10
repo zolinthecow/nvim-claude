@@ -12,6 +12,35 @@ local function project_server_file(project_root)
   return string.format('%s/nvim-claude-%s-server', temp_dir, key_hash:sub(1, 8))
 end
 
+local function ensure_server_file(project_root)
+  project_root = project_root or utils.get_project_root()
+  if not project_root then
+    return
+  end
+
+  local server_addr = vim.v.servername
+  if not server_addr or server_addr == '' then
+    return
+  end
+
+  local server_file = project_server_file(project_root)
+  if not server_file then return end
+
+  local current = nil
+  if vim.fn.filereadable(server_file) == 1 then
+    local lines = vim.fn.readfile(server_file)
+    current = (lines and lines[1]) or nil
+  end
+  if current ~= server_addr then
+    vim.fn.writefile({ server_addr }, server_file)
+  end
+
+  logger.debug('settings_updater', 'Ensured server file', {
+    server_addr = server_addr,
+    server_file = server_file,
+  })
+end
+
 -- Update Claude settings with current Neovim server address
 function M.update_claude_settings()
   -- Skip if running in headless mode (MCP server)
@@ -24,31 +53,7 @@ function M.update_claude_settings()
     return
   end
 
-  -- Get current Neovim server address
-  local server_addr = vim.v.servername
-  if not server_addr or server_addr == '' then
-    -- If no servername, we can't communicate
-    return
-  end
-
-  local server_file = project_server_file(project_root)
-  if not server_file then return end
-
-  -- Write file only if changed
-  local current = nil
-  if vim.fn.filereadable(server_file) == 1 then
-    local lines = vim.fn.readfile(server_file)
-    current = (lines and lines[1]) or nil
-  end
-  if current ~= server_addr then
-    vim.fn.writefile({ server_addr }, server_file)
-  end
-  
-  -- Debug logging
-  logger.debug('settings_updater', 'Ensured server file', {
-    server_addr = server_addr,
-    server_file = server_file,
-  })
+  ensure_server_file(project_root)
   
   -- Migrate old .nvim-server file if it exists
   local old_server_file = project_root .. '/.nvim-server'
@@ -69,6 +74,15 @@ function M.setup()
       vim.defer_fn(function()
         M.update_claude_settings()
       end, 500)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ 'BufEnter', 'FocusGained' }, {
+    group = vim.api.nvim_create_augroup('NvimClaudeServerFileRefresh', { clear = true }),
+    callback = function()
+      vim.defer_fn(function()
+        ensure_server_file()
+      end, 100)
     end,
   })
 end
